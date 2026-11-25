@@ -177,11 +177,20 @@ public final class HologramClientStockNative {
                     owner.notice.accept("正在确认服务器支持此短请求；还未开始施工。");
                     return true;
                 }
+            } catch (HologramStockNativeWire.InvalidConfirmation invalid) {
+                // PROBE itself never starts a task. Report local contract errors separately from a missing channel.
+                active = null;
+                com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Stock construction probe rejected its input", invalid);
+                owner.notice.accept("未提交施工：控制器参数未通过检查，请重新读取现场。");
+                return false;
             } catch (RuntimeException | LinkageError failed) {
-                // PROBE cannot start a task, even if a receiver processed it before the transport error.
+                active = null;
+                com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Stock construction probe transport failed", failed);
+                owner.notice.accept("未提交施工：能力查询发送出错，详情见客户端日志。");
+                return false;
             }
             active = null;
-            owner.notice.accept("未提交施工：服务器能力确认未发出。");
+            owner.notice.accept("未提交施工：服务器连接通道未就绪。");
             return false;
         }
 

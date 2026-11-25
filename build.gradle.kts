@@ -83,7 +83,12 @@ mapOf(
     "runStorageDrawersModelTest" to "com.miaokatze.gtmb.client.compat.storagedrawers.StorageDrawersModelRegression",
     "runInvisibleModelTest" to "com.miaokatze.gtmb.client.hologram.NativeInvisibleRegression",
     "runStorageCompatibilityTest" to "com.miaokatze.gtmb.hologram.StorageContainerCompatibilityRegression",
-    "runMeOutputDisplayTest" to "com.miaokatze.gtmb.client.hologram.HologramMeOutputDisplayRegression"
+    "runMeOutputDisplayTest" to "com.miaokatze.gtmb.client.hologram.HologramMeOutputDisplayRegression",
+    "runStockFacingDispatchTest" to "com.miaokatze.gtmb.client.hologram.HologramStockFacingDispatchRegression",
+    "runLiveControllerSiteTest" to "com.miaokatze.gtmb.hologram.HologramLiveControllerSiteRegression",
+    "runMaterialNamesTest" to "com.miaokatze.gtmb.client.hologram.HologramMaterialNamesRegression",
+    "runNativeFirstSaveTest" to "com.miaokatze.gtmb.client.hologram.HologramNativeViewportRegression",
+    "runNativeLibraryConversionTest" to "com.miaokatze.gtmb.client.hologram.HologramLibraryNativeConversionRegression"
 ).forEach { (taskName, entryPoint) ->
     tasks.register<JavaExec>(taskName) {
         group = "verification"

@@ -187,9 +187,15 @@ public final class HologramStockNativeWire {
         return preparedAction(pending, Command.PROBE);
     }
 
+    /** A rejected local contract has never entered the transport. Do not confuse it with a socket failure. */
+    public static final class InvalidConfirmation extends IllegalArgumentException {
+        private static final long serialVersionUID = 1L;
+        private InvalidConfirmation() { super("Invalid stock native confirmation"); }
+    }
+
     private static NBTTagCompound preparedAction(Confirmation value, Command command) {
         if (value == null || !value.valid(command == Command.PROBE))
-            throw new IllegalArgumentException("Invalid stock native confirmation");
+            throw new InvalidConfirmation();
         var tag = action(value.key, command);
         tag.setString("tool", value.tool.toString());
         tag.setInteger("dimension", value.dimension);

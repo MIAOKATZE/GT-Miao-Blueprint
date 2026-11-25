@@ -6,6 +6,7 @@ package com.miaokatze.gtmb.client.hologram;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.UUID;
@@ -914,6 +915,8 @@ final class HologramLibraryClient {
                 row.setInteger("structures", entry.structures);
                 row.setInteger("schema", 2);
                 row.setLong("bytes", entry.bytes);
+                row.setBoolean("nativeFile", entry.nativeFile);
+                row.setBoolean("convertiblePair", entry.convertiblePair);
                 row.setBoolean("mine", !entry.id.startsWith("legacy:"));
                 labels.appendTag(row);
             }
@@ -941,12 +944,19 @@ final class HologramLibraryClient {
     }
 
     /** File conversion runs on the existing bounded worker and refreshes through the normal library UI route. */
-    void upgradeLocal(Runnable refreshCatalog) {
-        upgradeLocal(null,refreshCatalog);
+    void convertAllLocal(Runnable refreshCatalog) {
+        runLocalMaintenance(null, refreshCatalog);
     }
 
-    void upgradeLocal(String namedAlias, Runnable refreshCatalog) {
-        if (busy() || !beginBackgroundTask("升级本地蓝图")) return;
+    void convertSelectedLocal(String id, Runnable refreshCatalog) {
+        if (id == null || id.isEmpty()) return;
+        runLocalMaintenance(id, refreshCatalog);
+    }
+
+    private void runLocalMaintenance(String selectedId, Runnable refreshCatalog) {
+        String action = selectedId == null ? HologramUiText.projector("library.upgrade")
+            : HologramUiText.projector("library.convert_selected");
+        if (busy() || !beginBackgroundTask(action)) return;
         ensureStore();
         long token = generation;
         UpgradeTask upgrading = new UpgradeTask(backgroundTaskToken, token, false, refreshCatalog);
@@ -955,7 +965,7 @@ final class HologramLibraryClient {
         preparing = true;
         localProgressPhase = "library.disk";
         transferProgress.update("library:" + token, localProgressPhase, 0, 0, "steps", false, System.nanoTime());
-        status = "正在压缩并升级本地蓝图";
+        status = action;
         work(() -> {
             java.util.function.BooleanSupplier current = () -> token == generation
                 && upgrading.task == backgroundTaskToken
@@ -967,10 +977,11 @@ final class HologramLibraryClient {
                 upgrading.progressedAt = System.nanoTime();
             };
             String result;
-            if (namedAlias == null) result = store.upgradeLegacy(current, progress);
+            java.util.List<String> details = new java.util.ArrayList<>();
+            if (selectedId == null) result = store.convertAllLocal(current, progress, details);
             else {
                 progress.accept(0, 1);
-                result = store.commitSelectedNativeUpgrade(namedAlias,current);
+                result = store.commitSelectedNativeUpgrade(selectedId, current);
                 progress.accept(1, 1);
             }
             main(() -> {
@@ -978,8 +989,10 @@ final class HologramLibraryClient {
                 upgradeTask = null;
                 preparing = false;
                 status = result;
+                upgradeDetails.addAll(details);
+                for (String detail : details) com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Legacy conversion: " + detail);
                 progressCompleted();
-                finishBackgroundTask(backgroundTaskToken, true, result);
+                finishBackgroundTask(backgroundTaskToken, details.isEmpty(), result);
                 refreshLocal();
                 if (refreshCatalog != null) refreshCatalog.run();
             });
@@ -987,7 +1000,7 @@ final class HologramLibraryClient {
             if (token != generation || upgrading.task != backgroundTaskToken || upgradeTask != upgrading) return;
             upgradeTask = null;
             preparing = false;
-            status = "升级蓝图失败：" + HologramUiText.reason(error.getMessage());
+            status = action + "：" + HologramUiText.reason(error.getMessage());
             finishBackgroundTask(upgrading.task, false, status);
         });
     }
@@ -1735,11 +1748,11 @@ final class HologramLibraryClient {
         status = "正在读取蓝图预览";
         localProgressPhase = "library.read";
         work(() -> {
-            DisplaySource source = readSavedDisplaySource(id, store.savedDisplayPath(id), !placement, token, epoch);
+            var path = store.savedDisplayPath(id);
+            if (placement) requireNativePlacementFile(path);
+            DisplaySource source = readSavedDisplaySource(id, path, !placement, token, epoch);
             if (expected != null && !NativeBlueprintPairStore.sameReceipt(expected,source.nativeReceipt))
                 throw new IOException("已保存的蓝图版本已变化，请重新打开");
-            if(placement&&source.nativeReceipt==null)
-                throw new IOException("旧蓝图仍可查看和编辑。请在客户端蓝图库维护页填写本图名称或 ID，用“升级指定文件”转换并保存到原生格式，再施工。");
             if (placement) source.requireStoredUse();
             main(() -> {
                 if (discardedBrowse(token, epoch, placement)) return;
@@ -1787,6 +1800,12 @@ final class HologramLibraryClient {
     DisplaySource readDisplaySource(String key, java.nio.file.Path path, String localId, String publicId)
         throws java.io.IOException {
         return readDisplaySource(key, path, localId, publicId, false, generation, browseEpoch, false);
+    }
+
+    static void requireNativePlacementFile(HologramClientLibrary.SavedDisplayPath path) throws IOException {
+        if (!Files.isRegularFile(path.path())) throw new IOException("找不到所选蓝图，请刷新蓝图库");
+        if (!path.path().getFileName().toString().endsWith(".gtnb"))
+            throw new IOException(HologramUiText.projector("library.convert_before_place"));
     }
 
     DisplaySource readSavedDisplaySource(String id, HologramClientLibrary.SavedDisplayPath selected, boolean thumbnail,
@@ -1910,16 +1929,17 @@ final class HologramLibraryClient {
         long token = generation;
         work(() -> {
             HologramClientLibrary.LastSource source = store.lastSource(connection);
-            DisplaySource display = !source.publicLibrary && !source.localId.isEmpty() ? readSavedDisplaySource(
-                source.localId,
-                store.savedDisplayPath(source.localId),
-                false,
-                token,
-                browseEpoch) : null;
+            DisplaySource display = null;
+            if (!source.publicLibrary && !source.localId.isEmpty()) {
+                var path = store.savedDisplayPath(source.localId);
+                requireNativePlacementFile(path);
+                display = readSavedDisplaySource(source.localId, path, false, token, browseEpoch);
+            }
+            final DisplaySource ready = display;
             if (display != null) display.requireStoredUse();
             main(() -> {
                 if (token != generation) return;
-                if (display != null) startDisplay(display, true, browseEpoch);
+                if (ready != null) startDisplay(ready, true, browseEpoch);
                 else {
                     preparing = false;
                     if (source.publicLibrary) {

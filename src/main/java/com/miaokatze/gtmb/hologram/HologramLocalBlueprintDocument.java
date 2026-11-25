@@ -309,6 +309,12 @@ public final class HologramLocalBlueprintDocument {
         return authoredHere && fileId.isEmpty();
     }
 
+    /** Fresh literal captures can use the direct native save path without changing structure-draft semantics. */
+    public boolean nativeFirstSaveEligible() {
+        Preset source = document;
+        return unsavedLocalCapture() && "area".equals(source.controllerType) && source.structures.isEmpty();
+    }
+
     static HologramLocalBlueprintDocument fromCapture(Preset capture, int dimension, int x, int y, int z) {
         HologramLocalBlueprintDocument opened = fromCapture(capture);
         opened.sourceDimension = dimension;

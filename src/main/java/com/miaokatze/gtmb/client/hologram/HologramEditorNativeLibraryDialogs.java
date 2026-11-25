@@ -25,6 +25,7 @@ final class HologramEditorNativeLibraryDialogs {
         OVERWRITE,
         DELETE,
         ADMIN,
+        CONVERSION,
         PRESET
     }
 
@@ -48,6 +49,7 @@ final class HologramEditorNativeLibraryDialogs {
     }
 
     private Kind desired() {
+        if (ui.library.conversionPromptOpen()) return Kind.CONVERSION;
         if (ui.processing.processingPresetSaveReview()) return Kind.PRESET;
         if (ui.library.overwriteReview()) return Kind.OVERWRITE;
         if (ui.library.discardReview()) return Kind.DISCARD;
@@ -94,6 +96,7 @@ final class HologramEditorNativeLibraryDialogs {
                 () -> HologramLibraryAdminEditor.nativeHeight(ui.host.screenHeight()),
                 com.cleanroommc.modularui.widget.sizer.Unit.Measure.PIXEL);
         dialog.onCloseAction(() -> {
+            if (kind == Kind.CONVERSION) { ui.library.cancelConversionPrompt(); return; }
             if (kind == Kind.ADMIN) {
                 ui.library.libraryAdminDrawer(false);
                 return;
@@ -109,6 +112,19 @@ final class HologramEditorNativeLibraryDialogs {
             HologramEditorNativeTheme.label(() -> title(kind), HologramEditorNativeTheme.TITLE)
                 .widthRel(1f)
                 .height(22));
+        if (kind == Kind.CONVERSION) {
+            content.child(HologramEditorNativeTheme.label(() -> ui.library.conversionPromptName())
+                .widthRel(1f).height(22));
+            content.child(HologramEditorNativeTheme.label(() -> ui.library.promptCanConvert()
+                ? projector("library.convert_selected_help") : projector("library.convert_unpaired")).widthRel(1f).expanded());
+            Flow choices = Flow.row().widthRel(1f).height(24).childPadding(4);
+            choices.child(conversionChoice("library.upgrade_one", ui.library::promptCanConvert,
+                () -> ui.library.confirmConversionPrompt(false)));
+            choices.child(conversionChoice("library.upgrade", ui.library::nativeCanUpgrade,
+                () -> ui.library.confirmConversionPrompt(true)));
+            choices.child(conversionChoice("dialog.cancel", () -> true, ui.library::cancelConversionPrompt));
+            content.child(choices); dialog.child(content); return dialog;
+        }
         if (kind == Kind.ADMIN) admin(content);
         else if (kind == Kind.PRESET) {
             content.child(
@@ -169,6 +185,11 @@ final class HologramEditorNativeLibraryDialogs {
         return dialog;
     }
 
+    private ButtonWidget<?> conversionChoice(String key, BooleanSupplier enabled, Runnable click) {
+        return HologramEditorNativeTheme.button(() -> projector(key), null, click, enabled, () -> false, false)
+            .widthRel(1f).expanded().height(24);
+    }
+
     private void admin(Flow content) {
         content.child(
             ui.library.adminEditor()
@@ -213,7 +234,7 @@ final class HologramEditorNativeLibraryDialogs {
     }
 
     private String title(Kind kind) {
-        return kind == Kind.ADMIN ? projector("library.admin_title")
+        return kind == Kind.CONVERSION ? projector("library.convert_required") : kind == Kind.ADMIN ? projector("library.admin_title")
             : kind == Kind.DELETE ? projector("library.delete_selected")
                 : kind == Kind.PRESET ? projector("dialog.preset_title") : ui.library.nativeReviewTitle();
     }

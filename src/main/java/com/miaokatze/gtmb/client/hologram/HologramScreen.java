@@ -689,6 +689,16 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         return changes;
     }
 
+    static String localSiteCaption(NBTTagCompound data) {
+        if (!data.hasKey("siteOccupied", 3)) return "正在读取控制器现场";
+        int occupied = data.getInteger("siteOccupied"), unknown = data.getInteger("siteUnknown");
+        String description = occupied > 0
+            ? "现场：" + occupied + " 格非空，" + data.getInteger("siteHatches") + " 个仓室"
+            : unknown > 0 ? "现场：已读取范围内未见机身" : "现场：仅控制器";
+        return description + " · 缺 " + data.getInteger("siteMissing") + "，与目标不同 "
+            + data.getInteger("siteDifferent") + (unknown > 0 ? "，未确认 " + unknown : "");
+    }
+
     private void advanceLocalControllerConfiguration() {
         if (localControllerCapabilities != null || localControllerDetails != null) return;
         localControllerCapabilities = localController.readyCapabilities();
@@ -705,7 +715,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             NBTTagCompound details = localController
                 .stepDetails(LOCAL_CONTROLLER_FRAME_ROWS, Math.max(1, deadline - System.nanoTime()));
             if (details == null) return null;
-            details.setString("status", HologramClient.text("controllerLocalStandard", "本地标准结构"));
+            details.setString("status", localSiteCaption(details));
             NBTTagCompound preferences = localControllerPreferences(current.data);
             for (Object name : preferences.func_150296_c()) {
                 String key = (String) name;
@@ -783,6 +793,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     private void publishLocalController(HologramState state, HologramRuntimeMetrics.LoadStage stage) {
         long install = HologramRuntimeMetrics.start();
         try {
+            ui.preview.chooseControllerSiteView(state.data);
             updateState(state);
             HologramRuntimeMetrics.loadStage(stage, state.data, -1, state.cells.size());
         } finally {
