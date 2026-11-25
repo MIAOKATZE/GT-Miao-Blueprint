@@ -14,7 +14,7 @@ final class HologramWorkBudget {
     private static long tickDeadline, quotaDeadline;
     private static java.util.function.LongSupplier clock;
     private static Thread serverTickOwner;
-    private static long serverTickStarted;
+    private static long serverTickStarted, serverTickSerial;
 
     private HologramWorkBudget() {}
 
@@ -36,6 +36,12 @@ final class HologramWorkBudget {
     static void startServerTick() {
         serverTickOwner = Thread.currentThread();
         serverTickStarted = System.nanoTime();
+        serverTickSerial++;
+    }
+
+    /** Stable throughout this server tick, including multiple service advances and dimensions. */
+    static long serverTickSerial() {
+        return serverTickSerial;
     }
 
     static void endServerTick() {

@@ -862,6 +862,7 @@ public final class HologramAeBlueprintCoreRegression {
             !placement.hasKey("gtmb.quantumSides") && placement.hasKey("partContainer", 10),
             "placement removes only presentation metadata and retains the payable native component container");
         HologramBlueprintResources.Plan bill = HologramAeBlueprint.resourcePlan(node, 0, reloaded, shell);
+        HologramStaticMaterialsRegression.assertResolvedRepeat(node, 0, shell, reloaded, null);
         ItemStack nativeIdentity = HologramNativePlacement.sample(node, 0, reloaded);
         check(
             nativeIdentity != null && nativeIdentity.isItemEqual(shell)

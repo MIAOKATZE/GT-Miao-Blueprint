@@ -107,7 +107,7 @@ public final class HologramLibraryRegression {
             global.set(
                 null,
                 unsafe().allocateInstance(Class.forName("net.minecraft.server.integrated.IntegratedServer")));
-            for (String operation : new String[] { "previewBegin", "saveStatus", "cancel" }) {
+            for (String operation : new String[] { "saveResultConsumed", "saveStatus", "cancel" }) {
                 NBTTagCompound request = HologramLibraryProtocol.request(operation);
                 request.setLong("clientTaskToken", 919);
                 HologramLibraryFacade.receive(actor, request);
@@ -123,9 +123,6 @@ public final class HologramLibraryRegression {
                 globalQuota.release(chunk);
                 pending.remove(HologramLibraryFacade.actorId(actor), quota);
             }
-            SimpleAssert.that(
-                HologramLibraryFacade.integratedOperation("previewChunk"),
-                "integrated transport permits the save receipt chunk operation type");
             NBTTagCompound unadmitted = HologramLibraryProtocol.request("previewChunk");
             unadmitted.setLong("clientTaskToken", 919);
             unadmitted.setString(
@@ -135,7 +132,13 @@ public final class HologramLibraryRegression {
             unadmitted.setInteger("index", 0);
             unadmitted.setByteArray("data", new byte[] { 1 });
             HologramLibraryFacade.receive(actor, unadmitted);
-            SimpleAssert.that(queue.isEmpty(), "integrated chunks without an admitted transfer lease stay rejected");
+            HologramLibraryFacade.receive(actor, HologramLibraryProtocol.request("previewBegin"));
+            SimpleAssert.that(queue.isEmpty(), "retired whole-preview traffic has no integrated mailbox");
+            global.set(null, unsafe().allocateInstance(net.minecraft.server.dedicated.DedicatedServer.class));
+            HologramLibraryFacade.receive(actor, unadmitted);
+            HologramLibraryFacade.receive(actor, HologramLibraryProtocol.request("previewBegin"));
+            SimpleAssert.that(queue.isEmpty(), "retired whole-preview traffic has no dedicated mailbox");
+            global.set(null, unsafe().allocateInstance(Class.forName("net.minecraft.server.integrated.IntegratedServer")));
             SimpleAssert.that(
                 !pending.containsKey(HologramLibraryFacade.actorId(actor)),
                 "rejected unadmitted chunks retain no ingress quota");
@@ -146,8 +149,8 @@ public final class HologramLibraryRegression {
                     .that(queue.isEmpty(), "integrated wire ignores public and retired operations: " + operation);
             }
             SimpleAssert.that(
-                !HologramLibraryService.saveCurrent(actor, HologramLibraryProtocol.request("previewBegin")),
-                "admitting save transport does not admit an absent projector session");
+                !HologramLibraryService.saveCurrent(actor, HologramLibraryProtocol.request("saveStatus")),
+                "admitting save status transport does not admit an absent projector session");
         } finally {
             global.set(null, previous);
         }
@@ -1300,21 +1303,21 @@ public final class HologramLibraryRegression {
         denied(
             () -> new HologramLibraryProtocol.UploadWindow(transfer, 71, slice).ready(badReady),
             "partial resume is not silently introduced");
-        NBTTagCompound previewBegin = HologramLibraryProtocol.request("previewBegin");
-        previewBegin.setString("transfer", transfer);
-        previewBegin.setInteger("total", slice);
-        previewBegin.setLong("clientTaskToken", 71);
-        previewBegin.setLong("clientTaskToken", 92); // Actual previewBegin restores the original save task token.
-        HologramLibraryProtocol.UploadWindow preview = new HologramLibraryProtocol.UploadWindow(previewBegin);
+        NBTTagCompound explicitBegin = HologramLibraryProtocol.request("uploadBegin");
+        explicitBegin.setString("transfer", transfer);
+        explicitBegin.setInteger("total", slice);
+        explicitBegin.setLong("clientTaskToken", 71);
+        explicitBegin.setLong("clientTaskToken", 92); // Constructor binds the submitted task token.
+        HologramLibraryProtocol.UploadWindow explicit = new HologramLibraryProtocol.UploadWindow(explicitBegin);
         SimpleAssert
-            .eq(92L, preview.task(), "sender binds the actual Begin override rather than ambient background state");
+            .eq(92L, explicit.task(), "sender binds the actual Begin override rather than ambient background state");
         SimpleAssert
-            .that(!preview.ready(uploadReply(transfer, 71, 0)), "ambient other task cannot start preview sender");
-        SimpleAssert.that(preview.ready(uploadReply(transfer, 92, 0)), "original preview task accepts matching ready");
-        preview.sent(0);
-        SimpleAssert.that(!preview.complete(uploadReply(transfer, 71, 1)), "old-task final cannot complete preview");
+            .that(!explicit.ready(uploadReply(transfer, 71, 0)), "ambient other task cannot start upload sender");
+        SimpleAssert.that(explicit.ready(uploadReply(transfer, 92, 0)), "original upload task accepts matching ready");
+        explicit.sent(0);
+        SimpleAssert.that(!explicit.complete(uploadReply(transfer, 71, 1)), "old-task final cannot complete upload");
         SimpleAssert
-            .that(preview.complete(uploadReply(transfer, 92, 1)), "preview final binds the original task and transfer");
+            .that(explicit.complete(uploadReply(transfer, 92, 1)), "upload final binds the original task and transfer");
 
         ready.setInteger("uploadWindow", 8);
         HologramLibraryProtocol.UploadWindow sender = new HologramLibraryProtocol.UploadWindow(
@@ -1395,7 +1398,7 @@ public final class HologramLibraryRegression {
 
         HologramLibraryProtocol.RequestQueue queue = new HologramLibraryProtocol.RequestQueue();
         NBTTagCompound data = uploadReply(transfer, 71, 1);
-        data.setString("op", "previewChunk");
+        data.setString("op", "uploadChunk");
         SimpleAssert.that(!queue.offer(data, false), "worker mailbox also requires admitted data");
         for (int i = 0; i < 8; i++) SimpleAssert.that(queue.offer(data, true), "worker data window is bounded");
         SimpleAssert.that(!queue.offer(data, true), "worker refuses a ninth data chunk");

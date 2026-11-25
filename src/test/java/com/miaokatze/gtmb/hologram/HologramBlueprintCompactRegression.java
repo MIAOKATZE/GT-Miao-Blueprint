@@ -305,9 +305,9 @@ public final class HologramBlueprintCompactRegression {
         SimpleAssert.that(!legacy.packedAuthoring() && lazy.packedAuthoring(), "experiment defaults to legacy");
         var unmanaged = HologramLocalBlueprintDocument.openForEditor(exact, "", () -> true, view -> {}, true);
         SimpleAssert.that(
-            !unmanaged.document()
+            unmanaged.document()
                 .packedAuthoring(),
-            "named or public imports stay on the legacy writer");
+            "named or public local imports retain compact authoring without server authority");
         JsonObject expandedRoot = HologramBlueprintCompactCodec.parse(exact);
         NBTTagCompound packedSnapshot = stableSnapshot(legacy);
         for (JsonObject input : new JsonObject[] { expandedRoot, expandedRoot.getAsJsonObject("blueprint") }) {
@@ -668,7 +668,7 @@ public final class HologramBlueprintCompactRegression {
             "UTF-8 still fails before either structural reader");
         SimpleAssert.eq(
             "蓝图文件大小超出范围",
-            localRejected(new byte[HologramBlueprintArtifact.MAX_JSON_BYTES + 1], () -> true).getMessage(),
+            localRejected(new byte[HologramBlueprintLimits.LOCAL_FILE_BYTES + 1], () -> true).getMessage(),
             "local raw-byte limit precedes decode and packing");
     }
 

@@ -150,7 +150,8 @@ public final class HologramStockNativeClientRegression {
             var generic = new NBTTagCompound();
             generic.setString("placementRequestId", cold.request().toString());
             generic.setBoolean("placementRequestAccepted", true);
-            SimpleAssert.that(!screen.receiveLocalMaterialCheck(generic) && recorded.sent.size() == 1,
+            deliver(generic, connection);
+            SimpleAssert.that(recorded.sent.size() == 1,
                 "old generic placement/material reply does not authorize the new native attempt");
             deliver(proof, connection);
             deliver(proof, connection);
@@ -279,6 +280,7 @@ public final class HologramStockNativeClientRegression {
         var enabled = (Map<?, ?>) field(HologramMaterialConfirmationDialog.class, "enabledControls").get(dialog);
         SimpleAssert.that(enabled.get(55) instanceof BooleanSupplier available && available.getAsBoolean(),
             "real footer registered the enabled predicate for default control 55");
+        SimpleAssert.that(!enabled.containsKey(248), "real native material footer no longer mounts an old compatibility button");
         ButtonWidget<?> submit = null;
         for (var child : panel.getChildren()) {
             if (child instanceof ButtonWidget<?> button && button.getOverlay() instanceof IKey label
@@ -296,7 +298,10 @@ public final class HologramStockNativeClientRegression {
     private static void deliver(Reply reply, NetHandlerPlayClient handler) throws ReflectiveOperationException {
         var encode = HologramStockNativeWire.class.getDeclaredMethod("writeReply", Reply.class);
         encode.setAccessible(true);
-        var tag = (NBTTagCompound) encode.invoke(null, reply);
+        deliver((NBTTagCompound) encode.invoke(null, reply), handler);
+    }
+
+    private static void deliver(NBTTagCompound tag, NetHandlerPlayClient handler) throws ReflectiveOperationException {
         var packetType = HologramNetwork.State.class.getDeclaredConstructor(NBTTagCompound.class);
         packetType.setAccessible(true);
         var context = MessageContext.class.getDeclaredConstructor(INetHandler.class, Side.class);

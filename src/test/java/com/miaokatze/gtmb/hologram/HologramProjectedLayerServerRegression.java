@@ -63,12 +63,34 @@ public final class HologramProjectedLayerServerRegression {
         Field field = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
         field.setAccessible(true);
         sun.misc.Unsafe unsafe = (sun.misc.Unsafe) field.get(null);
+        // This detached suite has no FML mod-discovery phase. Native AE/StructureLib source registries still
+        // read Loader's mod map during static initialization; provide the empty discovered-mod set, not a
+        // substitute material implementation.
+        var names = cpw.mods.fml.common.Loader.class.getDeclaredField("namedMods");
+        names.setAccessible(true);
+        var loader = cpw.mods.fml.common.Loader.instance();
+        Object previousNames = names.get(loader);
+        if (previousNames == null) names.set(loader, new HashMap<>());
+        net.minecraft.launchwrapper.Launch.classLoader.registerTransformer(
+            HologramSourceRegistryFixtureTransformer.class.getName());
+        appeng.core.AEConfig previousAeConfig = appeng.core.AEConfig.instance;
+        if (previousAeConfig == null) {
+            var config = (appeng.core.AEConfig) unsafe.allocateInstance(appeng.core.AEConfig.class);
+            Field flags = appeng.core.AEConfig.class.getDeclaredField("featureFlags");
+            flags.setAccessible(true);
+            flags.set(config, java.util.EnumSet.noneOf(appeng.core.features.AEFeature.class));
+            config.grinderOres = new String[0];
+            appeng.core.AEConfig.instance = config;
+        }
         Path old = HologramConstructionJournal.STORAGE_ROOT.get();
         Path root = Files.createTempDirectory("gtmb-projected-server-");
         HologramConstructionJournal.STORAGE_ROOT.set(root);
         try {
             authenticatedFirstWriteAndReplay(unsafe);
+            bufferedLayersRespectServerTickCadence(unsafe);
+            unsupportedReviewedProfileCannotStart(unsafe);
             ordinaryMainFirstDoesNotChangeSources(unsafe);
+            selectedBackpackPaysOnlyActualPlacements(unsafe);
             reentrantBeginDoesNotAdoptChangedOwner(unsafe);
             rejectedBeginAndControls(unsafe);
             stopOvertakesBeginAndRevokedGateIsNotActive(unsafe);
@@ -76,12 +98,99 @@ public final class HologramProjectedLayerServerRegression {
             stopQueuedDuringFirstPaidPlacement(unsafe, false);
             staleEpochAndLateRetirement(unsafe);
         } finally {
+            appeng.core.AEConfig.instance = previousAeConfig;
+            names.set(loader, previousNames);
             if (old == null) HologramConstructionJournal.STORAGE_ROOT.remove();
             else HologramConstructionJournal.STORAGE_ROOT.set(old);
             try (Stream<Path> paths = Files.walk(root)) {
                 for (Path path : (Iterable<Path>) paths.sorted(Comparator.reverseOrder())::iterator)
                     Files.deleteIfExists(path);
             }
+        }
+    }
+
+    private static void unsupportedReviewedProfileCannotStart(sun.misc.Unsafe unsafe) throws Exception {
+        try (Fixture fixture = new Fixture(unsafe, 1)) {
+            fixture.login();
+            long generation = fixture.generation();
+            UUID id = UUID.randomUUID();
+            String stone = "minecraft:stone";
+            var row = new HologramProjectedVariantPricing.Row(stone, stone, 0, 0, -1, false, "", "", 1);
+            Header header = Header.reviewed(id, 0, 64, 0, 0, 64, 0, 0, 64, 0, 1, 1,
+                Collections.singletonList(Variant.reviewed(row)));
+            byte[] slice = HologramProjectedLayerWire.encodeSlice(
+                new Slice(id, 0, 64, new int[] { 0, 0, 0 }));
+            byte[] metadataProfile = HologramProjectedLayerWire.encodeReviewedManifest(
+                new Manifest(header));
+            fixture.approve(id, generation, 1);
+            fixture.send(fixture.player, HologramProjectedLayerTransport.begin(id, 1, generation, metadataProfile));
+            fixture.nextServerTick();
+            Reply response = fixture.last();
+            require(response != null && response.phase == Phase.REJECTED && response.acknowledgement() == null
+                && fixture.stock() == 1 && fixture.world.writes().isEmpty(),
+                "reviewed metadata is never a paid placement permit in the formal plain ingress");
+        }
+    }
+
+    private static void bufferedLayersRespectServerTickCadence(sun.misc.Unsafe unsafe) throws Exception {
+        int baseY = 64, sections = 7;
+        try (Fixture fixture = new Fixture(unsafe, sections)) {
+            fixture.login();
+            long generation = fixture.generation();
+            UUID id = UUID.randomUUID();
+            String stone = "minecraft:stone";
+            Header header = new Header(id, 0, baseY, 0, 0, baseY, 0, 0, baseY + sections - 1, 0,
+                sections, sections, Collections.singletonList(new Variant(stone, 0, stone, 0, -1, false, "", "",
+                    sections)));
+            byte[][] frames = new byte[sections][];
+            for (int i = sections - 1; i >= 0; i--) {
+                frames[i] = HologramProjectedLayerWire.encodeSlice(
+                    new Slice(id, i, baseY + i, new int[] { 0, 0, 0 }));
+            }
+            fixture.approve(id, generation, 1);
+            fixture.send(fixture.player, HologramProjectedLayerTransport.begin(id, 1, generation,
+                HologramProjectedLayerWire.encodeManifest(new Manifest(header))));
+            fixture.nextServerTick();
+            Reply admitted = fixture.last();
+            require(admitted.phase == Phase.AWAITING_SLICE && ack(admitted).credit == 1
+                && admitted.acceptedSlices == 0 && fixture.stock() == sections && fixture.world.writes().isEmpty(),
+                "authorized encoded BEGIN issues only dry admission before any geometry or payment");
+
+            fixture.world.arm();
+            for (byte[] frame : frames) fixture.send(fixture.player,
+                HologramProjectedLayerTransport.slice(id, 1, generation, frame));
+
+            long firstTick = fixture.nextServerTick();
+            Reply firstGroup = fixture.last();
+            require(firstGroup.phase == Phase.PLACING && firstGroup.acceptedSlices == sections
+                && firstGroup.settledSlices == 6 && firstGroup.placed == 6 && ack(firstGroup).settledCells == 6
+                && fixture.stock() == 1 && fixture.world.writes().size() == 6,
+                "one server tick accepts all seven encoded frames but pays and writes only the first six layers");
+            for (int y = baseY; y < baseY + 6; y++) require(fixture.world.getBlock(0, y, 0) == Blocks.stone,
+                "each paid first-group layer exists at its exact coordinate");
+            require(fixture.world.getBlock(0, baseY + 6, 0) == Blocks.air, "seventh layer remains unplaced");
+
+            fixture.tick(); // Re-enter the serving owner with the same server START serial.
+            require(HologramWorkBudget.serverTickSerial() == firstTick && fixture.world.writes().size() == 6,
+                "an additional service advancement in the same tick cannot advance the layer cadence");
+            for (int elapsed = 1; elapsed < 10; elapsed++) {
+                require(fixture.nextServerTick() == firstTick + elapsed && fixture.stock() == 1
+                    && fixture.world.writes().size() == 6 && fixture.world.getBlock(0, baseY + 6, 0) == Blocks.air,
+                    "ticks one through nine neither write nor debit the staged seventh layer");
+            }
+
+            require(fixture.nextServerTick() == firstTick + 10, "tenth actual server tick reached without sleeping");
+            Reply done = fixture.last();
+            ActionEndpoint endpoint = HologramWorkspace.captureActionEndpoint(fixture.player.playerNetServerHandler);
+            var gate = HologramWorkspace.constructionGate(endpoint);
+            var view = gate.query(endpoint.constructionScope,
+                new HologramConstructionTaskGate.Request(id, 1, HologramConstructionTaskGate.Kind.PROJECTED_LAYER));
+            require(done.phase == Phase.COMPLETE && done.acceptedSlices == sections && done.settledSlices == sections
+                && done.placed == sections && done.alreadySatisfied == 0 && ack(done).complete
+                && fixture.stock() == 0 && fixture.world.writes().size() == sections
+                && fixture.world.getBlock(0, baseY + 6, 0) == Blocks.stone
+                && view.committedTransactions == sections && view.outcome.end == HologramConstructionTaskGate.End.COMPLETE,
+                "seventh layer pays and writes only at tick ten; terminal receipt agrees with the owned gate");
         }
     }
 
@@ -210,18 +319,14 @@ public final class HologramProjectedLayerServerRegression {
             fixture.approve(first, 1);
             fixture.send(fixture.player, first.begin(1));
             fixture.tick();
-            require(fixture.last().phase == Phase.REJECTED && fixture.last().reason == Reason.ADMISSION_REFUSED
-                && fixture.last().acknowledgement() == null && fixture.stock() == 3,
-                "container-first must not switch to main even when it would have had enough");
-            normal.containers = false; // The player can explicitly choose no containers and try a fresh request.
-            HologramMaterials.write(fixture.player.getHeldItem(), normal);
-            Plan changed = new Plan();
-            changed.generation = fixture.generation();
-            fixture.approve(changed, 2);
-            fixture.send(fixture.player, changed.begin(2));
+            require(ack(fixture.last()).credit == 1 && fixture.stock() == 3,
+                "container-first remains selected and may fall back to enabled main when no matching container exists");
+            fixture.world.arm();
+            fixture.send(fixture.player, first.first(1));
             fixture.tick();
-            require(ack(fixture.last()).credit == 1 && fixture.stock() == 3 && fixture.world.writes().isEmpty(),
-                "disabled containers do not block main, nor enable wireless ME");
+            require(fixture.last().placed == 2 && fixture.stock() == 1
+                && HologramMaterials.read(fixture.player.getHeldItem()).priority == 1,
+                "container-first default settings reach actual projected placement without being rewritten");
         }
         try (Fixture fixture = new Fixture(unsafe, 2)) {
             Plan shortfall = new Plan();
@@ -235,8 +340,111 @@ public final class HologramProjectedLayerServerRegression {
             require(fixture.last().phase == Phase.REJECTED && fixture.last().reason == Reason.MISSING_STOCK
                 && fixture.last().acknowledgement() == null && fixture.stock() == 2
                 && fixture.world.writes().isEmpty() && !HologramProjectedLayerService.active(fixture.player),
-                "a default main shortfall has no provider fallback and returns no geometry credit");
+                "a selected-source shortfall with no carried provider returns no geometry credit");
         }
+    }
+
+    private static void selectedBackpackPaysOnlyActualPlacements(sun.misc.Unsafe unsafe) throws Exception {
+        final String bagKey = "gtmbProjectedSourceFixture";
+        com.gtnewhorizon.structurelib.util.InventoryUtility.registerStackExtractor(
+            "gtmb_projected_source_fixture",
+            new com.gtnewhorizon.structurelib.util.InventoryUtility.ItemStackExtractor() {
+                @Override
+                public boolean isAPIImplemented(APIType api) {
+                    return api == APIType.MAIN || api == APIType.IS_VALID_SOURCE;
+                }
+
+                @Override
+                public boolean isValidSource(ItemStack bag, EntityPlayerMP player) {
+                    return bag.hasTagCompound() && bag.getTagCompound().hasKey(bagKey);
+                }
+
+                @Override
+                public int takeFromStack(java.util.function.Predicate<ItemStack> predicate, boolean simulate, int count,
+                    com.gtnewhorizon.structurelib.util.InventoryUtility.ItemStackCounter counter, ItemStack source,
+                    ItemStack exact, EntityPlayerMP player) {
+                    ItemStack stone = new ItemStack(Blocks.stone);
+                    if (!predicate.test(stone)) return 0;
+                    int amount = Math.min(count, source.getTagCompound().getInteger(bagKey));
+                    source.getTagCompound().setInteger(bagKey,
+                        source.getTagCompound().getInteger(bagKey) - amount);
+                    counter.add(stone, amount);
+                    return amount;
+                }
+            });
+        for (boolean reject : new boolean[] { false, true }) try (Fixture fixture = new Fixture(unsafe, 0)) {
+            fixture.player.inventory.mainInventory[1] = null;
+            ItemStack bag = new ItemStack(net.minecraft.init.Items.writable_book);
+            bag.setTagCompound(new NBTTagCompound());
+            bag.getTagCompound().setInteger(bagKey, 3);
+            fixture.player.inventory.mainInventory[2] = bag;
+            var selected = new HologramMaterials.Settings();
+            selected.main = selected.me = false;
+            selected.containers = true;
+            selected.priority = 1;
+            HologramMaterials.write(fixture.player.getHeldItem(), selected);
+            fixture.login();
+            Plan plan = new Plan();
+            plan.generation = fixture.generation();
+            fixture.approve(plan, 1);
+            fixture.send(fixture.player, plan.begin(1));
+            fixture.tick();
+            require(ack(fixture.last()).credit == 1
+                && fixture.player.inventory.mainInventory[2].getTagCompound().getInteger(bagKey) == 3,
+                "ordinary authenticated BEGIN admits a selected native backpack without main stock and without debit");
+            fixture.world.seed(1, 64, 0, Blocks.stone, 0);
+            fixture.world.arm();
+            Field bus = MinecraftForge.class.getDeclaredField("EVENT_BUS");
+            Object base = unsafe.staticFieldBase(bus);
+            long offset = unsafe.staticFieldOffset(bus);
+            EventBus prior = MinecraftForge.EVENT_BUS;
+            if (reject) unsafe.putObjectVolatile(base, offset, new EventBus() {
+                @Override
+                public boolean post(Event event) {
+                    if (event instanceof BlockEvent.PlaceEvent place && place.player == fixture.player
+                        && place.world == fixture.world) {
+                        event.setCanceled(true);
+                        return true;
+                    }
+                    return false;
+                }
+            });
+            try {
+                fixture.send(fixture.player, plan.first(1));
+                fixture.tick();
+                if (!reject) {
+                    require(fixture.last().placed == 1 && fixture.last().alreadySatisfied == 1
+                        && fixture.player.inventory.mainInventory[2].getTagCompound().getInteger(bagKey) == 2,
+                        "existing exact cell is free; actual new cell extracts exactly once from selected backpack");
+                    fixture.send(fixture.player, plan.first(1));
+                    fixture.tick();
+                    require(fixture.player.inventory.mainInventory[2].getTagCompound().getInteger(bagKey) == 2,
+                        "settled ordinary packet replay cannot debit backpack twice");
+                    fixture.send(fixture.player, plan.tail(1));
+                    fixture.tick();
+                    require(fixture.last().phase == Phase.COMPLETE && fixture.last().placed == 2
+                        && fixture.player.inventory.mainInventory[2].getTagCompound().getInteger(bagKey) == 1,
+                        "ordinary formal packet path finishes with exactly two successful placement payments");
+                } else require(fixture.last().phase == Phase.STOPPED && fixture.last().placed == 0
+                    && fixture.world.getBlock(0, 64, 0) == Blocks.air
+                    && fixture.player.inventory.mainInventory[2].getTagCompound().getInteger(bagKey) + looseStone(fixture.player) == 3
+                    && !HologramConstructionJournal.pending(fixture.player),
+                    "Forge-rejected ordinary placement preserves native post-extraction backpack state, returns exact material, and leaves no net debit: phase="
+                        + fixture.last().phase + ",placed=" + fixture.last().placed + ",block="
+                        + fixture.world.getBlock(0, 64, 0) + ",bag="
+                        + fixture.player.inventory.mainInventory[2].getTagCompound().getInteger(bagKey)
+                        + ",pending=" + HologramConstructionJournal.pending(fixture.player));
+            } finally {
+                unsafe.putObjectVolatile(base, offset, prior);
+            }
+        }
+    }
+
+    private static int looseStone(EntityPlayerMP player) {
+        int result = 0;
+        for (ItemStack stack : player.inventory.mainInventory) if (stack != null
+            && stack.isItemEqual(new ItemStack(Blocks.stone)) && !stack.hasTagCompound()) result += stack.stackSize;
+        return result;
     }
 
     private static void reentrantBeginDoesNotAdoptChangedOwner(sun.misc.Unsafe unsafe) throws Exception {
@@ -481,6 +689,7 @@ public final class HologramProjectedLayerServerRegression {
             });
             try {
                 fixture.send(fixture.player, plan.first(1));
+                if (sameKey) fixture.send(fixture.player, plan.tail(1));
                 fixture.tick();
             } finally {
                 unsafe.putObjectVolatile(base, offset, previous);
@@ -497,7 +706,7 @@ public final class HologramProjectedLayerServerRegression {
                 fixture.tick();
                 Reply stopped = fixture.last();
                 require(stopped.phase == Phase.STOPPED && stopped.reason == Reason.CANCELLED
-                    && stopped.controlSequence == 1 && stopped.placed == 1 && stopped.acceptedSlices == 1
+                    && stopped.controlSequence == 1 && stopped.placed == 1 && stopped.acceptedSlices == 2
                     && stopped.settledSlices == 0 && ack(stopped).aborted && fixture.stock() == 2
                     && fixture.world.writes().size() == 1,
                     "priority STOP dispatch reports exactly the paid prefix without settling the deferred slice");
@@ -603,11 +812,10 @@ public final class HologramProjectedLayerServerRegression {
             Header header = new Header(id, 0, 64, 0, 0, 64, 0, 1, 65, 0, 3, 2,
                 Collections.singletonList(new Variant(stone, 0, stone, 0, -1, false, "", "", 3)));
             tail = HologramProjectedLayerWire.encodeSlice(
-                new Slice(id, 1, 65, new int[] { 0, 0, 0 }, HologramProjectedLayerWire.end()));
-            first = HologramProjectedLayerWire.encodeSlice(new Slice(id, 0, 64, new int[] { 0, 0, 0, 1, 0, 0 },
-                HologramProjectedLayerWire.commitment(header, tail)));
+                new Slice(id, 1, 65, new int[] { 0, 0, 0 }));
+            first = HologramProjectedLayerWire.encodeSlice(new Slice(id, 0, 64, new int[] { 0, 0, 0, 1, 0, 0 }));
             manifest = HologramProjectedLayerWire.encodeManifest(
-                new Manifest(header, HologramProjectedLayerWire.commitment(header, first)));
+                new Manifest(header));
         }
 
         Request begin(long intent) {
@@ -672,8 +880,12 @@ public final class HologramProjectedLayerServerRegression {
         }
 
         void approve(Plan plan, long intent) {
+            approve(plan.id, plan.generation, intent);
+        }
+
+        void approve(UUID id, long generation, long intent) {
             ActionEndpoint endpoint = HologramWorkspace.captureActionEndpoint(player.playerNetServerHandler);
-            approvals.put(new Key(plan.id, intent, plan.generation), endpoint);
+            approvals.put(new Key(id, intent, generation), endpoint);
         }
 
         void send(EntityPlayerMP peer, Request packet) throws ReflectiveOperationException {
@@ -696,6 +908,16 @@ public final class HologramProjectedLayerServerRegression {
 
         void tick() {
             server.tick(Long.MAX_VALUE);
+        }
+
+        long nextServerTick() {
+            HologramWorkBudget.startServerTick(); // Same clock source used by the normal START/END lifecycle.
+            try {
+                tick();
+                return HologramWorkBudget.serverTickSerial();
+            } finally {
+                HologramWorkBudget.endServerTick();
+            }
         }
 
         Reply last() {

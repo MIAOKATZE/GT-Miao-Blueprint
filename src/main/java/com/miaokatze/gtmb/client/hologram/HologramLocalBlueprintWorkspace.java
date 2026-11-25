@@ -417,7 +417,7 @@ final class HologramLocalBlueprintWorkspace {
         String id = replaceId.isEmpty() ? "local_" + UUID.randomUUID() : replaceId;
         NBTTagCompound saveOptions = (NBTTagCompound) options.copy();
         double yaw = ui.preview.yaw(), pitch = ui.preview.pitch();
-        afterMaterialization(current, () -> tracedWork(current, Stage.DRAFT_IO_QUEUED, Stage.JSON_FREEZE_BEGIN, () -> {
+        tracedWork(current, Stage.DRAFT_IO_QUEUED, Stage.JSON_FREEZE_BEGIN, () -> {
             var prepared = current.draft.prepareSaveDraft(saveOptions, authorName, authorId, id, intent);
             byte[] json = prepared.artifact();
             mark(trace, Stage.JSON_READY);
@@ -470,7 +470,7 @@ final class HologramLocalBlueprintWorkspace {
                     }),
                     failure -> failed(current, failure));
             });
-        }));
+        });
     }
 
     private void saved(Task current, FrozenDraft saved, byte[] json) {
@@ -809,14 +809,14 @@ final class HologramLocalBlueprintWorkspace {
         if (ui.session.document() == null) return;
         Task current = begin("正在准备蓝图预览");
         if (current == null) return;
-        afterMaterialization(current, () -> work(current, () -> {
+        work(current, () -> {
             var draft = current.draft.freeze();
             main(() -> {
                 if (task != current) return;
                 task = null;
                 if (screenCurrent(current)) HologramLibraryClient.INSTANCE.previewDraftPlacement(draft);
             });
-        }));
+        });
     }
 
     private void prepareView(Task current, HologramLocalBlueprintDocument document, String notice) throws IOException {

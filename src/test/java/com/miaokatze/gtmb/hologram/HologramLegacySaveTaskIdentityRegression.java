@@ -3,6 +3,9 @@
 
 package com.miaokatze.gtmb.hologram;
 
+import java.io.IOException;
+import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.UUID;
 
@@ -11,7 +14,7 @@ import net.minecraft.nbt.NBTTagCompound;
 
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
-/** Exact legacy receipt settlement, independent of a scan's UI token or a new artifact transfer. */
+/** Owner-bound local receipt settlement independent of a scan's mutable UI token. */
 final class HologramLegacySaveTaskIdentityRegression {
 
     private HologramLegacySaveTaskIdentityRegression() {}
@@ -28,12 +31,11 @@ final class HologramLegacySaveTaskIdentityRegression {
         var results = HologramLibraryFacade.class.getDeclaredField("savedResults");
         results.setAccessible(true);
         var remember = HologramLibraryFacade.class
-            .getDeclaredMethod("rememberSavedResult", EntityPlayerMP.class, NBTTagCompound.class);
+            .getDeclaredMethod("rememberSavedResult", EntityPlayerMP.class, NBTTagCompound.class, byte[].class);
         remember.setAccessible(true);
         try {
             HologramWorkspace.activate(player.getUniqueID(), owner);
-            NBTTagCompound old = stage(owner, 79L, false);
-            remember.invoke(null, player, old);
+            NBTTagCompound old = stage(owner, 79L, true, remember);
             owner.blueprintClientTaskToken = 0L; // An ordinary scan may retire UI correlation independently.
             for (int form = 0; form < 4; form++) {
                 NBTTagCompound stale = (NBTTagCompound) old.copy();
@@ -47,26 +49,26 @@ final class HologramLegacySaveTaskIdentityRegression {
                 HologramLibraryFacade.resolveSavedResult(player, stale, true);
                 SimpleAssert.that(!HologramLibraryWorkflow.acknowledgeBlueprintSave(owner, stale)
                     && owner.blueprintSaveReceipt.equals(old.getString("saveReceipt")) && owner.blueprintDirty,
-                    "wrong or ill-typed task cannot ACK or cancel the exact staged old-verifier receipt: " + form);
+                    "wrong or ill-typed task cannot ACK or cancel the exact staged owner receipt: " + form);
             }
             SimpleAssert.that(HologramLibraryWorkflow.acknowledgeBlueprintSave(owner, old)
                 && owner.blueprintSaveReceipt.isEmpty() && !owner.blueprintDirty,
                 "the original positive token still ACKs even after unrelated UI correlation changes");
 
-            NBTTagCompound pending = stage(owner, 91L, true);
-            NBTTagCompound unbound = (NBTTagCompound) pending.copy();
-            unbound.setString("previewSha256", "");
-            remember.invoke(null, player, unbound);
+            NBTTagCompound pending = stage(owner, 91L, true, remember);
             owner.blueprintClientTaskToken = 90L;
             NBTTagCompound wrongCancel = (NBTTagCompound) pending.copy();
             wrongCancel.setLong("clientTaskToken", 90L);
             HologramLibraryFacade.resolveSavedResult(player, wrongCancel, true);
+            NBTTagCompound noLocalReceipt = (NBTTagCompound) pending.copy();
+            noLocalReceipt.removeTag("localSaveReceipt");
+            SimpleAssert.that(!HologramLibraryWorkflow.acknowledgeBlueprintSave(owner, noLocalReceipt)
+                && owner.blueprintDirty, "no old-verifier fallback can clear the exact issued owner token");
             SimpleAssert.that(HologramLibraryWorkflow.acknowledgeBlueprintSave(owner, pending)
                 && owner.blueprintSaveReceipt.isEmpty() && !owner.blueprintDirty,
                 "a staged positive client-only PNG receipt and its exact disk ACK remain valid");
 
-            NBTTagCompound cancelled = stage(owner, 111L, false);
-            remember.invoke(null, player, cancelled);
+            NBTTagCompound cancelled = stage(owner, 111L, true, remember);
             owner.blueprintClientTaskToken = 112L;
             HologramLibraryFacade.resolveSavedResult(player, cancelled, true);
             SimpleAssert.that(owner.blueprintSaveReceipt.isEmpty() && owner.blueprintDirty
@@ -74,12 +76,10 @@ final class HologramLegacySaveTaskIdentityRegression {
                 "the same exact old token can cancel instead, and a late ACK cannot revive it");
 
             for (boolean explicitZero : new boolean[] { false, true }) {
-                NBTTagCompound legacy = stage(owner, 0L, false);
-                if (!explicitZero) legacy.removeTag("clientTaskToken");
-                remember.invoke(null, player, legacy);
-                SimpleAssert.that(HologramLibraryWorkflow.acknowledgeBlueprintSave(owner, legacy)
+                NBTTagCompound receipt = stage(owner, 0L, explicitZero, remember);
+                SimpleAssert.that(HologramLibraryWorkflow.acknowledgeBlueprintSave(owner, receipt)
                     && owner.blueprintSaveReceipt.isEmpty() && !owner.blueprintDirty,
-                    "the actual token-zero compatibility receipt still ACKs, including omitted token");
+                    "token-zero owner receipts also settle the bound pair, including omitted token");
             }
             SimpleAssert.eq(0, world.writes().size(), "receipt bookkeeping does not write world blocks");
         } finally {
@@ -91,25 +91,41 @@ final class HologramLegacySaveTaskIdentityRegression {
         }
     }
 
-    private static NBTTagCompound stage(HologramSession owner, long task, boolean local) {
+    private static NBTTagCompound stage(HologramSession owner, long task, boolean hasToken, Method remember)
+        throws ReflectiveOperationException {
+        byte[] source = "{\"blueprint\":{\"name\":\"task_identity\",\"cells\":[]}}"
+            .getBytes(StandardCharsets.UTF_8);
+        String sourceDigest = HologramBlueprintArtifact.hash(source);
+        String previewDigest = HologramBlueprintArtifact.hash(new byte[] { 4, 5, 6 });
+        String boundDigest;
+        try {
+            boundDigest = HologramBlueprintPreviewBinding.boundJsonSha256(source, previewDigest);
+        } catch (IOException failure) {
+            throw new AssertionError("fixture source must support exact preview binding", failure);
+        }
         owner.blueprintClientTaskToken = task;
         owner.blueprintSaveReceipt = UUID.randomUUID().toString();
         owner.blueprintSaveLocalId = "local_" + UUID.randomUUID();
         owner.blueprintSaveRevision = owner.planRevision;
-        owner.blueprintSaveJsonSha256 = HologramBlueprintArtifact.hash(new byte[] { 1, 2, 3 });
-        owner.blueprintSavePreviewSha256 = local ? "" : HologramBlueprintArtifact.hash(new byte[] { 4, 5, 6 });
+        owner.blueprintSaveJsonSha256 = sourceDigest;
+        owner.blueprintSavePreviewSha256 = "";
         owner.blueprintDirty = true;
         NBTTagCompound proof = new NBTTagCompound();
-        proof.setString("op", "ackBlueprintSaved");
         proof.setString("session", owner.id);
         proof.setLong("planRevision", owner.blueprintSaveRevision);
         proof.setString("saveReceipt", owner.blueprintSaveReceipt);
         proof.setString("localId", owner.blueprintSaveLocalId);
-        proof.setLong("clientTaskToken", task);
-        proof.setString("jsonSha256", owner.blueprintSaveJsonSha256);
-        proof.setString("previewSha256", HologramBlueprintArtifact.hash(new byte[] { 4, 5, 6 }));
+        if (hasToken) proof.setLong("clientTaskToken", task);
+        proof.setString("jsonSha256", sourceDigest);
+        proof.setString("previewSha256", "");
         proof.setInteger("artifactVersion", HologramBlueprintArtifact.VERSION);
-        proof.setBoolean("localSaveReceipt", local);
-        return proof;
+        proof.setBoolean("localSaveReceipt", true);
+        remember.invoke(null, owner.player, proof, source);
+        NBTTagCompound ack = (NBTTagCompound) proof.copy();
+        ack.setString("op", "ackBlueprintSaved");
+        ack.setString("reviewedJsonSha256", sourceDigest);
+        ack.setString("jsonSha256", boundDigest);
+        ack.setString("previewSha256", previewDigest);
+        return ack;
     }
 }

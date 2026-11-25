@@ -37,8 +37,10 @@ import com.miaokatze.gtmb.hologram.HologramProjectedLayerWire.Variant;
  */
 final class HologramProjectedLayerService {
 
-    static final int MAX_SLICES = 4096;
-    private static final int MAX_OWNERS = 8, MAX_INSPECT = 32, MAX_TRANSACTIONS = 4;
+    static final int MAX_SLICES = (HologramProjectedLayerWire.MAX_CELLS
+        + HologramProjectedLayerWire.MAX_SLICE_CELLS - 1) / HologramProjectedLayerWire.MAX_SLICE_CELLS + 514;
+    // One partial chunk per admitted Y level (anchor +/-256), plus the first responsive prefix.
+    private static final int MAX_OWNERS = 8;
     private static final int MAX_OFFSET = 256; // This small lane never admits remote arbitrary world coordinates.
     private static final long MAX_IDLE_NANOS = 30_000_000_000L, MAX_PAUSED_NANOS = 300_000_000_000L;
     // Logical server thread only. A future ingress must also gate untrusted messages before queueing them.
@@ -165,7 +167,7 @@ final class HologramProjectedLayerService {
             adapters = HologramDeclarationAdapters.admissionGeneration();
             descriptors = HologramMaterialDescriptor.generation();
             held = new HologramSessionPolicy.PreparationTool(submitted);
-            configured = HologramProjectedMainPolicy.capture(HologramMaterials.read(submitted));
+            configured = HologramProjectedMainPolicy.captureSelected(HologramMaterials.read(submitted));
             originalToolId = toolId(submitted);
         }
 
@@ -191,7 +193,7 @@ final class HologramProjectedLayerService {
             return pinned() && header.maxY < world.getHeight() && anchor(player, header, true)
                 && available(player, origin)
                 && !ACTIVE.containsKey(actor) && ACTIVE.size() < MAX_OWNERS
-                && !HologramProjectedPlacementService.consumed(player, header.request.toString()) && pinned();
+                && !HologramConstructionReceipts.consumed(player, header.request.toString()) && pinned();
         }
 
         boolean transactionMatches(HologramSession tx) {
@@ -215,11 +217,12 @@ final class HologramProjectedLayerService {
     private final UUID actor;
     private final Header header;
     private final Receiver receiver;
+    private final HologramLayerCadence layerCadence;
     private final Material[] materials;
     private final HologramSession origin;
     private final HologramSession transaction;
     private final HologramProjectedMainPolicy.Snapshot configuredSources;
-    private final HologramMaterials.Settings mainScope;
+    private final HologramMaterials.Settings selectedScope;
     private final long workspaceEpoch, planRevision, nativeGeneration, materialGeneration, adapterGeneration;
     private final long descriptorGeneration;
     private final LongSupplier clock;
@@ -233,7 +236,7 @@ final class HologramProjectedLayerService {
     private Reason reason = Reason.NONE;
 
     private HologramProjectedLayerService(AdmissionFence proof, Manifest manifest, Material[] materials,
-        HologramSession transaction, LongSupplier clock, long now, HologramMaterials.Settings mainScope) {
+        HologramSession transaction, LongSupplier clock, long now, HologramMaterials.Settings selectedScope) {
         player = proof.player;
         origin = proof.origin;
         this.materials = materials;
@@ -241,7 +244,7 @@ final class HologramProjectedLayerService {
         this.clock = clock;
         boundary = proof.boundary;
         configuredSources = proof.configured;
-        this.mainScope = mainScope;
+        this.selectedScope = selectedScope;
         lastWork = now;
         actor = proof.actor;
         world = proof.world;
@@ -249,6 +252,7 @@ final class HologramProjectedLayerService {
         inventory = proof.inventory;
         inventorySlots = proof.slots;
         header = manifest.header;
+        layerCadence = new HologramLayerCadence(header.minY);
         receiver = new Receiver(manifest);
         workspaceEpoch = proof.workspaceEpoch;
         planRevision = proof.planRevision;
@@ -258,7 +262,7 @@ final class HologramProjectedLayerService {
         descriptorGeneration = proof.descriptors;
     }
 
-    /** The bound owner submits an actual construction intent. This slice supports observed main stock, not escrow. */
+    /** The bound owner submits an actual construction intent. This slice observes the selected stock and debits only successful transactions. */
     static HologramProjectedLayerService begin(EntityPlayerMP player, Manifest manifest, StockContract contract)
         throws IOException {
         return begin(player, manifest, contract, System::nanoTime);
@@ -298,16 +302,16 @@ final class HologramProjectedLayerService {
             materials[index] = material;
         }
         if (!proof.ready(header)) throw refusal();
-        HologramMaterials.Settings mainScope = proof.configured.mainScope();
-        HologramMaterials.Context stock = new HologramMaterials.Context(player, mainScope, proof.slot);
-        requireWholeMainStock(materials, stock);
+        HologramMaterials.Settings selectedScope = proof.configured.selectedScope();
+        HologramMaterials.Context stock = new HologramMaterials.Context(player, selectedScope, proof.slot);
+        requireSelectedStock(materials, stock);
         if (!proof.ready(header)) throw refusal();
         HologramSession tx = new HologramSession(player, header.x, header.y, header.z, false, 1);
         // The constructor calls markDirty and reads mutable world time. Do not bless a newer workspace or source.
         if (!proof.ready(header) || !proof.configured.configuredMatches(tx.materialSettings)
             || !proof.transactionMatches(tx)) throw refusal();
-        requireWholeMainStock(materials, stock);
-        tx.materialSettings = mainScope;
+        requireSelectedStock(materials, stock);
+        tx.materialSettings = selectedScope;
         tx.virtual = tx.virtualPlacement = tx.virtualLocked = true;
         tx.job = 1;
         tx.executionRequestId = header.request.toString();
@@ -320,10 +324,10 @@ final class HologramProjectedLayerService {
         tx.placementDeidentificationChosen = true;
         long now = clock.getAsLong();
         if (hasKnownRecovery(player) || !proof.ready(header) || !proof.transactionMatches(tx)) throw refusal();
-        requireWholeMainStock(materials, stock);
+        requireSelectedStock(materials, stock);
         if (!proof.pinned()) throw refusal();
-        var service = new HologramProjectedLayerService(proof, manifest, materials, tx, clock, now, mainScope);
-        HologramProjectedPlacementService.retire(player, header.request.toString());
+        var service = new HologramProjectedLayerService(proof, manifest, materials, tx, clock, now, selectedScope);
+        HologramConstructionReceipts.retire(player, header.request.toString());
         ACTIVE.put(proof.actor, service);
         return service;
     }
@@ -341,6 +345,9 @@ final class HologramProjectedLayerService {
         if ("minecraft:stone".equals(row.block)) block = Blocks.stone;
         else if ("minecraft:cobblestone".equals(row.block)) block = Blocks.cobblestone;
         else if ("minecraft:glass".equals(row.block)) block = Blocks.glass;
+        else if ("minecraft:stonebrick".equals(row.block)) block = Blocks.stonebrick;
+        else if ("minecraft:quartz_block".equals(row.block)) block = Blocks.quartz_block;
+        else if ("minecraft:glowstone".equals(row.block)) block = Blocks.glowstone;
         else throw refusal();
         // Explicit independent one-cell shells only: no state, support relationships, substitutions or paid NBT.
         if (!row.block.equals(row.item) || row.metadata != 0 || row.damage != 0
@@ -375,8 +382,7 @@ final class HologramProjectedLayerService {
 
     private static boolean quiet(EntityPlayerMP player, HologramSession origin) {
         if (HologramWorkspace.find(player.getUniqueID()) != origin || HologramDemolition.active(player)
-            || HologramAeCraftingOrders.active(player)
-            || HologramPlacementUpload.active(player) || HologramProjectedPlacementService.preparing(player))
+            || HologramAeCraftingOrders.active(player))
             return false;
         HologramArea area = HologramWorkspace.AREAS.get(player.getUniqueID());
         return (area == null || !area.selecting && !area.importing)
@@ -406,13 +412,13 @@ final class HologramProjectedLayerService {
 
     private static boolean stocked(Material[] materials, HologramMaterials.Context stock) {
         for (Material material : materials) if (material.remaining > 0
-            && stock.mainCount(material.item, material.remaining) < material.remaining) return false;
+            && stock.count(material.item, material.remaining) < material.remaining) return false;
         return true;
     }
 
-    private static void requireWholeMainStock(Material[] materials, HologramMaterials.Context stock) throws IOException {
+    private static void requireSelectedStock(Material[] materials, HologramMaterials.Context stock) throws IOException {
         if (!stocked(materials, stock))
-            throw new AdmissionFailure(Reason.MISSING_STOCK, "主背包材料不足，未发送施工分片，未开工。");
+            throw new AdmissionFailure(Reason.MISSING_STOCK, "所选材料来源不足，未发送施工分片，未开工。");
     }
 
     private static IOException refusal() {
@@ -441,7 +447,7 @@ final class HologramProjectedLayerService {
             && materialGeneration == MaterialVariants.generation()
             && adapterGeneration == HologramDeclarationAdapters.admissionGeneration()
             && descriptorGeneration == HologramMaterialDescriptor.generation()
-            && transaction.materialSettings == mainScope && configuredSources.mainScopeMatches(mainScope)
+            && transaction.materialSettings == selectedScope && configuredSources.selectedScopeMatches(selectedScope)
             && configuredSources.configuredMatches(HologramMaterials.read(tool));
     }
 
@@ -469,6 +475,7 @@ final class HologramProjectedLayerService {
         if (!active()) return Offer.CLOSED;
         busy = true;
         try {
+            boolean empty = receiver.pending() == null;
             Offer result = receiver.offer(encoded);
             if (result == Offer.ACCEPTED) {
                 if (!stocked(materials, stock())) {
@@ -480,10 +487,7 @@ final class HologramProjectedLayerService {
                     return Offer.CLOSED;
                 }
                 acceptedSlices++;
-                inspected = cursor = 0;
-                initiallySatisfied = new boolean[receiver.pending().slice.size()];
-                if (phase == Phase.PAUSED) beforePause = Phase.VALIDATING_SLICE;
-                else phase = Phase.VALIDATING_SLICE;
+                if (empty) startPending();
                 worked();
             }
             return result;
@@ -498,63 +502,77 @@ final class HologramProjectedLayerService {
         }
     }
 
-    /** Bound both read/preflight and existing journal-backed writes. No slice after the current ticket is retained. */
-    Status step(long deadline) {
+    private void startPending() {
+        inspected = cursor = 0;
+        initiallySatisfied = new boolean[receiver.pending().slice.size()];
+        if (phase == Phase.PAUSED) beforePause = Phase.VALIDATING_SLICE;
+        else phase = Phase.VALIDATING_SLICE;
+    }
+
+    /** Time-bounded journal writes across an ordered bounded window; no fixed cells-per-tick throttle. */
+    Status step(long deadline, long serverTick) {
         requireOwner();
         busy = true;
         try {
             if (!active() || phase == Phase.PAUSED || receiver.pending() == null) return new Status(this);
-            Ticket ticket = receiver.pending();
-            Slice slice = ticket.slice;
-            if (phase == Phase.VALIDATING_SLICE) {
-                for (int n = 0; n < MAX_INSPECT && inspected < slice.size() && System.nanoTime() < deadline; n++) {
-                    int observed = observe(slice, inspected);
+            while (!terminal() && receiver.pending() != null && System.nanoTime() < deadline) {
+                Ticket ticket = receiver.pending();
+                Slice slice = ticket.slice;
+                if (System.nanoTime() >= deadline) return new Status(this);
+                if (phase == Phase.VALIDATING_SLICE) {
+                    while (inspected < slice.size() && System.nanoTime() < deadline) {
+                        int observed = observe(slice, inspected);
+                        if (!active()) return new Status(this);
+                        if (observed < 0) return failed(Reason.BLOCKED);
+                        initiallySatisfied[inspected++] = observed == 1;
+                        worked();
+                    }
+                    if (inspected < slice.size()) return new Status(this);
+                    if (!stocked(materials, stock())) return failed(Reason.MISSING_STOCK);
+                    phase = Phase.PLACING;
+                    advance();
+                }
+                // The next group may prepare early, but cannot write until ten ticks after the prior group settles.
+                if (System.nanoTime() >= deadline || !layerCadence.enter(slice.y, serverTick)) return new Status(this);
+                HologramMaterials.Context stock = stock();
+                while (cursor < slice.size() && System.nanoTime() < deadline) {
                     if (!active()) return new Status(this);
-                    if (observed < 0) return failed(Reason.BLOCKED);
-                    initiallySatisfied[inspected++] = observed == 1;
+                    int observed = observe(slice, cursor);
+                    if (!active()) return new Status(this);
+                    if (observed < 0 || initiallySatisfied[cursor] && observed != 1) return failed(Reason.WORLD_CHANGED);
+                    Material material = materials[slice.variant(cursor)];
+                    if (observed == 1) satisfied++;
+                    else {
+                        if (stock.count(material.item, 1) != 1) return failed(Reason.MISSING_STOCK);
+                        int latest = observe(slice, cursor);
+                        if (!active()) return new Status(this);
+                        if (latest != 0 || !exactAir(slice, cursor)) return failed(Reason.WORLD_CHANGED);
+                        if (!active()) return new Status(this);
+                        CellResult result = operate(slice, cursor, stock);
+                        if (result == CellResult.DEFERRED) return new Status(this); // Keep this exact pending cell/slice.
+                        if (result != CellResult.COMMITTED) return failed(result.failure);
+                        placed++;
+                    }
+                    material.remaining--;
+                    cursor++;
                     worked();
-                }
-                if (inspected < slice.size()) return new Status(this);
-                if (!stocked(materials, stock())) return failed(Reason.MISSING_STOCK);
-                phase = Phase.PLACING;
-                advance();
-            }
-            HologramMaterials.Context stock = stock();
-            for (int n = 0; n < MAX_TRANSACTIONS && cursor < slice.size() && System.nanoTime() < deadline; n++) {
-                if (!active()) return new Status(this);
-                int observed = observe(slice, cursor);
-                if (!active()) return new Status(this);
-                if (observed < 0 || initiallySatisfied[cursor] && observed != 1) return failed(Reason.WORLD_CHANGED);
-                Material material = materials[slice.variant(cursor)];
-                if (observed == 1) satisfied++;
-                else {
-                    if (stock.mainCount(material.item, 1) != 1) return failed(Reason.MISSING_STOCK);
-                    int latest = observe(slice, cursor);
+                    // The underlying transaction has already committed at this point; retain truthful counts on loss.
                     if (!active()) return new Status(this);
-                    if (latest != 0 || !exactAir(slice, cursor)) return failed(Reason.WORLD_CHANGED);
-                    if (!active()) return new Status(this);
-                    CellResult result = operate(slice, cursor, stock);
-                    if (result == CellResult.DEFERRED) return new Status(this); // Keep this exact pending cell/slice.
-                    if (result != CellResult.COMMITTED) return failed(result.failure);
-                    placed++;
                 }
-                material.remaining--;
-                cursor++;
-                worked();
-                // The underlying transaction has already committed at this point; retain truthful counts on loss.
-                if (!active()) return new Status(this);
-            }
-            if (cursor == slice.size()) {
-                if (!receiver.settle(ticket)) throw new IllegalStateException("Lost projected-layer ticket");
-                settledSlices++;
-                initiallySatisfied = null;
-                if (receiver.finished()) {
-                    phase = Phase.COMPLETE;
-                    ACTIVE.remove(actor, this);
-                } else if (!stocked(materials, stock())) {
-                    return failed(Reason.MISSING_STOCK);
-                } else phase = Phase.AWAITING_SLICE;
-                advance();
+                if (cursor == slice.size()) {
+                    if (!receiver.settle(ticket)) throw new IllegalStateException("Lost projected-layer ticket");
+                    layerCadence.settle(serverTick);
+                    settledSlices++;
+                    initiallySatisfied = null;
+                    if (receiver.finished()) {
+                        phase = Phase.COMPLETE;
+                        ACTIVE.remove(actor, this);
+                    } else if (!stocked(materials, stock())) {
+                        return failed(Reason.MISSING_STOCK);
+                    } else if (receiver.pending() != null) startPending();
+                    else phase = Phase.AWAITING_SLICE;
+                    advance();
+                }
             }
             return new Status(this);
         } catch (RuntimeException | LinkageError invalid) {
@@ -629,7 +647,7 @@ final class HologramProjectedLayerService {
 
     Ack transferAck() throws IOException {
         requireOwner();
-        if (active() && phase == Phase.AWAITING_SLICE && !stocked(materials, stock())) stopNow(Reason.MISSING_STOCK);
+        if (active() && phase != Phase.PAUSED && !stocked(materials, stock())) stopNow(Reason.MISSING_STOCK);
         Ack ack = receiver.ack();
         return phase == Phase.PAUSED && ack.credit != 0
             ? new Ack(ack.request, ack.nextSlice, ack.settledCells, 0, false, false) : ack;

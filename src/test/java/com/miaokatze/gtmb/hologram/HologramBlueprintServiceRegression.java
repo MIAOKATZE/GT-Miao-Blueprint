@@ -844,6 +844,11 @@ final class HologramBlueprintServiceRegression {
         @SuppressWarnings("unchecked")
         Map<UUID, Object> registered = (Map<UUID, Object>) sessionsField.get(null);
         Object originalSession = registered.put(actor.getUniqueID(), session);
+        Field resultField = HologramLibraryFacade.class.getDeclaredField("savedResults");
+        resultField.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        Map<UUID, Object> savedResults = (Map<UUID, Object>) resultField.get(null);
+        Object originalResult = savedResults.remove(actor.getUniqueID());
         try {
             set(session, "blueprintSaveReceipt", "bounded-save-receipt");
             set(session, "blueprintSaveLocalId", "local_saved_fixture");
@@ -853,16 +858,18 @@ final class HologramBlueprintServiceRegression {
             exported.id = "local_saved_fixture";
             HologramBlueprintVersions.stamp(exported);
             byte[] exactJson = HologramServerLibrary.encodeShare(exported);
-            byte[] boundPng = HologramBlueprintArtifact
-                .bindPreview(exactJson, com.miaokatze.gtmb.testutil.BlueprintArtifactTestData.previewPng());
-            HologramBlueprintArtifact.Artifact proof = HologramBlueprintArtifact
-                .decode(HologramBlueprintArtifact.encode(exactJson, boundPng));
+            HologramBlueprintArtifact.Artifact proof = HologramBlueprintArtifact.prepareSave(
+                exactJson, com.miaokatze.gtmb.testutil.BlueprintArtifactTestData.previewPng());
+            String sourceDigest = HologramBlueprintArtifact.hash(exactJson);
             NBTTagCompound acknowledgement = new NBTTagCompound();
             acknowledgement.setString("session", (String) get(session, "id"));
             acknowledgement.setLong("planRevision", revision);
             acknowledgement.setString("localId", "local_saved_fixture");
             acknowledgement.setString("jsonSha256", proof.jsonSha256);
             acknowledgement.setString("previewSha256", proof.pngSha256);
+            acknowledgement.setBoolean("localSaveReceipt", true);
+            acknowledgement.setInteger("artifactVersion", HologramBlueprintArtifact.VERSION);
+            acknowledgement.setString("reviewedJsonSha256", sourceDigest);
             acknowledgement.setString("saveReceipt", "another-receipt");
             SimpleAssert.that(
                 !(Boolean) receipt.invoke(null, session, acknowledgement),
@@ -875,17 +882,19 @@ final class HologramBlueprintServiceRegression {
                 "a stale disk receipt cannot acknowledge a changed plan");
             acknowledgement.setLong("planRevision", revision);
             SimpleAssert.that(
-                HologramService.libraryDraftPrepared(actor, acknowledgement, proof.jsonSha256),
-                "actual server JSON digest is armed under the matching source save nonce");
+                HologramService.libraryDraftPrepared(actor, acknowledgement, sourceDigest),
+                "server JSON digest is armed under the matching source save nonce");
             SimpleAssert.that(
                 !(Boolean) receipt.invoke(null, session, acknowledgement),
-                "JSON-only disk receipt cannot succeed before the matching PNG is verified");
-            SimpleAssert.that(
-                !HologramService.libraryPreviewVerified(actor, acknowledgement, proof.pngSha256, proof.pngSha256),
-                "PNG for another JSON cannot arm a save receipt");
-            SimpleAssert.that(
-                HologramService.libraryPreviewVerified(actor, acknowledgement, proof.jsonSha256, proof.pngSha256),
-                "real source-bound PNG proof arms its own digest");
+                "an unissued disk proof cannot succeed; a client must not authorize its own save");
+            NBTTagCompound issued = (NBTTagCompound) acknowledgement.copy();
+            issued.setString("jsonSha256", sourceDigest);
+            issued.setString("previewSha256", "");
+            issued.removeTag("reviewedJsonSha256");
+            Method remember = HologramLibraryFacade.class.getDeclaredMethod(
+                "rememberSavedResult", EntityPlayerMP.class, NBTTagCompound.class, byte[].class);
+            remember.setAccessible(true);
+            remember.invoke(null, actor, issued, exactJson);
             acknowledgement.setString("jsonSha256", proof.pngSha256);
             SimpleAssert.that(
                 !(Boolean) receipt.invoke(null, session, acknowledgement),
@@ -903,6 +912,8 @@ final class HologramBlueprintServiceRegression {
                 .that(!(Boolean) get(session, "blueprintDirty"), "only the matching save receipt clears dirty state");
             SimpleAssert.that(!(Boolean) receipt.invoke(null, session, acknowledgement), "save receipt is single-use");
         } finally {
+            if (originalResult == null) savedResults.remove(actor.getUniqueID());
+            else savedResults.put(actor.getUniqueID(), originalResult);
             if (originalSession == null) registered.remove(actor.getUniqueID());
             else registered.put(actor.getUniqueID(), originalSession);
             actor.inventory.mainInventory[actor.inventory.currentItem] = originalTool;

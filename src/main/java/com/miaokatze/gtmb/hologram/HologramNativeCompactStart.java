@@ -42,7 +42,7 @@ final class HologramNativeCompactStart {
     static void receive(EntityPlayerMP p, NBTTagCompound request) {
         receive(p, request, (player, id, accepted, reason) -> {
             if (!accepted) {
-                HologramProjectedPlacementService.reply(player, id, false, reason);
+                HologramConstructionReceipts.reply(player, id, false, reason);
                 return;
             }
             HologramSession s = HologramWorkspace.find(player.getUniqueID());
@@ -59,8 +59,8 @@ final class HologramNativeCompactStart {
 
     static void receive(EntityPlayerMP p, NBTTagCompound r, HologramNativeReadyPlacement.Receipt receipt) {
         String id = r.getString("placementRequestId");
-        if (!canonical(id) || HologramProjectedPlacementService.consumed(p, id)) return;
-        HologramProjectedPlacementService.retire(p, id);
+        if (!canonical(id) || HologramConstructionReceipts.consumed(p, id)) return;
+        HologramConstructionReceipts.retire(p, id);
         try {
             prepare(p, r, id, receipt);
         } catch (RuntimeException | LinkageError failed) {
@@ -91,8 +91,6 @@ final class HologramNativeCompactStart {
                 || previous.nativeReadyPlacement != null
                 || previous.nativeCompactStart != null
                 || previous.presentationTransition != null)
-            || HologramProjectedPlacementService.preparing(p)
-            || HologramPlacementUpload.active(p)
             || HologramDemolition.active(p)
             || HologramAeCraftingOrders.active(p)
             || p.isDead

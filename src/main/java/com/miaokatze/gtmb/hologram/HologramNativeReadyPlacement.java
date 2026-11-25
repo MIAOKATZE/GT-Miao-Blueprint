@@ -87,7 +87,7 @@ final class HologramNativeReadyPlacement {
     }
 
     static void receive(EntityPlayerMP player, NBTTagCompound request) {
-        receive(player, request, HologramProjectedPlacementService::reply);
+        receive(player, request, HologramConstructionReceipts::reply);
     }
 
     @FunctionalInterface
@@ -98,9 +98,9 @@ final class HologramNativeReadyPlacement {
 
     static void receive(EntityPlayerMP player, NBTTagCompound request, Receipt receipt) {
         String id = request.getString("placementRequestId");
-        if (!canonicalId(id) || HologramProjectedPlacementService.consumed(player, id)) return;
+        if (!canonicalId(id) || HologramConstructionReceipts.consumed(player, id)) return;
         // Retire on first intake, including refusal and disconnect. Replays never produce a second admission.
-        HologramProjectedPlacementService.retire(player, id);
+        HologramConstructionReceipts.retire(player, id);
         String scopedRefusal = HologramWorkspace.legacyConstructionRefusal(player);
         if (scopedRefusal != null) {
             receipt.send(player, id, false, scopedRefusal);
@@ -184,8 +184,6 @@ final class HologramNativeReadyPlacement {
             || s.presentationTransition != null
             || s.structureSavePreparation != null
             || !HologramEditorWorkspaceRegistry.idle(s)
-            || HologramProjectedPlacementService.preparing(s.player)
-            || HologramPlacementUpload.active(s.player)
             || !HologramStructureProjection.operationPrepared(s)
             || !s.nativeReadyBill.observedStockSufficient(s)
             || !s.capture.readyPlacementCurrent(s)) return false;
@@ -203,7 +201,7 @@ final class HologramNativeReadyPlacement {
             SLICE_ROWS,
             HologramWorkBudget.deadline(HologramWorkBudget.SLICE_NANOS),
             System::nanoTime,
-            HologramProjectedPlacementService::reply);
+            HologramConstructionReceipts::reply);
     }
 
     static boolean tick(HologramSession s, int rows, long deadline, LongSupplier clock, Receipt receipt) {
@@ -224,7 +222,7 @@ final class HologramNativeReadyPlacement {
         HologramNativeReadyPlacement task = s.nativeReadyPlacement;
         if (task == null) return;
         s.nativeReadyPlacement = null;
-        HologramProjectedPlacementService.reply(s.player, task.id, false, "原生放置请求已取消。");
+        HologramConstructionReceipts.reply(s.player, task.id, false, "原生放置请求已取消。");
     }
 
     static boolean cancel(EntityPlayerMP player, String id) {

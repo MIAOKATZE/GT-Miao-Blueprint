@@ -1741,6 +1741,7 @@ final class HologramUiPreview {
     }
 
     void resetSession(HologramState next) {
+        selection.bindMaterials(next);
         gizmo.cancel();
         selection.load(
             next.data.getIntArray("selectedIndices"),
@@ -1783,6 +1784,7 @@ final class HologramUiPreview {
     }
 
     void retainSelection(HologramState next) {
+        selection.bindMaterials(next);
         if (next.topologyChanged) selection
             .load(next.data.getIntArray("selectedIndices"), next.data.getInteger("selected"), next.cells.size());
         else selection.retain(next.cells.size());
@@ -1790,6 +1792,7 @@ final class HologramUiPreview {
     }
 
     void acknowledgeSelection(HologramState next) {
+        selection.bindMaterials(next);
         if (pendingSelectionSequence >= 0 && next.data.getLong("uiSequence") >= pendingSelectionSequence) {
             selection
                 .load(next.data.getIntArray("selectedIndices"), next.data.getInteger("selected"), next.cells.size());
@@ -1985,6 +1988,7 @@ final class HologramUiPreview {
     }
 
     void initializeSelection(HologramState snapshot) {
+        selection.bindMaterials(snapshot);
         selected = snapshot.data.hasKey("selected") ? snapshot.data.getInteger("selected") : -1;
         selection.load(snapshot.data.getIntArray("selectedIndices"), selected, snapshot.cells.size());
     }

@@ -132,11 +132,10 @@ public final class HologramClientP0Regression {
         SimpleAssert.that(!opening.getBoolean("presetAvailable"),
             "the tier catalogue alone does not prove authoritative declared quotas");
         NBTTagCompound scope = new NBTTagCompound();
-        SimpleAssert.that(HologramScreen.ordinaryNativeSubmit(opening, scope, false, false)
-            && !HologramScreen.ordinaryNativeSubmit(opening, scope, false, true),
-            "full ordinary mode never selects compatibility unless the player explicitly does");
+        SimpleAssert.that(HologramScreen.ordinaryNativeSubmit(opening, scope, false),
+            "full ordinary mode can proceed to the supported short request only");
         scope.setIntArray("selectedIndices", new int[] { 2, 4 });
-        SimpleAssert.that(!HologramScreen.ordinaryNativeSubmit(opening, scope, false, false),
+        SimpleAssert.that(!HologramScreen.ordinaryNativeSubmit(opening, scope, false),
             "an exact selected scope cannot accidentally become a whole native operation");
         NBTTagCompound live = new NBTTagCompound();
         live.setBoolean("target", true);

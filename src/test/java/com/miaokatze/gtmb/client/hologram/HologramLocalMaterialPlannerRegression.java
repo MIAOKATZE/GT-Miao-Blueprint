@@ -5,7 +5,6 @@ package com.miaokatze.gtmb.client.hologram;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicReference;
 
 import net.minecraft.block.Block;
 import net.minecraft.init.Blocks;
@@ -25,20 +24,34 @@ public final class HologramLocalMaterialPlannerRegression {
         capturedNativeMaterials();
         HologramState repeated = state(123_369, 0);
         NBTTagCompound config = configuration();
-        AtomicReference<Runnable> queued = new AtomicReference<>();
-        HologramLocalMaterialReview review = new HologramLocalMaterialReview(repeated, config, queued::set);
+        HologramLocalMaterialReview review = new HologramLocalMaterialReview(repeated, config);
         ItemStack[] stock = { new ItemStack(Blocks.stone, 3), new ItemStack(Blocks.stone, 7) };
         review.tick(stock, 0);
-        SimpleAssert.that(!review.ready() && review.visible().getTagList("rows", 10).tagCount() == 0,
-            "queued planner is neither ready nor a zero bill");
-        queued.get().run();
+        SimpleAssert.that(review.ready() && review.visible().getTagList("rows", 10).tagCount() == 1,
+            "material opening consumes the source-time aggregate without a queued geometry scan");
+        HologramSelection selected = new HologramSelection();
+        selected.bindMaterials(repeated);
+        selected.click(1, false);
+        selected.click(2, true);
+        var selectedFacts = selected.materialResult(repeated);
+        java.util.List<HologramState.Cell> unreadable = new java.util.AbstractList<>() {
+            @Override public HologramState.Cell get(int ignored) { throw new AssertionError("material open read geometry"); }
+            @Override public int size() { throw new AssertionError("material open read geometry size"); }
+        };
+        SimpleAssert.that(repeated.localMaterialIndex.select(unreadable, 2, 0, 1,
+            new int[] {1, 2}, selectedFacts) == selectedFacts && selectedFacts.targets() == 2,
+            "explicit selection review consumes totals computed during selection mutation, never geometry");
+        selected.click(1, true);
+        SimpleAssert.eq(1, selected.materialResult(repeated).targets(), "deselection removes exactly its prior contribution");
+        selected.clear();
+        SimpleAssert.eq(0, selected.materialResult(repeated).targets(), "clearing selection retires all selected costs");
         reviews(review, stock, 0, 20);
         NBTTagCompound row = review.visible().getTagList("rows", 10).getCompoundTagAt(0);
         SimpleAssert.that(review.ready() && "123369".equals(row.getString("requiredExact"))
             && row.getBoolean("availableKnown") && row.getLong("available") == 7
             && "123362".equals(row.getString("missingExact")), "repeated exact stack totals and protected slot");
 
-        HologramLocalMaterialReview cancelled = new HologramLocalMaterialReview(repeated, config, queued::set);
+        HologramLocalMaterialReview cancelled = new HologramLocalMaterialReview(repeated, config);
         NBTTagCompound pending = new NBTTagCompound();
         pending.setBoolean("capturePending", true);
         HologramState recapturing = repeated.withMetadata(pending);
@@ -49,14 +62,12 @@ public final class HologramLocalMaterialPlannerRegression {
         SimpleAssert.that(!cancelled.current(repeated.withMetadata(pending), 0),
             "identical visible rows do not authorize a different local capture generation");
         cancelled.close();
-        queued.get().run();
         cancelled.tick(stock, 0);
-        SimpleAssert.that(!cancelled.ready() && !cancelled.visible().hasKey("rows"), "retired worker cannot publish");
+        SimpleAssert.that(!cancelled.ready(), "retired review cannot publish or regain readiness");
 
         for (int style = 1; style <= 2; style++) {
-            HologramLocalMaterialReview mixed = new HologramLocalMaterialReview(state(129, style), config, queued::set);
-            queued.get().run();
-            reviews(mixed, stock, 0, 20);
+            HologramLocalMaterialReview mixed = new HologramLocalMaterialReview(state(129, style), config);
+                reviews(mixed, stock, 0, 20);
             var rows = mixed.visible().getTagList("rows", 10);
             SimpleAssert.that(mixed.ready() && rows.tagCount() >= 2 && !mixed.visible().getBoolean("complete"),
                 "mixed material/metadata and tagged-device paths remain descriptive, never authoritative");
@@ -75,8 +86,7 @@ public final class HologramLocalMaterialPlannerRegression {
 
     private static void capturedNativeMaterials() {
         HologramState geometry = state(6, 2, true);
-        HologramLocalMaterialReview captured = new HologramLocalMaterialReview(geometry, configuration(),
-            ignored -> { throw new AssertionError("captured material list must not queue a target scan"); });
+        HologramLocalMaterialReview captured = new HologramLocalMaterialReview(geometry, configuration());
         var description = captured.description();
         SimpleAssert.that(captured.ready() && geometry.data.getBoolean("capturePending") && description.size() == 1
             && "minecraft:chest".equals(description.get(0).identity().registry())
@@ -97,15 +107,12 @@ public final class HologramLocalMaterialPlannerRegression {
         while (!enrichment.step(32, Long.MAX_VALUE)) {}
         HologramState settled = enrichment.result();
         SimpleAssert.that(captured.current(settled, 0), "same-generation detail publication preserves the base list");
-        java.util.concurrent.atomic.AtomicReference<Runnable> detailedWork = new java.util.concurrent.atomic.AtomicReference<>();
-        HologramLocalMaterialReview detailed = new HologramLocalMaterialReview(
-            settled, configuration(), true, detailedWork::set);
-        SimpleAssert.that(detailedWork.get() != null && !detailed.ready() && detailed.description() == null
-            && captured.ready(), "only the explicit detail mode queues the legacy full local estimator");
-        detailedWork.get().run();
-        reviews(detailed, new ItemStack[2], 0, 8);
-        SimpleAssert.that(detailed.ready() && detailed.visible().hasKey("rows", 9),
-            "the explicitly requested full local estimate keeps its prior target inputs and detail rows");
+        HologramLocalMaterialReview detailed = new HologramLocalMaterialReview(settled, configuration(), true);
+        SimpleAssert.that(detailed.ready() && detailed.description() == null && captured.ready(),
+            "detail mode directly consumes the source's exact contribution index without a worker");
+        detailed.tick(new ItemStack[2], 0);
+        SimpleAssert.that(detailed.visible().hasKey("rows", 9),
+            "exact target inputs and detailed resource rows are retained");
         detailed.close();
 
         NBTTagCompound change = settled.cells.get(0).tag();
@@ -136,6 +143,7 @@ public final class HologramLocalMaterialPlannerRegression {
 
     static int reviews(HologramLocalMaterialReview review, ItemStack[] stock, int slot, int limit) {
         int ticks = 0;
+        review.tick(stock, slot);
         while (!review.ready() && ticks < limit) {
             review.tick(stock, slot);
             ticks++;

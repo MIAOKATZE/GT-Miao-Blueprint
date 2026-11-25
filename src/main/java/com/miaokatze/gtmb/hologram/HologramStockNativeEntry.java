@@ -31,7 +31,7 @@ final class HologramStockNativeEntry {
         EXPLICIT_AVAILABLE_STOCK
     }
 
-    private static final String EBF = "gtmb:gregtech_ebf_1000";
+    static final String EBF = "gtmb:gregtech_ebf_1000";
 
     @Desugar
     record EbfConfig(int coil, List<HologramStockEbfProfile.Installed> installed) {
@@ -66,7 +66,7 @@ final class HologramStockNativeEntry {
                 && EBF.equals(source) && controller == HologramStockEbfProfile.CONTROLLER && hatch == null
                 && side >= 0 && side < 6 && slot >= 0 && slot < 9 && facing >= 0 && facing < 48
                 && main >= 1 && main <= 64 && materialPriority == 0 && funding == Funding.REQUIRE_FULL_BOUND
-                && ebf.coil >= 0 && ebf.coil <= 64 && ebf.installed.size() == 5;
+                && ebf.coil >= 0 && ebf.coil <= 64 && HologramStockEbfProfile.validInstalled(ebf.installed);
 
             // This schema represents only stock mode-0/full-scope/main-only intent. It cannot express edits,
             // channels, geometry, payloads, creative supply, destructive operations or external stock.
@@ -187,17 +187,6 @@ final class HologramStockNativeEntry {
         this.session = session;
         this.job = job;
         this.ebfJob = ebfJob;
-    }
-
-    /** Closed server-owned admission seam; no existing wire parser or UI reaches this profile. */
-    static Submission ebfIngress(HologramWorkspace.ActionEndpoint endpoint,
-        HologramConstructionTaskGate.Request request, long generation, int x, int y, int z, int side,
-        int slot, int facing, int main, boolean mainExplicit, boolean noHatches, EbfConfig configuration,
-        String exactTool) {
-        if (configuration == null) return null;
-        return ingress(endpoint, new Intent(request, generation, EBF, HologramStockEbfProfile.CONTROLLER,
-            x, y, z, side, slot, facing, main, mainExplicit, noHatches, 0, Funding.REQUIRE_FULL_BOUND, null,
-            configuration), exactTool);
     }
 
     static Submission ingress(HologramWorkspace.ActionEndpoint endpoint, Intent intent, String confirmedToolId) {
@@ -389,18 +378,18 @@ final class HologramStockNativeEntry {
             && gate.query(lease.scope, lease.request).phase == HologramConstructionTaskGate.Phase.ACTIVE;
     }
 
-    HologramStockNativeConstruction.State tick(long deadline, int entries, int commits) {
-        return tick(deadline, entries, commits, HologramConstructionTaskGate::beginTransaction);
+    HologramStockNativeConstruction.State tick(long deadline) {
+        return tick(deadline, HologramConstructionTaskGate::beginTransaction);
     }
 
-    HologramStockNativeConstruction.State tick(long deadline, int entries, int commits,
+    HologramStockNativeConstruction.State tick(long deadline,
         HologramStockNativeConstruction.PermitAdmission admission) {
         if (retired) return state;
         if (advancing) throw new IllegalStateException("Native stock entry cannot re-enter");
         advancing = true;
         try {
-            state = ebfJob == null ? job.drain(deadline, entries, commits, admission)
-                : ebfJob.drain(deadline, entries, commits, admission);
+            state = ebfJob == null ? job.drain(deadline, admission)
+                : ebfJob.drain(deadline, admission);
             return state;
         } finally {
             advancing = false;

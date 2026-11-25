@@ -137,7 +137,7 @@ final class HologramProjectedVariantPricing {
     /** This syntax step permits default offline verification without mistaking it for native provider admission. */
     static Shape inspect(Row row, boolean identityPose) throws IOException {
         if (!identityPose || row == null || row.block == null || !row.block.equals(row.item) || row.facing != -1
-            || row.controller || row.count < 1 || row.count > HologramBlueprintLimits.MAX_CELLS
+            || row.controller || row.count < 1 || row.count > HologramBlueprintLimits.LOCAL_CELLS
             || row.metadata != row.damage) throw invalid();
         if (!SHAPE.equals(row.block) && !SLOPE.equals(row.block)) {
             if (!plain(row.block, row.metadata) || !absent(row.tileNbt) || !absent(row.itemNbt)) throw invalid();
@@ -196,7 +196,7 @@ final class HologramProjectedVariantPricing {
             Shape shape = inspect(row, true);
             bytes += (long) shape.bytes * row.count;
             occurrences += row.count;
-            if (bytes > OCCURRENCE_BYTES || occurrences > HologramBlueprintLimits.MAX_CELLS) throw invalid();
+            if (bytes > OCCURRENCE_BYTES || occurrences > HologramBlueprintLimits.LOCAL_CELLS) throw invalid();
             try {
                 Block block = block(row.block);
                 ItemStack sample = exactItem(block, row.block, row.damage);

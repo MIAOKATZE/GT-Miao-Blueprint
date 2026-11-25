@@ -37,14 +37,14 @@ import com.miaokatze.gtmb.hologram.HologramWorkspace.ActionEndpoint;
 
 /**
  * Server-owned ingress, transfer credit and geometry-free receipts. The transport is not registered here.
- * This plain, main-inventory-only lane has at most 35 ordinary stacks (2,240 units) with the bound hotbar slot
- * excluded; it is not a bulk storage provider or a claim of support for large mixed blueprints.
+ * This plain lane uses the tool-selected inventory, native backpack adapters and authenticated wireless ME.
+ * Its bounded plain block profile does not claim support for large mixed blueprint metadata.
  */
 final class HologramProjectedLayerServer implements AutoCloseable {
 
     private static final int QUEUE_PER_LANE = 16, MAX_INGRESS_PER_TICK = 8, MAX_STOPS_PER_TICK = 8, MAX_REPLAYS = 128;
     private final Thread owner = Thread.currentThread();
-    private final HologramRequestGate data = new HologramRequestGate(1, QUEUE_PER_LANE);
+    private final HologramRequestGate data = new HologramRequestGate(HologramProjectedLayerWire.WINDOW, QUEUE_PER_LANE * 4);
     private final HologramRequestGate control = new HologramRequestGate(1, QUEUE_PER_LANE);
     private final HologramRequestGate stop = new HologramRequestGate(1, QUEUE_PER_LANE);
     // Both queues use the same monitor. A bounded stop dispatcher is allowed to overtake DATA.
@@ -148,7 +148,7 @@ final class HologramProjectedLayerServer implements AutoCloseable {
             if (permit == null) return HologramProjectedLayerService.Settlement.OWNER_CHANGED;
             boolean pending = true;
             try {
-                boolean applied = HologramWorldTransactions.operateScoped(
+                boolean applied = HologramWorldTransactions.operateScopedSelected(
                     transaction, cell, 0, () -> gate.transactionCurrent(permit) && currentInputs.getAsBoolean());
                 if (transaction.job == 4 || HologramConstructionJournal.pending(transaction.player))
                     return HologramProjectedLayerService.Settlement.RECOVERY_PENDING;
@@ -222,7 +222,7 @@ final class HologramProjectedLayerServer implements AutoCloseable {
                     item.queue.close();
                 }
             }
-            Set<ActionEndpoint> dataThisTick = new HashSet<>(), controlThisTick = new HashSet<>();
+            Set<ActionEndpoint> controlThisTick = new HashSet<>();
             for (int count = 0; count < queued && System.nanoTime() < ingressDeadline; count++) {
                 Ingress item;
                 synchronized (inbox) {
@@ -231,8 +231,7 @@ final class HologramProjectedLayerServer implements AutoCloseable {
                 if (item == null) break;
                 boolean deferred = false;
                 try {
-                    Set<ActionEndpoint> lane = item.request.isControl() ? controlThisTick : dataThisTick;
-                    if (item.queue.active() && lane.add(item.endpoint)) {
+                    if (item.queue.active() && (!item.request.isControl() || controlThisTick.add(item.endpoint))) {
                         Job action = active.get(item.endpoint.actor);
                         long seen = action != null && action.endpoint == item.endpoint
                             && action.key.equals(item.request.key) ? action.lastControl : 0;
@@ -255,7 +254,7 @@ final class HologramProjectedLayerServer implements AutoCloseable {
                 Job job = jobs.get((start + inspected++) % size);
                 if (stopWaiting(job.endpoint, job.key, job.lastControl)) continue;
                 if (!job.current()) job.service.retire();
-                else job.service.step(deadline);
+                else job.service.step(deadline, HologramWorkBudget.serverTickSerial());
                 publish(job, false);
             }
             cursor = (start + Math.max(1, inspected)) % size;
@@ -412,15 +411,14 @@ final class HologramProjectedLayerServer implements AutoCloseable {
         if (request.body.length < 24) return;
         int submitted = ByteBuffer.wrap(request.body).getInt(20);
         Status status = job.service.status();
-        boolean credited = submitted == status.acceptedSlices && submitted == job.creditIndex;
-        boolean replay = submitted >= 0 && submitted == status.acceptedSlices - 1;
+        boolean credited = submitted == status.acceptedSlices && submitted < job.creditIndex;
+        boolean replay = submitted >= Math.max(0, status.settledSlices - 1) && submitted < status.acceptedSlices;
         if (!credited && !replay) {
             readCurrent(job, false);
             return;
         }
         try {
             HologramProjectedLayerPlan.Offer result = job.service.offer(job.endpoint.player, request.body);
-            if (result == HologramProjectedLayerPlan.Offer.ACCEPTED) job.creditIndex = -1;
             if (result == HologramProjectedLayerPlan.Offer.REPLAY) {
                 readCurrent(job, true);
                 return;
@@ -459,8 +457,8 @@ final class HologramProjectedLayerServer implements AutoCloseable {
         }
         if (!force && job.lastSent != null && status.sequence == job.lastSent.sequence) return;
         try {
-            Ack ack = switch (status.phase) {
-                case AWAITING_SLICE, PAUSED, COMPLETE, STOPPED -> job.service.transferAck();
+            Ack ack = stopWaiting(job.endpoint, job.key, job.lastControl) ? null : switch (status.phase) {
+                case AWAITING_SLICE, VALIDATING_SLICE, PLACING, PAUSED, COMPLETE, STOPPED -> job.service.transferAck();
                 default -> null;
             };
             status = job.service.status(); // A credit recheck after state observation can discover lost material.
@@ -472,7 +470,7 @@ final class HologramProjectedLayerServer implements AutoCloseable {
             Reply reply = receipt(job, status, ack);
             if (send(job.endpoint, reply) && job.current()) {
                 job.lastSent = reply;
-                if (ack != null && ack.credit == 1) job.creditIndex = ack.nextSlice;
+                if (ack != null && ack.credit == 1) job.creditIndex = ack.nextSlice + HologramProjectedLayerWire.WINDOW;
             }
         } catch (IOException | RuntimeException | LinkageError failure) {
             // A credit recheck/provider failure must not strand the client forever before any observable result.

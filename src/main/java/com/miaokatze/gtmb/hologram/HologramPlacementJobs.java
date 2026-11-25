@@ -8,8 +8,6 @@ final class HologramPlacementJobs {
 
     private HologramPlacementJobs() {}
 
-    static final int BUDGET = 4096;
-
     static void updateJobCounts(HologramSession s) {
         s.jobMissingCells = s.jobProtectedCells = s.jobUnsupportedCells = 0;
         for (int i = 0; i < s.cursor && i < s.work.size(); i++) {
@@ -83,8 +81,7 @@ final class HologramPlacementJobs {
         s.ackSuccesses.clear();
         long deadline = HologramWorkBudget.deadline(HologramWorkBudget.SLICE_NANOS);
         int attempted = 0;
-        while (s.cursor < s.work.size() && attempted < HologramPlacementJobs.BUDGET
-            && (attempted == 0 || System.nanoTime() < deadline)) {
+        while (s.cursor < s.work.size() && (attempted == 0 || System.nanoTime() < deadline)) {
             attempted++;
             int index = s.work.get(s.cursor);
             HologramCapture.Cell cell = s.capture.cells.get(index);

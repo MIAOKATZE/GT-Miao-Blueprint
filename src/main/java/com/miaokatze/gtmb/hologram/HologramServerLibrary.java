@@ -174,8 +174,7 @@ final class HologramServerLibrary {
             || !HologramLibraryProtocol.uploadChunk(request)
             || !upload.transfer.equals(request.getString("transfer"))
             || upload.request.getLong("clientTaskToken") != request.getLong("clientTaskToken")) return false;
-        String op = request.getString("op");
-        return upload.previewUpload == "previewChunk".equals(op);
+        return true;
     }
 
     synchronized void heartbeat() {
@@ -185,9 +184,6 @@ final class HologramServerLibrary {
                 && peer.player.playerNetServerHandler.netManager.isChannelOpen();
             if (!peer.online) trusted.retire(peer);
             peer.admin = HologramLibraryFacade.isAdmin(peer.player);
-            Upload upload = peer.upload;
-            if (upload != null && upload.previewUpload
-                && !HologramLibraryService.saveCurrent(peer.player, upload.request)) upload.valid = false;
             if (peer.preparation != null
                 && (!peer.online || !HologramLibraryService.draftCurrent(peer.player, peer.preparationRequest))) {
                 peer.preparation.valid = false;
@@ -373,7 +369,7 @@ final class HologramServerLibrary {
             handle(peer, request);
         } catch (IOException | RuntimeException invalid) {
             String op = request.getString("op");
-            if (HologramLibraryProtocol.uploadChunk(request) || "uploadBegin".equals(op) || "previewBegin".equals(op))
+            if (HologramLibraryProtocol.uploadChunk(request) || "uploadBegin".equals(op))
                 abort(peer);
             error(peer, invalid.getMessage(), request.getLong("clientTaskToken"));
         }
@@ -431,8 +427,8 @@ final class HologramServerLibrary {
             NBTTagCompound deleted = HologramLibraryProtocol.reply("deleted");
             deleted.setString("id", id);
             send(peer, deleted);
-        } else if ("uploadBegin".equals(op) || "previewBegin".equals(op)) begin(peer, request);
-        else if ("uploadChunk".equals(op) || "previewChunk".equals(op)) append(peer, request);
+        } else if ("uploadBegin".equals(op)) begin(peer, request);
+        else if ("uploadChunk".equals(op)) append(peer, request);
         else if ("download".equals(op)) {
             requirePublicCopy(peer, request);
             long task = request.getLong("clientTaskToken");
@@ -508,13 +504,10 @@ final class HologramServerLibrary {
         if (peer.upload != null) throw new IOException("An upload is already active");
         HologramLibraryProtocol
             .header(request.getString("transfer"), request.getInteger("total"), request.getString("hash"));
-        boolean previewUpload = "previewBegin".equals(request.getString("op"));
         String replace = request.getString("replaceId");
-        if (!previewUpload) {
-            requirePublish(peer.owner);
-            if (!replace.isEmpty()) owned(peer.owner, replace);
-            else checkQuota(peer.owner, countOwned(peer.owner), policy(peer.owner).quota);
-        }
+        requirePublish(peer.owner);
+        if (!replace.isEmpty()) owned(peer.owner, replace);
+        else checkQuota(peer.owner, countOwned(peer.owner), policy(peer.owner).quota);
         if (activeUploads >= HologramLibraryProtocol.ACTIVE_UPLOADS
             || request.getInteger("total") > MAX_RESERVED_BYTES - reservedBytes)
             throw new IOException("Server upload queue is busy; retry later");
@@ -532,7 +525,7 @@ final class HologramServerLibrary {
         }
         reservedBytes += upload.total;
         activeUploads++;
-        NBTTagCompound ready = HologramLibraryProtocol.reply(previewUpload ? "previewReady" : "uploadReady");
+        NBTTagCompound ready = HologramLibraryProtocol.reply("uploadReady");
         ready.setLong("clientTaskToken", request.getLong("clientTaskToken"));
         ready.setString("transfer", upload.transfer);
         ready.setInteger("nextIndex", 0);
@@ -543,8 +536,6 @@ final class HologramServerLibrary {
     private void append(Peer peer, NBTTagCompound request) throws IOException {
         Upload upload = peer.upload;
         if (upload == null || !admitted(peer, request)) throw new IOException("Unknown upload");
-        boolean previewChunk = "previewChunk".equals(request.getString("op"));
-        if (previewChunk != upload.previewUpload) throw new IOException("Transfer purpose mismatch");
         byte[] bytes = request.getByteArray("data");
         HologramLibraryProtocol
             .chunk(upload.total, upload.offset, upload.index, request.getInteger("index"), bytes.length);
@@ -559,12 +550,8 @@ final class HologramServerLibrary {
                 throw new IOException("Upload hash mismatch");
             HologramBlueprintArtifact.Artifact artifact = HologramBlueprintArtifact
                 .decode(HologramBlueprintSharing.readBytes(upload.temp, HologramBlueprintArtifact.MAX_BYTES));
-            if (upload.previewUpload) {
-                HologramLibraryFacade.verifySavedPreview(peer.player, upload.request, artifact);
-            } else {
-                HologramPresets.Preset blueprint = canonical(HologramBlueprintSharing.decodeStored(artifact.json));
-                publish(peer, upload, blueprint, artifact);
-            }
+            HologramPresets.Preset blueprint = canonical(HologramBlueprintSharing.decodeStored(artifact.json));
+            publish(peer, upload, blueprint, artifact);
             abort(peer);
         } else upload.ackPending = true;
     }
@@ -1488,7 +1475,6 @@ final class HologramServerLibrary {
 
         final String transfer, hash, replace;
         final int total;
-        final boolean previewUpload;
         final NBTTagCompound request;
         final Path temp;
         final OutputStream output;
@@ -1504,7 +1490,6 @@ final class HologramServerLibrary {
             hash = request.getString("hash");
             total = request.getInteger("total");
             replace = request.getString("replaceId");
-            previewUpload = "previewBegin".equals(request.getString("op"));
             this.temp = temp;
             this.output = output;
         }

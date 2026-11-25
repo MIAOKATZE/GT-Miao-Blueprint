@@ -25,6 +25,7 @@ public final class HologramLocalPreviewRegression {
         compactDirectDisplay();
         packedEditorParity();
         frozenDraftParity();
+        frozenDraftFormalSource();
         singleCellAnnotation();
         compactCoordinateCompatibility();
         compactDenseRegion();
@@ -183,6 +184,64 @@ public final class HologramLocalPreviewRegression {
         SimpleAssert.that(
             Arrays.equals(original, frozen.artifact()),
             "the already frozen placement remains byte-exact after later edits and saves");
+    }
+
+    private static void frozenDraftFormalSource() throws Exception {
+        String first = "{\"x\":-3,\"y\":2,\"z\":1,\"block\":\"minecraft:stone\",\"item\":\"minecraft:stone\"}";
+        String second = "{\"x\":4,\"y\":2,\"z\":1,\"block\":\"minecraft:quartz_block\",\"item\":\"minecraft:quartz_block\"}";
+        String header = "{\"schema\":2,\"blueprint\":{\"schema\":2,\"controllerType\":\"area\",\"cells\":[";
+        String json = header + first + "," + second + "]}}";
+        HologramLocalBlueprintDocument document = HologramLocalBlueprintDocument
+            .open(json.getBytes(StandardCharsets.UTF_8), "");
+        NBTTagCompound note = new NBTTagCompound();
+        note.setString("prompt", "an unsaved editor revision");
+        document.apply("editBlueprintPrompt", note);
+        var draft = document.freeze();
+        var input = HologramBlueprintPreview.displayInput(draft, () -> true, null);
+        var source = HologramLibraryClient.DisplaySource.previewDraft(draft, input);
+        SimpleAssert.that(source.json == null && source.localId.isEmpty() && source.publicId.isEmpty()
+            && !source.capturedIndexedMaterialSource() && source.plainPlacementEvidence() == input.plainPlacement
+            && input.plainPlacement != null && input.plainPlacement.cells() == 2
+            && input.plainPlacement.sameCapture(draft)
+            && HologramLibraryMaterialForecast.fromCapture(source).candidates().size() == 2,
+            "normal current draft preview publishes exact owned typed-placement and material facts without a save ID");
+        var material = HologramLibraryMaterialForecast.fromCapture(source);
+        SimpleAssert.eq(0L, material.unpriced().cells(), "every variant in the formal source's exact proof is listed");
+        SimpleAssert.that(material.candidates().stream().anyMatch(row -> "minecraft:quartz_block".equals(
+            row.identity().registry()) && row.identity().damage() == 0 && row.cells() == 1)
+            && HologramLibraryMaterialForecast.project(input.savedMaterials).unpriced().cells() == 1,
+            "the formal pane reads the same exact coordinate/material counts as its manifest, not the generic fallback");
+        SimpleAssert.eq(null, HologramLibraryClient.DisplaySource.previewDraft(document.freeze(), input)
+            .plainPlacementEvidence(), "an equal-but-different freeze cannot borrow another display proof");
+        HologramState.Preparation preparation = new HologramState.Preparation(input.snapshot, true, input.cells);
+        while (!preparation.step(4, Long.MAX_VALUE)) {}
+        var typed = new HologramPrivatePlainPlacementSource(input.plainPlacement, draft, preparation.result().regions,
+            new int[] { 12, 64, 20 }, new int[0], 256, () -> true);
+        var manifest = com.miaokatze.gtmb.hologram.HologramProjectedLayerEncoder.prepare(UUID.randomUUID(),
+            12, 64, 20, typed, () -> true, null);
+        SimpleAssert.that(manifest != null && typed.layout().atY(66) == 2,
+            "the normal frozen display feeds the same typed encoder, bounds and layer counts as a saved source");
+
+        String[] invalid = {
+            json.replace("\"cells\":", "\"semanticNbt\":\"opaque-quantum-metadata\",\"cells\":"),
+            json.replace("\"cells\":", "\"fullyVoucherCovered\":true,\"cells\":"),
+            json.replace("\"cells\":", "\"retainedNbtKeys\":[],\"cells\":"),
+            json.replace("\"cells\":", "\"surpriseResourcePolicy\":true,\"cells\":"),
+            json.replace(first, first.replace("}", ",\"surpriseResourceCost\":12}")),
+            json.replace(first, first.replace("}", ",\"excluded\":true}")),
+            json.replace(first, first.replace("}", ",\"controller\":\"false\"}")),
+            json.replace(first, first.replace("}", ",\"defaultItem\":\"minecraft:glass\"}")),
+            json.replace(first, first.replace("}", ",\"structureRole\":\"hatch\"}"))
+        };
+        for (String rejected : invalid) {
+            var candidate = HologramLocalBlueprintDocument.open(rejected.getBytes(StandardCharsets.UTF_8), "").freeze();
+            var display = HologramBlueprintPreview.displayInput(candidate, () -> true, null);
+            SimpleAssert.that(display.cells.size() > 0 && display.plainPlacement == null,
+                "potential native/resource semantics remain previewable but must not enter typed placement");
+        }
+        var retained = HologramLocalBlueprintDocument.open(invalid[0].getBytes(StandardCharsets.UTF_8), "").freeze();
+        SimpleAssert.that(HologramBlueprintPreview.displayInput(retained, () -> true, null).savedMaterials
+            .retentionNeedsReview(), "opaque editor metadata is not lost from the detached material summary");
     }
 
     private static void openingCamera(HologramState prefix, HologramState full) {
@@ -774,16 +833,16 @@ public final class HologramLocalPreviewRegression {
             "no opaque data becomes an exposed material variant");
         byte[] expanded = ("{\"blueprint\":{\"schema\":2,\"cells\":[{\"block\":\"detached:display\","
             + "\"item\":\"detached:display\"}]}}").getBytes(StandardCharsets.UTF_8);
-        SimpleAssert.eq(
-            null,
-            HologramBlueprintPreview.displayInput(expanded, null, true).savedMaterials,
-            "expanded input remains outside this compact sidecar");
+        var expandedMaterials = HologramBlueprintPreview.displayInput(expanded, null, true).savedMaterials;
+        SimpleAssert.that(expandedMaterials != null && expandedMaterials.variants().size() == 1
+            && expandedMaterials.variants().get(0).cells() == 1,
+            "expanded private source folds material facts into its existing display decode pass");
         var draft = HologramLocalBlueprintDocument.open(expanded, "")
             .freeze();
-        SimpleAssert.eq(
-            null,
-            HologramBlueprintPreview.displayInput(draft, () -> true, null).savedMaterials,
-            "frozen draft takes the existing preview path");
+        var draftMaterials = HologramBlueprintPreview.displayInput(draft, () -> true, null).savedMaterials;
+        SimpleAssert.that(draftMaterials != null && draftMaterials.variants().equals(expandedMaterials.variants())
+            && draftMaterials.retentionNeedsReview() == expandedMaterials.retentionNeedsReview(),
+            "frozen editor source carries the same detached description without rereading or scanning it at open");
 
         java.nio.file.Path file = java.nio.file.Files.createTempFile("gtmb-private-material-fixture-", ".json");
         try {

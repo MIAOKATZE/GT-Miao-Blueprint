@@ -23,17 +23,40 @@ public final class HologramStaticMaterials {
 
     private HologramStaticMaterials() {}
 
-    /** Call native providers on the owning game thread, with a bounded number of cells per tick. */
+    /** Invalidates capture-local resource facts when an explicit native provider registration changes. */
+    public static long nativeGeneration() { return HologramNativePlacement.generation(); }
+
+    /** Immutable resolved rows. Payloads are private and never exposed or passed back to providers. */
+    public static final class Contribution {
+        private final Object[] identities;
+        private final NBTTagCompound[] rows;
+        private final int unaccounted;
+        private final String detail;
+        private final boolean cacheReviewRequired, alternatives;
+
+        private Contribution(Builder source) {
+            identities = source.rows.keySet().toArray();
+            rows = source.rows.values().toArray(new NBTTagCompound[0]);
+            unaccounted = source.unaccounted;
+            detail = source.detail;
+            cacheReviewRequired = source.cacheReviewRequired;
+            alternatives = source.alternatives;
+        }
+    }
+
+    /** Resolve native providers on their owning game thread; sealed contributions can then be reused. */
     public static final class Builder {
 
         private final Map<Object, NBTTagCompound> rows = new LinkedHashMap<>();
         private int unaccounted;
         private String detail = "";
         private boolean cacheReviewRequired, alternatives;
+        private Contribution sealed;
 
         /** Inputs are the retained source payload, not appearance-only NBT from a public preview. */
         public void add(Block block, int metadata, ItemStack target, NBTTagCompound tile, NBTTagCompound item)
             throws IOException {
+            requireMutable();
             if (block == Blocks.air) return;
             if (block == null || target == null || target.getItem() == null) throw new IOException("材料身份无法解析");
             ItemStack shell = new ItemStack(target.getItem(), 1, target.getItemDamage());
@@ -90,37 +113,41 @@ public final class HologramStaticMaterials {
             cacheReviewRequired |= !cache.demand.empty() || !cache.warnings.isEmpty();
         }
 
-        /**
-         * Aggregate only exact plain shells. A native adapter, tile-capable block, network node, or retained
-         * item falls back to per-cell owning-thread inspection; this method never authorizes payment.
-         */
-        public boolean addRepeatedPlain(Block block, int metadata, ItemStack target, int count) throws IOException {
-            if (count < 2 || block == null || target == null || target.getItem() == null || target.hasTagCompound()
-                || block.hasTileEntity(metadata)
-                || HologramNativePlacement.supported(block)
-                || HologramDecorMaterials.supports(block)
-                || HologramAeBlueprint.supports(block, null)
-                || HologramNetworkBindings.node(block)) return false;
-
-            // Isolate the one original calculation so a provider/configuration failure cannot half-publish a batch.
-            Builder one = new Builder();
-            one.add(block, metadata, target, null, null);
-            BigInteger occurrences = BigInteger.valueOf(count);
-            for (Map.Entry<Object, NBTTagCompound> entry : one.rows.entrySet()) {
-                NBTTagCompound unit = entry.getValue();
-                BigInteger quantity = new BigInteger(unit.getString("requiredExact")).multiply(occurrences);
-                NBTTagCompound previous = rows.get(entry.getKey());
+        /** Merge an already resolved exact contribution. No provider, world or inventory is consulted. */
+        public void addResolved(Contribution contribution, int occurrences) {
+            requireMutable();
+            if (contribution == null || occurrences < 0) throw new IllegalArgumentException("material contribution");
+            if (occurrences == 0) return;
+            BigInteger multiplier = BigInteger.valueOf(occurrences);
+            for (int index = 0; index < contribution.rows.length; index++) {
+                Object identity = contribution.identities[index];
+                NBTTagCompound unit = contribution.rows[index];
+                BigInteger quantity = new BigInteger(unit.getString("requiredExact")).multiply(multiplier);
+                NBTTagCompound previous = rows.get(identity);
                 if (previous == null) {
-                    unit.setString("requiredExact", quantity.toString());
-                    rows.put(entry.getKey(), unit);
+                    NBTTagCompound copy = (NBTTagCompound) unit.copy();
+                    copy.setString("requiredExact", quantity.toString());
+                    rows.put(identity, copy);
                 } else amount(previous, quantity);
             }
-            cacheReviewRequired |= one.cacheReviewRequired;
-            alternatives |= one.alternatives;
-            return true;
+            unaccounted = Math.addExact(unaccounted, Math.multiplyExact(contribution.unaccounted, occurrences));
+            if (detail.isEmpty()) detail = contribution.detail;
+            cacheReviewRequired |= contribution.cacheReviewRequired;
+            alternatives |= contribution.alternatives;
+        }
+
+        /** Transfer read-only row ownership without retaining one mutable hash-map builder per descriptor. */
+        public Contribution freeze() {
+            if (sealed == null) sealed = new Contribution(this);
+            return sealed;
+        }
+
+        private void requireMutable() {
+            if (sealed != null) throw new IllegalStateException("Material contribution is sealed");
         }
 
         public void unaccounted(String reason) {
+            requireMutable();
             unaccounted++;
             if (detail.isEmpty()) detail = reason == null ? "材料未核算" : reason;
         }

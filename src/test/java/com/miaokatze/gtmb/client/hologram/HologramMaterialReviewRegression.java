@@ -182,6 +182,7 @@ public final class HologramMaterialReviewRegression {
     private static void detachedNativeScope() {
         NBTTagCompound source = new NBTTagCompound();
         source.setLong("planRevision", 4);
+        source.setBoolean("localStandardController", true);
         NBTTagList cells = new NBTTagList();
         cells.appendTag(estimateCell(0, false, true)); // Uncharged machine anchor.
         cells.appendTag(estimateCell(1, false, true)); // Outside selection.
@@ -196,9 +197,12 @@ public final class HologramMaterialReviewRegression {
         config.setInteger("selected", 2);
         config.setIntArray("selectedIndices", new int[] { 0, 2, 3, 4 });
         config.setBoolean("materialMain", true);
-        HologramLocalMaterialReview review = new HologramLocalMaterialReview(displayed, config, Runnable::run);
+        HologramSelection selection = new HologramSelection();
+        selection.bindMaterials(displayed);
+        selection.load(config.getIntArray("selectedIndices"), 2, displayed.cells.size());
+        HologramLocalMaterialReview review = new HologramLocalMaterialReview(displayed, config, true, selection);
         ItemStack[] backpack = { new ItemStack(net.minecraft.init.Blocks.stone, 2, 0) };
-        for (int i = 0; i < 6 && !review.ready(); i++) review.tick(backpack, -1);
+        review.tick(backpack, -1);
 
         HologramMaterialReview model = new HologramMaterialReview();
         model.updateLocal(review.visible());

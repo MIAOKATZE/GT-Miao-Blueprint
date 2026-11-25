@@ -3,6 +3,7 @@
 
 package com.miaokatze.gtmb.client.hologram;
 
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
@@ -14,7 +15,9 @@ import net.minecraft.world.World;
 
 import com.github.bsideup.jabel.Desugar;
 import com.miaokatze.gtmb.hologram.HologramNetwork;
+import com.miaokatze.gtmb.hologram.HologramStockNativeWire;
 import com.miaokatze.gtmb.hologram.HologramStockNativeWire.Command;
+import com.miaokatze.gtmb.hologram.HologramStockNativeWire.EbfHatch;
 import com.miaokatze.gtmb.hologram.HologramStockNativeWire.Confirmation;
 import com.miaokatze.gtmb.hologram.HologramStockNativeWire.Key;
 import com.miaokatze.gtmb.hologram.HologramStockNativeWire.Phase;
@@ -25,6 +28,7 @@ import gregtech.api.enums.MetaTileEntityIDs;
 import gregtech.api.metatileentity.BaseMetaTileEntity;
 import gregtech.api.metatileentity.implementations.MTEHatchCokeOven;
 import gregtech.common.tileentities.machines.multi.MTECokeOven;
+import gregtech.common.tileentities.machines.multi.MTEElectricBlastFurnace;
 
 /** One existing local confirmation, one exact client owner. Preview/material browsing never touches this writer. */
 public final class HologramClientStockNative {
@@ -55,9 +59,19 @@ public final class HologramClientStockNative {
 
     @Desugar
     record Site(TileEntity controller, BaseMetaTileEntity hatch, int controllerFacing, int hx, int hy, int hz,
-        int hatchFacing) {
+        int hatchFacing, List<EbfHatch> ebfHatches) {
+
+        boolean ebf() {
+            return ebfHatches != null;
+        }
 
         boolean current(World world) {
+            if (ebf()) {
+                return controller instanceof BaseMetaTileEntity base
+                    && base.getMetaTileEntity() instanceof MTEElectricBlastFurnace ebf
+                    && ebf.getExtendedFacing().ordinal() == controllerFacing
+                    && ebfHatches.equals(HologramStockNativeWire.observedEbfHatches(world, controller));
+            }
             if (world == null || controller.isInvalid() || hatch.isInvalid() || controller.getWorldObj() != world
                 || hatch.getWorldObj() != world || !(controller instanceof BaseMetaTileEntity tile)
                 || !(tile.getMetaTileEntity() instanceof MTECokeOven oven)
@@ -68,7 +82,13 @@ public final class HologramClientStockNative {
                 && hatch.getFrontFacing().ordinal() == hatchFacing;
         }
 
+        String submitLabel() {
+            return ebf() ? "主背包补建 · 先备 12 个耐热外壳和 16 个所选线圈，只按缺位扣除"
+                : "主背包补建 · 先备 24 块焦炉砖，只按缺位扣除";
+        }
+
         String description() {
+            if (ebf()) return "保留已安装的 5 个电力高炉仓室";
             return "保留已安装 ULV 焦炉仓室 (" + (controller.xCoord + hx) + ", " + (controller.yCoord + hy)
                 + ", " + (controller.zCoord + hz) + ") · " + net.minecraftforge.common.util.ForgeDirection.getOrientation(hatchFacing).name();
         }
@@ -106,7 +126,7 @@ public final class HologramClientStockNative {
         boolean submit(Confirmation original, Context context, Owner owner, long now) {
             retireChangedContext(context);
             if (active != null) {
-                owner.notice.accept("另一个焦炉短请求尚未结束，请先核对现场。");
+                owner.notice.accept("另一个原生补建请求尚未结束，请先核对现场。");
                 return false;
             }
             if (context == null || !context.same(context) || !owner.exactBeforeStart.getAsBoolean()) {
@@ -150,7 +170,7 @@ public final class HologramClientStockNative {
                 reportUnknown(attempt);
                 return true;
             }
-            attempt.owner.notice.accept("已提交焦炉短请求，等待服务器确认。");
+            attempt.owner.notice.accept("已提交原生补建请求，等待服务器确认。");
             return true;
         }
 
@@ -199,16 +219,16 @@ public final class HologramClientStockNative {
             if (reply.phase() == Phase.ACCEPTED || reply.phase() == Phase.ACTIVE) {
                 if (previous < attempt.placed && !attempt.stopSent) attempt.deadline = now + RESULT_NANOS;
                 if (attempt.owner.visible.getAsBoolean() && !attempt.stopSent && !attempt.uncertain)
-                    attempt.owner.notice.accept(reply.phase() == Phase.ACCEPTED ? "服务器已受理焦炉施工；尚未确认方块提交。"
-                        : "焦炉施工：已确认 " + attempt.placed + " 格。");
+                    attempt.owner.notice.accept(reply.phase() == Phase.ACCEPTED ? "服务器已受理原生补建；尚未确认方块提交。"
+                        : "原生补建：已确认 " + attempt.placed + " 格。");
                 return;
             }
             active = null;
             if (!attempt.owner.visible.getAsBoolean()) return;
             String status = switch (reply.phase()) {
-                case COMPLETE -> "焦炉补建完成，实际放置 " + attempt.placed + " 格。";
-                case STOPPED -> "焦炉施工已停止，已确认 " + attempt.placed + " 格。" + reply.reason();
-                case RECOVERY_PENDING -> "焦炉施工结果待核定，已确认 " + attempt.placed + " 格。" + reply.reason();
+                case COMPLETE -> "原生补建完成，实际放置 " + attempt.placed + " 格。";
+                case STOPPED -> "原生补建已停止，已确认 " + attempt.placed + " 格。" + reply.reason();
+                case RECOVERY_PENDING -> "原生补建结果待核定，已确认 " + attempt.placed + " 格。" + reply.reason();
                 default -> reply.reason();
             };
             attempt.owner.notice.accept(status);
@@ -241,13 +261,17 @@ public final class HologramClientStockNative {
             return active != null && active.owner.view == view;
         }
 
+        boolean serverConfirmed(Context context) {
+            return context != null && context.same(known) && generation > 0;
+        }
+
         private void reportUnknown(Attempt attempt) {
             if (attempt.uncertain) return;
             attempt.uncertain = true;
             forgetWarm(attempt);
             boolean stopped = stopOnce(attempt);
             if (attempt.owner.visible.getAsBoolean())
-                attempt.owner.notice.accept("尚无法确认焦炉施工结果。" + (stopped ? "已请求停止，未确认停工。"
+                attempt.owner.notice.accept("尚无法确认原生补建结果。" + (stopped ? "已请求停止，未确认停工。"
                     : "没有重试；请先核对现场。"));
         }
 
@@ -321,10 +345,16 @@ public final class HologramClientStockNative {
         }
     }
 
-    /** Only this audited stock #236 3x3 shape, bounded local lookup. Ambiguity is never auto-resolved. */
+    /** Only exact supported stock shapes with all declared hatches installed; never guess an ambiguous site. */
     static Site choose(World world, TileEntity target) {
         if (world == null || target == null || target.getClass() != BaseMetaTileEntity.class) return null;
         BaseMetaTileEntity base = (BaseMetaTileEntity) target;
+        if (base.getMetaTileID() == MetaTileEntityIDs.EBF_CONTROLLER.ID
+            && base.getMetaTileEntity() instanceof MTEElectricBlastFurnace ebf) {
+            List<EbfHatch> hatches = HologramStockNativeWire.observedEbfHatches(world, target);
+            return hatches.isEmpty() ? null
+                : new Site(target, null, ebf.getExtendedFacing().ordinal(), 0, 0, 0, 0, hatches);
+        }
         if (base.getMetaTileID() != MetaTileEntityIDs.COKE_OVEN_CONTROLLER.ID
             || !(base.getMetaTileEntity() instanceof MTECokeOven oven) || oven.getClass() != MTECokeOven.class
             || oven.mMachine) return null;
@@ -345,7 +375,7 @@ public final class HologramClientStockNative {
                     if (!(world.getTileEntity(x, y, z) instanceof BaseMetaTileEntity hatch) || !realHatch(hatch)) continue;
                     if (chosen != null) return null;
                     chosen = new Site(base, hatch, facing.ordinal(), delta[0], delta[1], delta[2],
-                        hatch.getFrontFacing().ordinal());
+                        hatch.getFrontFacing().ordinal(), null);
                 }
         return chosen;
     }

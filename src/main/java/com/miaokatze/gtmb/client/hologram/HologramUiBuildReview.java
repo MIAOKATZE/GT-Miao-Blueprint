@@ -103,7 +103,7 @@ final class HologramUiBuildReview implements LocalView {
         if (!blocker.isEmpty() && !nativeMaterialInspectionReady()) ui.session.notice(blocker);
         else {
             closeLocalMaterials();
-            localMaterials = new HologramLocalMaterialReview(state, ui.config.configuration());
+            localMaterials = new HologramLocalMaterialReview(state, ui.config.configuration(), false, ui.preview.selection());
             localStockSite = root.stockNativeSite();
             localMaterialNotice = "";
             localMaterialSelectionVersion = ui.preview.selection()
@@ -205,13 +205,10 @@ final class HologramUiBuildReview implements LocalView {
 
     @Override
     public String localSubmitLabel() {
-        return localStockSite == null ? "确认补建（无可用短请求时不会提交）"
-            : "主背包补建 · 先备 24 块焦炉砖，只按缺位扣除";
-    }
-
-    @Override
-    public boolean supportsAdvancedPlacement() {
-        return localMaterialPaneCurrent() && ui.session.state().data.getInteger("mode") == 0;
+        if (localStockSite == null) return "确认补建（无可用短请求时不会提交）";
+        var context = HologramClientStockNative.context(ui.host == null ? null : ui.host.minecraft());
+        return HologramClientStockNative.OWNER.serverConfirmed(context) ? localStockSite.submitLabel()
+            : localStockSite.submitLabel() + " · 提交前检查服务器支持";
     }
 
     @Override
@@ -226,15 +223,15 @@ final class HologramUiBuildReview implements LocalView {
 
     @Override
     public String localDetailsLabel() {
-        return localMaterialsDetailed ? "返回基材清单" : "详细清单（逐格核对）";
+        return localMaterialsDetailed ? "返回基材清单" : "详细材料清单";
     }
 
     private void toggleDetailedLocalMaterials() {
-        // Live owner, exact scope and complete candidate rows; never sends a packet or touches execution readiness.
+        // Both views consume the same capture-time facts; no scan, query or construction is started here.
         if (!localDetailsAvailable()) return;
         NBTTagCompound settings = localMaterials.settings();
         boolean detailed = !localMaterialsDetailed;
-        HologramLocalMaterialReview next = new HologramLocalMaterialReview(ui.session.state(), settings, detailed);
+        HologramLocalMaterialReview next = new HologramLocalMaterialReview(ui.session.state(), settings, detailed, ui.preview.selection());
         localMaterials.close();
         localMaterials = next;
         localMaterialsDetailed = detailed;
@@ -248,11 +245,6 @@ final class HologramUiBuildReview implements LocalView {
             case REFRESH -> refreshLocalMaterials();
             case SUBMIT -> submitLocalMaterials();
             case DETAILS -> toggleDetailedLocalMaterials();
-            case ADVANCED -> {
-                HologramScreen root = ui.host == null ? null : ui.host.parent();
-                if (root != null && supportsAdvancedPlacement())
-                    submitLocalMaterials(settings -> root.reviewLocalConstruction(settings, true));
-            }
         }
     }
 

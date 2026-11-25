@@ -54,6 +54,7 @@ final class HologramDecorMaterialsRegression {
                 HologramNativePlacement.supported(block)
                     && HologramNativePlacement.matchesSample(block, metadata, data, carrier),
                 "Vanilla sign native planner accepts its physical carrier");
+            HologramStaticMaterialsRegression.assertResolvedRepeat(block, metadata, carrier, data, null);
             List<ItemStack> bill = HologramNativePlacement.materials(block, metadata, data);
             SimpleAssert.that(
                 bill.size() == 1 && bill.get(0)

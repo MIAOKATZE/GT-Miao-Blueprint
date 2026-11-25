@@ -3,15 +3,25 @@
 
 package com.miaokatze.gtmb.hologram;
 
-/** Shared eligibility for the ordinary direct profile's narrow, fully funded main-backpack lane. */
+/** Shared exact source selection for ordinary direct construction. */
 public final class HologramProjectedMainPolicy {
 
     private HologramProjectedMainPolicy() {}
 
-    /** Ordinary direct historically excludes wireless ME. Preserve container-first priority instead of overriding it. */
+    /** Use the same explicit stock choices and priority as the existing material transaction. */
     public static boolean eligible(HologramMaterials.Settings configured) {
         return configured != null && configured.main && configured.priority >= 0 && configured.priority <= 2
             && (configured.priority != 1 || !configured.containers);
+    }
+
+    /** The ordinary projected path supports all explicitly selected existing providers. */
+    public static boolean eligibleSelected(HologramMaterials.Settings configured) {
+        return configured != null && (configured.main || configured.containers || configured.me)
+            && configured.priority >= 0 && configured.priority <= 2;
+    }
+
+    static Snapshot captureSelected(HologramMaterials.Settings configured) {
+        return eligibleSelected(configured) ? new Snapshot(configured) : null;
     }
 
     static Snapshot capture(HologramMaterials.Settings configured) {
@@ -21,10 +31,11 @@ public final class HologramProjectedMainPolicy {
     /** Immutable exact original tool settings, independent of the private execution view. */
     static final class Snapshot {
 
-        private final boolean containers, me;
+        private final boolean main, containers, me;
         private final int priority, recoveryDestination;
 
         private Snapshot(HologramMaterials.Settings configured) {
+            main = configured.main;
             containers = configured.containers;
             me = configured.me;
             priority = configured.priority;
@@ -32,22 +43,31 @@ public final class HologramProjectedMainPolicy {
         }
 
         boolean configuredMatches(HologramMaterials.Settings value) {
-            return value != null && value.main && value.containers == containers && value.me == me
+            return value != null && value.main == main && value.containers == containers && value.me == me
                 && value.priority == priority && value.recoveryDestination == recoveryDestination;
         }
 
-        /** Never write this view to the tool. Neither observation nor execution will open other providers. */
-        HologramMaterials.Settings mainScope() {
+        /** Never write the execution view back to the tool. Preserve every explicitly selected provider. */
+        HologramMaterials.Settings selectedScope() {
             var settings = new HologramMaterials.Settings();
-            settings.containers = settings.me = false;
+            settings.main = main;
+            settings.containers = containers;
+            settings.me = me;
             settings.priority = priority;
             settings.recoveryDestination = recoveryDestination;
             return settings;
         }
 
-        boolean mainScopeMatches(HologramMaterials.Settings value) {
-            return value != null && value.main && !value.containers && !value.me
-                && value.priority == priority && value.recoveryDestination == recoveryDestination;
+        /** Existing stock-native profile remains explicitly main-only. */
+        HologramMaterials.Settings mainScope() {
+            var settings = selectedScope();
+            settings.main = true;
+            settings.containers = settings.me = false;
+            return settings;
+        }
+
+        boolean selectedScopeMatches(HologramMaterials.Settings value) {
+            return configuredMatches(value);
         }
     }
 }

@@ -31,6 +31,10 @@ public final class HologramBlueprintPreviewBinding {
         return pngSha256(json, opening(json));
     }
 
+    static String localPngSha256(byte[] json) throws IOException {
+        return pngSha256(json, opening(json, HologramBlueprintLimits.LOCAL_FILE_BYTES));
+    }
+
     private static String pngSha256(byte[] json, int opening) throws IOException {
         boolean canonical = matches(json, opening + 1, PREFIX);
         boolean present = validate(json);
@@ -45,7 +49,7 @@ public final class HologramBlueprintPreviewBinding {
 
     /** Only for the freshly read, exclusively owned bytes inside one readLocalJson call. */
     static LocalBinding inspectLocalJson(byte[] json) throws IOException {
-        int opening = opening(json);
+        int opening = opening(json, HologramBlueprintLimits.LOCAL_FILE_BYTES);
         return new LocalBinding(json, pngSha256(json, opening), opening + 1);
     }
 
@@ -74,8 +78,13 @@ public final class HologramBlueprintPreviewBinding {
 
     /** No reserialization: every other byte, including whitespace and extension fields, survives. */
     public static byte[] sourceJson(byte[] json) throws IOException {
-        if (pngSha256(json).isEmpty()) return json.clone();
-        int insertion = opening(json) + 1;
+        return sourceJson(json, HologramBlueprintArtifact.MAX_JSON_BYTES);
+    }
+
+    static byte[] sourceJson(byte[] json, int limit) throws IOException {
+        int opening = opening(json, limit);
+        if (pngSha256(json, opening).isEmpty()) return json.clone();
+        int insertion = opening + 1;
         byte[] source = new byte[json.length - MEMBER_BYTES];
         System.arraycopy(json, 0, source, 0, insertion);
         System.arraycopy(json, insertion + MEMBER_BYTES, source, insertion, source.length - insertion);
@@ -83,11 +92,15 @@ public final class HologramBlueprintPreviewBinding {
     }
 
     public static byte[] bind(byte[] json, String pngSha256) throws IOException {
-        byte[] source = sourceJson(json);
+        return bind(json, pngSha256, HologramBlueprintArtifact.MAX_JSON_BYTES);
+    }
+
+    static byte[] bind(byte[] json, String pngSha256, int limit) throws IOException {
+        byte[] source = sourceJson(json, limit);
         if (!pngSha256.matches("[a-f0-9]{64}")) throw new IOException("Invalid blueprint preview PNG digest");
-        if (source.length > HologramBlueprintArtifact.MAX_JSON_BYTES - MEMBER_BYTES)
+        if (source.length > limit - MEMBER_BYTES)
             throw new IOException("Preview-bound blueprint JSON exceeds its byte budget");
-        int insertion = opening(source) + 1;
+        int insertion = opening(source, limit) + 1;
         int next = insertion;
         while (next < source.length && whitespace(source[next])) next++;
         if (next >= source.length || source[next] == '}') throw new IOException("Missing blueprint content");
@@ -128,7 +141,11 @@ public final class HologramBlueprintPreviewBinding {
     }
 
     private static int opening(byte[] json) throws IOException {
-        if (json == null || json.length == 0 || json.length > HologramBlueprintArtifact.MAX_JSON_BYTES)
+        return opening(json, HologramBlueprintArtifact.MAX_JSON_BYTES);
+    }
+
+    private static int opening(byte[] json, int limit) throws IOException {
+        if (json == null || json.length == 0 || json.length > limit)
             throw new IOException("Invalid blueprint JSON byte budget");
         int at = 0;
         while (at < json.length && whitespace(json[at])) at++;
@@ -150,6 +167,12 @@ public final class HologramBlueprintPreviewBinding {
     public static void validateStoredSyntax(byte[] json) throws IOException {
         if (json == null || json.length == 0 || json.length > HologramBlueprintArtifact.MAX_JSON_BYTES)
             throw new IOException("Blueprint JSON byte budget");
+        validate(json);
+    }
+
+    /** Strict local syntax without changing public transfer admission. */
+    public static void validateLocalStoredSyntax(byte[] json) throws IOException {
+        opening(json, HologramBlueprintLimits.LOCAL_FILE_BYTES);
         validate(json);
     }
 

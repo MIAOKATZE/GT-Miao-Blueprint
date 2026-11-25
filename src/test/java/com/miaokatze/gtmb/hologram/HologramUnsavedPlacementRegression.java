@@ -274,12 +274,12 @@ public final class HologramUnsavedPlacementRegression {
             HologramWorldPlacementWorkflow.placeCurrentBlueprint(s, fixture.request());
             HologramCurrentPlacementPreparation task = s.currentPlacementTask;
             HologramCapture capture = s.capture;
-            task.tick(1, Long.MAX_VALUE, false);
+            task.tick(System.nanoTime(), false);
             SimpleAssert.that(
                 s.currentPlacementTask == task && !s.virtualPlacement,
-                "one owner unit cannot project and validate the full draft synchronously");
+                "exhausted cooperative budget does not publish a full draft synchronously");
             s.planRevision++;
-            task.tick(1, Long.MAX_VALUE, false);
+            task.tick(System.nanoTime(), false);
             SimpleAssert.that(
                 s.currentPlacementTask == null && !s.virtualPlacement,
                 "a retired revision cannot install asynchronous placement authority");
@@ -356,7 +356,7 @@ public final class HologramUnsavedPlacementRegression {
         void drainPreparation() throws Exception {
             long deadline = System.nanoTime() + 10_000_000_000L;
             while (session.currentPlacementTask != null && System.nanoTime() < deadline) {
-                session.currentPlacementTask.tick(2, Long.MAX_VALUE, false);
+                session.currentPlacementTask.tick(Long.MAX_VALUE, false);
                 if (session.currentPlacementTask != null && !session.currentPlacementTask.ready()) Thread.sleep(1);
             }
             SimpleAssert.that(session.currentPlacementTask == null, "bounded preparation reached a terminal result");

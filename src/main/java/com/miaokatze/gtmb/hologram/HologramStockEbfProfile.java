@@ -3,6 +3,8 @@
 
 package com.miaokatze.gtmb.hologram;
 
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -13,6 +15,7 @@ import net.minecraft.init.Blocks;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.tileentity.TileEntity;
 import net.minecraft.util.LongHashMap;
 import net.minecraft.world.ChunkCoordIntPair;
 import net.minecraft.world.ChunkPosition;
@@ -613,6 +616,59 @@ final class HologramStockEbfProfile {
         for (int i = 0; i < sealed.length; i++) if (elements[i] != sealed[i]) return false;
         return top.current() && bottom.current() && muffler.getCasingIndex() == CASING_META
             && muffler.getHint() == 2 && muffler.isExclusive();
+    }
+
+    static boolean validInstalled(List<Installed> choices) {
+        if (choices == null || choices.size() != REQUIRED_HATCHES) return false;
+        int roles = 0;
+        long positions = 0;
+        for (var choice : choices) {
+            if (choice == null || choice.facing < 0 || choice.facing >= 6) return false;
+            var type = hatchType(choice.id);
+            if (type == null || !type.admits(part(choice.a, choice.b, choice.c))) return false;
+            int role = 1 << type.role.ordinal();
+            long position = bit(choice.a, choice.b, choice.c);
+            if ((roles & role) != 0 || (positions & position) != 0) return false;
+            roles |= role;
+            positions |= position;
+        }
+        return true;
+    }
+
+    /** MUI chooses only unique already installed hatches on the pinned 3x4x3 EBF. It never scans the coil body. */
+    static List<HologramStockNativeWire.EbfHatch> observedHatches(World world, TileEntity tile) {
+        if (world == null || !(tile instanceof BaseMetaTileEntity base) || tile.getClass() != BaseMetaTileEntity.class
+            || tile.isInvalid() || tile.getWorldObj() != world || base.getMetaTileID() != CONTROLLER
+            || !(base.getMetaTileEntity() instanceof MTEElectricBlastFurnace machine)
+            || machine.getClass() != MTEElectricBlastFurnace.class || machine.mMachine
+            || GregTechAPI.sBlockMachines == null
+            || liveTile(world, base.xCoord, base.yCoord, base.zCoord, GregTechAPI.sBlockMachines) != base)
+            return Collections.emptyList();
+        var facing = machine.getExtendedFacing();
+        if (facing == null) return Collections.emptyList();
+        var found = new HologramStockNativeWire.EbfHatch[REQUIRED_HATCHES];
+        int[] abc = new int[3], delta = new int[3];
+        for (int b = -3; b <= 0; b += 3) for (int a = -1; a <= 1; a++) for (int c = 0; c <= 2; c++) {
+            Part part = part(a, b, c);
+            if (part == Part.CONTROLLER) continue;
+            abc[0] = a;
+            abc[1] = b;
+            abc[2] = c;
+            facing.getWorldOffset(abc, delta);
+            int x = base.xCoord + delta[0], y = base.yCoord + delta[1], z = base.zCoord + delta[2];
+            if (!HologramWorldFlow.worldPosition(x, y, z, world.getHeight()) || !world.blockExists(x, y, z))
+                return Collections.emptyList();
+            var physical = liveTile(world, x, y, z, GregTechAPI.sBlockMachines);
+            if (physical == null) continue;
+            int id = physical.getMetaTileID();
+            var type = hatchType(id);
+            if (type == null || !type.admits(part) || !type.matches(physical.getMetaTileEntity())
+                || found[type.role.ordinal()] != null || physical.isInvalid() || physical.getFrontFacing() == null
+                || physical.getFrontFacing().ordinal() >= 6) return Collections.emptyList();
+            found[type.role.ordinal()] = new HologramStockNativeWire.EbfHatch(a, b, c, id, physical.getFrontFacing().ordinal());
+        }
+        for (var hatch : found) if (hatch == null) return Collections.emptyList();
+        return Collections.unmodifiableList(Arrays.asList(found));
     }
 
     static int coilMetadata(int master, NBTTagCompound channels) {

@@ -76,14 +76,12 @@ public final class HologramProjectedLayerReviewedMetadataRegression {
             "all actually used official dictionary rows/counts, including native fields, without cell geometry");
 
         Header header = header(descriptors);
-        byte[] restUnavailable = new byte[32];
-        restUnavailable[0] = 1;
         // Only two exact observed coordinates of the archive are exercised. There is no complete construction.
         byte[] first = HologramProjectedLayerWire.encodeSlice(
-            new Slice(REQUEST, 0, 64, new int[] { 35, 0, 0, 36, 0, 0 }, restUnavailable));
-        Manifest original = new Manifest(header, HologramProjectedLayerWire.commitment(header, first));
+            new Slice(REQUEST, 0, 64, new int[] { 35, 0, 0, 36, 0, 0 }));
+        Manifest original = new Manifest(header);
         byte[] serialized = HologramProjectedLayerWire.encodeReviewedManifest(original);
-        require(serialized.length == 9_769 && serialized.length <= HologramProjectedLayerWire.MAX_REVIEWED_MANIFEST_BYTES,
+        require(serialized.length == 9_737 && serialized.length <= HologramProjectedLayerWire.MAX_REVIEWED_MANIFEST_BYTES,
             "only the exact bounded dictionary/envelope is serialized, not 123369 coordinates");
         Manifest decoded = HologramProjectedLayerWire.decodeReviewedManifest(serialized);
         require(decoded.header.profile == HologramProjectedLayerWire.REVIEWED_PROFILE && decoded.header.cells == CELLS
@@ -98,7 +96,7 @@ public final class HologramProjectedLayerReviewedMetadataRegression {
 
         var v1 = new Variant("minecraft:stone", 0, "minecraft:stone", 0, -1, false, "", "", 1);
         var v1Header = new Header(REQUEST, 0, 64, 0, 0, 64, 0, 0, 64, 0, 1, 1, Collections.singletonList(v1));
-        byte[] plain = HologramProjectedLayerWire.encodeManifest(new Manifest(v1Header, restUnavailable));
+        byte[] plain = HologramProjectedLayerWire.encodeManifest(new Manifest(v1Header));
         expect(() -> HologramProjectedLayerWire.decodeReviewedManifest(plain));
 
         Row lava = rows.get(6), glaxx = rows.get(19);
@@ -106,9 +104,9 @@ public final class HologramProjectedLayerReviewedMetadataRegression {
             "fixture preserves original variant ordinals");
         descriptors.set(6, Variant.reviewed(withCount(lava, lava.count - 1)));
         descriptors.set(19, Variant.reviewed(withCount(glaxx, glaxx.count + 1)));
-        var changed = new Receiver(new Manifest(header(descriptors), original.root()));
-        expect(() -> changed.offer(first));
-        require(changed.pending() == null, "a changed counts/variant dictionary must not adopt an old slice");
+        var changed = new Receiver(new Manifest(header(descriptors)));
+        require(changed.offer(first) == Offer.ACCEPTED,
+            "no fingerprint binds a future stream; each manifest retains independent quantities and server authority");
         return decoded;
     }
 

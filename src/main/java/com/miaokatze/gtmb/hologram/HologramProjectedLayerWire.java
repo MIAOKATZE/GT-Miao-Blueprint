@@ -13,8 +13,6 @@ import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -35,16 +33,16 @@ final class HologramProjectedLayerWire {
     private static final int MAX_REVIEWED_FIELD_TEXT = 2732; // Base64 for up to 2,048 compressed bytes.
     static final int MAX_SLICE_BYTES = 8 * 1024;
     static final int MAX_SLICE_CELLS = 512;
-    static final int MAX_CELLS = HologramBlueprintLimits.MAX_CELLS;
+    static final int WINDOW = 8; // At most 64 KiB of encoded geometry per owner, not whole-blueprint buffering.
+    static final int MAX_CELLS = HologramBlueprintLimits.LOCAL_CELLS;
     static final int MAX_VARIANTS = 512;
-    static final int HASH_BYTES = 32;
     static final int ACK_BYTES = 29;
-    private static final int MANIFEST_MAGIC = 0x47544d11, SLICE_MAGIC = 0x47544d12, ACK_MAGIC = 0x47544d13;
-    private static final int REVIEWED_MANIFEST_MAGIC = 0x47544d21;
-    private static final int SLICE_FIXED_BYTES = 32 + HASH_BYTES;
+    // New magics reject former fingerprint-bearing records rather than silently interpreting old frames.
+    private static final int MANIFEST_MAGIC = 0x47544d31, SLICE_MAGIC = 0x47544d32, ACK_MAGIC = 0x47544d13;
+    private static final int REVIEWED_MANIFEST_MAGIC = 0x47544d41;
+    private static final int SLICE_FIXED_BYTES = 32;
     private static final int FIELDS = 3;
     private static final int TERMINAL = 2, ABORTED = 4;
-    private static final byte[] END = new byte[HASH_BYTES];
     private static final Pattern REGISTRY_NAME = Pattern.compile("[a-zA-Z0-9_.:/-]{1,256}");
 
     private HologramProjectedLayerWire() {}
@@ -104,7 +102,6 @@ final class HologramProjectedLayerWire {
         final int x, y, z, minX, minY, minZ, maxX, maxY, maxZ;
         final int cells, slices, profile;
         final List<Variant> palette;
-        private final byte[] binding;
 
         Header(UUID request, int x, int y, int z, int minX, int minY, int minZ, int maxX, int maxY, int maxZ,
             int cells, int slices, List<Variant> palette) throws IOException {
@@ -151,24 +148,15 @@ final class HologramProjectedLayerWire {
             this.slices = slices;
             this.profile = profile;
             this.palette = Collections.unmodifiableList(copy);
-            byte[] body = write(manifestCap(profile) - HASH_BYTES, out -> writeHeader(out, this));
-            binding = sha256().digest(body);
         }
     }
 
     static final class Manifest {
 
         final Header header;
-        private final byte[] root;
-
-        Manifest(Header header, byte[] root) throws IOException {
-            if (header == null || !isHash(root) || isEnd(root)) throw malformed();
+        Manifest(Header header) throws IOException {
+            if (header == null) throw malformed();
             this.header = header;
-            this.root = root.clone();
-        }
-
-        byte[] root() {
-            return root.clone();
         }
     }
 
@@ -178,18 +166,15 @@ final class HologramProjectedLayerWire {
         final UUID request;
         final int sequence, y;
         private final int[] operations;
-        private final byte[] next;
 
-        Slice(UUID request, int sequence, int y, int[] operations, byte[] next) throws IOException {
+        Slice(UUID request, int sequence, int y, int[] operations) throws IOException {
             if (!validRequest(request) || sequence < 0 || sequence >= MAX_CELLS
                 || y < 0 || y >= 4096 || operations == null || operations.length == 0
-                || operations.length % FIELDS != 0 || operations.length / FIELDS > MAX_SLICE_CELLS
-                || !isHash(next)) throw malformed();
+                || operations.length % FIELDS != 0 || operations.length / FIELDS > MAX_SLICE_CELLS) throw malformed();
             this.request = request;
             this.sequence = sequence;
             this.y = y;
             this.operations = operations.clone();
-            this.next = next.clone();
             for (int i = 0; i < size(); i++) {
                 if (!position(x(i), y, z(i)) || variant(i) < 0 || variant(i) >= MAX_VARIANTS
                     || i > 0 && compare(y, z(i - 1), x(i - 1), y, z(i), x(i)) >= 0) throw malformed();
@@ -212,9 +197,6 @@ final class HologramProjectedLayerWire {
             return operations[FIELDS * index + 2];
         }
 
-        byte[] next() {
-            return next.clone();
-        }
     }
 
     /** Transfer only. settledCells is not a count of world mutations or payments. */
@@ -251,7 +233,6 @@ final class HologramProjectedLayerWire {
         if (value == null || value.header.profile != profile) throw malformed();
         return write(manifestCap(profile), out -> {
             writeHeader(out, value.header);
-            out.write(value.root);
         });
     }
 
@@ -287,10 +268,9 @@ final class HologramProjectedLayerWire {
                 } else if (in.readInt() != 0 || in.readInt() != 0) throw malformed();
                 palette.add(new Variant(block, metadata, item, damage, -1, false, tile, itemState, count, reviewed));
             }
-            byte[] root = readHash(in);
             if (in.available() != 0) throw malformed();
             return new Manifest(new Header(request, x, y, z, minX, minY, minZ, maxX, maxY, maxZ, cells, slices,
-                palette, profile), root);
+                palette, profile));
         }
     }
 
@@ -340,7 +320,6 @@ final class HologramProjectedLayerWire {
             out.writeInt(value.y);
             out.writeInt(value.size());
             for (int field : value.operations) out.writeInt(field);
-            out.write(value.next);
         });
     }
 
@@ -352,7 +331,7 @@ final class HologramProjectedLayerWire {
                 throw malformed();
             int[] operations = new int[cells * FIELDS];
             for (int i = 0; i < operations.length; i++) operations[i] = in.readInt();
-            return new Slice(request, sequence, y, operations, readHash(in));
+            return new Slice(request, sequence, y, operations);
         }
     }
 
@@ -398,26 +377,6 @@ final class HologramProjectedLayerWire {
         return order == 0 ? Integer.compare(x, otherX) : order;
     }
 
-    static byte[] commitment(Header header, byte[] encodedSlice) throws IOException {
-        if (encodedSlice == null || encodedSlice.length < SLICE_FIXED_BYTES || encodedSlice.length > MAX_SLICE_BYTES)
-            throw malformed();
-        MessageDigest digest = sha256();
-        digest.update(header.binding);
-        return digest.digest(encodedSlice);
-    }
-
-    static byte[] end() {
-        return END.clone();
-    }
-
-    static boolean isEnd(byte[] hash) {
-        return MessageDigest.isEqual(END, hash);
-    }
-
-    private static boolean isHash(byte[] hash) {
-        return hash != null && hash.length == HASH_BYTES;
-    }
-
     private static boolean position(int x, int y, int z) {
         return x >= -30_000_000 && x < 30_000_000 && z >= -30_000_000 && z < 30_000_000 && y >= 0 && y < 4096;
     }
@@ -433,12 +392,6 @@ final class HologramProjectedLayerWire {
     private static void writeUuid(DataOutputStream out, UUID id) throws IOException {
         out.writeLong(id.getMostSignificantBits());
         out.writeLong(id.getLeastSignificantBits());
-    }
-
-    private static byte[] readHash(DataInputStream in) throws IOException {
-        byte[] hash = new byte[HASH_BYTES];
-        in.readFully(hash);
-        return hash;
     }
 
     private static String readText(DataInputStream in, int cap) throws IOException {
@@ -492,14 +445,6 @@ final class HologramProjectedLayerWire {
             encoder.write(out);
         }
         return bytes.toByteArray();
-    }
-
-    private static MessageDigest sha256() {
-        try {
-            return MessageDigest.getInstance("SHA-256");
-        } catch (NoSuchAlgorithmException unavailable) {
-            throw new IllegalStateException(unavailable);
-        }
     }
 
     static IOException malformed() {

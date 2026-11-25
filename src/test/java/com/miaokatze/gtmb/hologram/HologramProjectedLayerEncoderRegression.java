@@ -20,6 +20,7 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 
 import com.miaokatze.gtmb.hologram.HologramProjectedLayerEncoder.Cursor;
+import com.miaokatze.gtmb.hologram.HologramProjectedLayerEncoder.Layout;
 import com.miaokatze.gtmb.hologram.HologramProjectedLayerEncoder.Plain;
 import com.miaokatze.gtmb.hologram.HologramProjectedLayerEncoder.Source;
 import com.miaokatze.gtmb.hologram.HologramProjectedLayerPlan.Offer;
@@ -41,10 +42,12 @@ public final class HologramProjectedLayerEncoderRegression {
 
     public static void run() throws IOException {
         exactProof();
+        packedLocalSyntaxProof();
         canonicalProjectedArea();
         deterministicStream();
         firstPrefixAddsFrame();
         rejectChangedTraversal();
+        rejectFalseCapturedFacts();
     }
 
     private static void exactProof() throws IOException {
@@ -74,6 +77,43 @@ public final class HologramProjectedLayerEncoderRegression {
         SimpleAssert.eq(null, badVisit.finish(), "mismatched visitor cannot mint an exact proof");
         SimpleAssert.eq(null, certificate(fixture("", ",\"metadata\":0")),
             "duplicate fields fail the strict original syntax proof even if the display reader recovers");
+    }
+
+    private static void packedLocalSyntaxProof() throws IOException {
+        StringBuilder json = new StringBuilder("{\"schema\":2,\"encoding\":\"gtmb-dictionary-1\","
+            + "\"blueprint\":{\"schema\":2,\"cells\":[");
+        for (int i = 0; i < 1000; i++) {
+            if (i > 0) json.append(',');
+            json.append("[0,{\"x\":").append(i % 40).append(",\"z\":").append(i / 40).append("}]");
+        }
+        String source = json.append("],\"palette\":[]},\"materials\":[{\"item\":\"minecraft:stone\","
+            + "\"block\":\"minecraft:stone\",\"metadata\":0}],\"nbt\":[]}").toString();
+        byte[] exact = source.getBytes(StandardCharsets.UTF_8);
+        SimpleAssert.that(exact.length > 16_384, "a large canonical literal geometry fixture");
+        var canonical = HologramProjectedLayerEncoder.inspectLocal(exact, true);
+        SimpleAssert.eq(HologramBlueprintCompactCodec.StoredSyntax.VALID, canonical.rows().storedSyntax,
+            "literal grammar plus retained syntax prove the original without reparsing the removed geometry");
+        SimpleAssert.eq(1000, certificate(canonical).cells(), "exact original proof retains every displayed row");
+        SimpleAssert.eq(HologramBlueprintCompactCodec.StoredSyntax.UNCHECKED,
+            HologramProjectedLayerEncoder.inspectLocal(exact, false).rows().storedSyntax,
+            "ordinary display does not run construction-only retained syntax proof");
+
+        byte[] duplicate = source.replace("\"metadata\":0", "\"metadata\":0,\"metadata\":0")
+            .getBytes(StandardCharsets.UTF_8);
+        var malformed = HologramProjectedLayerEncoder.inspectLocal(duplicate, true);
+        SimpleAssert.eq(HologramBlueprintCompactCodec.StoredSyntax.INVALID, malformed.rows().storedSyntax,
+            "duplicate retained dictionary key cannot mint exact proof");
+        SimpleAssert.eq(1000, malformed.rows().cells(), "historical preview remains intact");
+        SimpleAssert.eq(null, certificate(malformed), "invalid original key syntax fails closed for construction");
+        SimpleAssert.eq(null, localCertificate(("\uFEFF" + source).getBytes(StandardCharsets.UTF_8)),
+            "a BOM is still not the canonical local opening");
+        SimpleAssert.eq(null, localCertificate(source.replace("\"x\":0,", "\"x\":0,\"x\":0,")
+            .getBytes(StandardCharsets.UTF_8)), "duplicate coordinate fields cannot use the literal shortcut");
+
+        var small = HologramProjectedLayerEncoder.inspectLocal(fixture("", ""), true);
+        SimpleAssert.eq(HologramBlueprintCompactCodec.StoredSyntax.VALID, small.rows().storedSyntax,
+            "the same exact proof covers small canonical local blueprints");
+        SimpleAssert.that(certificate(small) != null, "small canonical input remains eligible");
     }
 
     /** Use the real projection and stamped compact save writer, not handcrafted positive JSON. */
@@ -182,14 +222,25 @@ public final class HologramProjectedLayerEncoderRegression {
 
     private static HologramProjectedLayerEncoder.Evidence certificate(byte[] exact) {
         try {
-            var inspected = HologramProjectedLayerEncoder.inspect(exact, true);
-            var builder = inspected.builder();
-            if (builder == null) return null;
-            for (int i = 0; i < inspected.rows().cells(); i++) builder.row(i, inspected.rows().materialIndex(i));
-            return builder.finish();
+            return certificate(HologramProjectedLayerEncoder.inspect(exact, true));
         } catch (IOException unsupported) {
             return null;
         }
+    }
+
+    private static HologramProjectedLayerEncoder.Evidence localCertificate(byte[] exact) {
+        try {
+            return certificate(HologramProjectedLayerEncoder.inspectLocal(exact, true));
+        } catch (IOException unsupported) {
+            return null;
+        }
+    }
+
+    private static HologramProjectedLayerEncoder.Evidence certificate(HologramProjectedLayerEncoder.Inspection inspected) {
+        var builder = inspected.builder();
+        if (builder == null) return null;
+        for (int i = 0; i < inspected.rows().cells(); i++) builder.row(i, inspected.rows().materialIndex(i));
+        return builder.finish();
     }
 
     private static boolean rejected(byte[] candidate) {
@@ -212,8 +263,8 @@ public final class HologramProjectedLayerEncoderRegression {
         Source source = new Fixture(passes, false);
         var prepared = HologramProjectedLayerEncoder.prepare(ID, 0, 64, 0, source, () -> true,
             value -> visited.set((int) value));
-        SimpleAssert.eq(522, visited.get(), "only known first-pass rows reported");
-        SimpleAssert.eq(2, passes.get(), "count and backward digest pass, no queued forward geometry");
+        SimpleAssert.eq(0, visited.get(), "preparation never visits any source geometry");
+        SimpleAssert.eq(0, passes.get(), "manifest preparation opens no source cursor");
         byte[] first = HologramProjectedLayerWire.encodeAck(new Ack(ID, 0, 0, 1, false, false));
         SimpleAssert.that(!prepared.onAck(first, () -> true).accepted(), "no credit before handing off manifest");
         byte[] manifestBytes = prepared.takeManifest();
@@ -228,18 +279,17 @@ public final class HologramProjectedLayerEncoderRegression {
             var reply = prepared.onAck(ack, () -> true);
             SimpleAssert.that(reply.accepted() && !reply.transferComplete() && reply.nextFrame().length <= 6208,
                 "credit emits exactly one bounded frame");
-            SimpleAssert.eq(null, prepared.onAck(ack, () -> true).nextFrame(),
-                "replayed credit cannot emit another frame");
             var slice = HologramProjectedLayerWire.decodeSlice(reply.nextFrame());
             SimpleAssert.eq(i, slice.sequence, "ordered sequences");
             SimpleAssert.eq(i < 2 ? 64 : 65, slice.y, "no cross-layer frames");
             SimpleAssert.eq(i == 0 ? 32 : i == 1 ? 481 : 9, slice.size(), "exact prefix then tails");
             sum += slice.size();
-            SimpleAssert.eq(Offer.ACCEPTED, receiver.offer(reply.nextFrame()), "frozen receiver verifies commitment");
+            SimpleAssert.eq(Offer.ACCEPTED, receiver.offer(reply.nextFrame()), "receiver verifies bounds and ordered counts");
             SimpleAssert.that(receiver.settle(receiver.pending()), "settle exact frame");
         }
         SimpleAssert.eq(522, sum, "all declared operations appear once");
-        SimpleAssert.eq(3, passes.get(), "forward cursor opens once, only after credit");
+        SimpleAssert.eq(1, passes.get(), "only one forward sending cursor opens, after credit");
+        SimpleAssert.eq(522, visited.get(), "progress follows the only forward stream");
         var end = prepared.onAck(HologramProjectedLayerWire.encodeAck(receiver.ack()), () -> true);
         SimpleAssert.that(end.accepted() && end.transferComplete() && end.nextFrame() == null,
             "final ACK ends only transfer and sends no gameplay receipt");
@@ -254,8 +304,8 @@ public final class HologramProjectedLayerEncoderRegression {
         for (int size : new int[] { 32, 480 }) {
             var reply = prepared.onAck(HologramProjectedLayerWire.encodeAck(receiver.ack()), () -> true);
             var slice = HologramProjectedLayerWire.decodeSlice(reply.nextFrame());
-            SimpleAssert.eq(size, slice.size(), "initial batch finishes validation within the nominal read ceiling");
-            SimpleAssert.eq(Offer.ACCEPTED, receiver.offer(reply.nextFrame()), "same reverse commitment partition");
+            SimpleAssert.eq(size, slice.size(), "initial frame remains a short latency prefix, not a placement quota");
+            SimpleAssert.eq(Offer.ACCEPTED, receiver.offer(reply.nextFrame()), "same bounded forward partition");
             SimpleAssert.that(receiver.settle(receiver.pending()), "small initial frame settles normally");
         }
         var end = prepared.onAck(HologramProjectedLayerWire.encodeAck(receiver.ack()), () -> true);
@@ -263,15 +313,22 @@ public final class HologramProjectedLayerEncoderRegression {
     }
 
     private static void rejectChangedTraversal() throws IOException {
-        var changed = HologramProjectedLayerEncoder.prepare(ID, 0, 64, 0,
-            new Fixture(new AtomicInteger(), true), () -> true, null);
+        AtomicInteger opened = new AtomicInteger();
+        Source forwardOnly = new Fixture(opened, false) {
+            @Override
+            public Cursor open(boolean reverse) {
+                if (reverse) throw new AssertionError("no reverse or whole-source commitment pass");
+                return super.open(false);
+            }
+        };
+        var changed = HologramProjectedLayerEncoder.prepare(ID, 0, 64, 0, forwardOnly, () -> true, null);
+        SimpleAssert.eq(0, opened.get(), "even first source read waits until frame credit");
         changed.takeManifest();
         byte[] first = HologramProjectedLayerWire.encodeAck(new Ack(ID, 0, 0, 1, false, false));
-        try {
-            changed.onAck(first, () -> true);
-            throw new AssertionError("forward frame differs from backward digest");
-        } catch (IOException accepted) {}
-        SimpleAssert.eq(null, changed.onAck(first, () -> true).nextFrame(), "mismatched owner closes its producer");
+        SimpleAssert.that(changed.onAck(first, () -> true).nextFrame() != null,
+            "first frame needs no traversal of later geometry");
+        SimpleAssert.eq(1, opened.get(), "first frame reads a single forward cursor");
+        changed.close();
         try {
             HologramProjectedLayerEncoder.prepare(ID, 0, 64, 0, new Fixture(new AtomicInteger(), false),
                 () -> false, null);
@@ -279,8 +336,41 @@ public final class HologramProjectedLayerEncoderRegression {
         } catch (InterruptedIOException accepted) {}
     }
 
+    private static void rejectFalseCapturedFacts() throws IOException {
+        var fixture = new Fixture(new AtomicInteger(), false);
+        for (boolean wrongMaterials : new boolean[] { false, true }) {
+            var mismatch = new Source() {
+
+                @Override
+                public Layout layout() {
+                    int[] counts = new int[Plain.values().length];
+                    counts[Plain.STONE.ordinal()] = wrongMaterials ? 260 : 261;
+                    counts[Plain.GLASS.ordinal()] = 522 - counts[Plain.STONE.ordinal()];
+                    return new Layout(new int[] { wrongMaterials ? -8 : -9, 64, 0 }, new int[] { 8, 65, 30 },
+                        new int[] { 513, 9 }, counts);
+                }
+
+                @Override
+                public Cursor open(boolean reverse) throws IOException {
+                    if (reverse) throw new AssertionError("no backward verification pass");
+                    return fixture.open(false);
+                }
+            };
+            try {
+                var prepared = HologramProjectedLayerEncoder.prepare(ID, 0, 64, 0, mismatch, () -> true, null);
+                var receiver = new Receiver(HologramProjectedLayerWire.decodeManifest(prepared.takeManifest()));
+                while (!receiver.finished()) {
+                    var reply = prepared.onAck(HologramProjectedLayerWire.encodeAck(receiver.ack()), () -> true);
+                    receiver.offer(reply.nextFrame());
+                    receiver.settle(receiver.pending());
+                }
+                throw new AssertionError("false captured facts fail during the sole forward stream");
+            } catch (IOException accepted) {}
+        }
+    }
+
     /** Synthetic regenerable traversal: deliberately no complete geometry array in the producer or fixture. */
-    private static final class Fixture implements Source {
+    private static class Fixture implements Source {
 
         private final AtomicInteger passes;
         private final boolean poison;
@@ -297,19 +387,23 @@ public final class HologramProjectedLayerEncoderRegression {
             this.secondLevel = secondLevel;
         }
 
-        @Override
-        public int cells() {
+        private int cells() {
             return firstLevel + secondLevel;
         }
 
         @Override
-        public int count(Plain kind) {
-            return kind == Plain.STONE ? (cells() + 1) / 2 : kind == Plain.GLASS ? cells() / 2 : 0;
+        public Layout layout() {
+            int[] counts = new int[Plain.values().length];
+            counts[Plain.STONE.ordinal()] = (cells() + 1) / 2;
+            counts[Plain.GLASS.ordinal()] = cells() / 2;
+            return new Layout(new int[] { -8, 64, 0 },
+                new int[] { 8, secondLevel == 0 ? 64 : 65, (Math.max(firstLevel, secondLevel) - 1) / 17 },
+                secondLevel == 0 ? new int[] { firstLevel } : new int[] { firstLevel, secondLevel }, counts);
         }
 
         @Override
         public Cursor open(boolean reverse) {
-            boolean changed = passes.incrementAndGet() == 3 && poison;
+            boolean changed = passes.incrementAndGet() == 2 && poison;
             return new Cursor() {
 
                 int at = reverse ? cells() : -1;

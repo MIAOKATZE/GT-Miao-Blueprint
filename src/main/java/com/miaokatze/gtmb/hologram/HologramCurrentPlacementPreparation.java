@@ -21,7 +21,7 @@ final class HologramCurrentPlacementPreparation {
     private HologramBlueprintValidationCache validation;
     private FutureTask<HologramPresets.Preset> worker;
     private final java.util.Set<Integer> generatedGeometry = new java.util.HashSet<>();
-    private int cursor;
+    private int paletteCursor;
     private boolean projected;
 
     HologramCurrentPlacementPreparation(HologramSession s) {
@@ -35,7 +35,7 @@ final class HologramCurrentPlacementPreparation {
         x = s.x;
         y = s.y;
         z = s.z;
-        source = new HologramSnapshotMetadataSource(s, data, true);
+        source = new HologramSnapshotMetadataSource(s, data, this::preparePlacedRow);
     }
 
     boolean ready() {
@@ -75,40 +75,27 @@ final class HologramCurrentPlacementPreparation {
     }
 
     void tick() {
-        tick(128, HologramWorkBudget.deadline(HologramWorkBudget.remainingNanos(2_000_000L)), true);
+        tick(HologramWorkBudget.deadline(HologramWorkBudget.SLICE_NANOS), true);
     }
 
-    /** The test port retains the actual continuation and worker, without requiring a transport connection. */
-    void tick(int maxWork, long deadline, boolean publish) {
+    /** Share the owner-thread time budget; there is no fixed per-tick row limit. */
+    void tick(long deadline, boolean publish) {
         try {
             if (!current()) throw new IOException("蓝图会话或计划已变化，放置准备已取消；草稿保留");
             if (!projected) {
-                if (!source.step(maxWork, deadline)) return;
+                if (!source.step(Integer.MAX_VALUE, deadline)) return;
                 projected = true;
-                validation = new HologramBlueprintValidationCache(source.result);
-                return;
+                if (System.nanoTime() >= deadline) return;
             }
             HologramPresets.Preset draft = source.result;
-            // Native factories, material identities and filtering always remain on the owner thread, one row at a time.
-            int cells = draft.cells.size(), total = cells + draft.palette.size();
-            for (int work = 0; cursor < total && work < maxWork; work++) {
-                if (work > 0 && System.nanoTime() >= deadline) return;
-                boolean placed = cursor < cells;
-                int index = cursor++;
-                HologramPresets.Cell cell = placed ? draft.cells.get(index) : draft.palette.get(index - cells);
-                if (placed && !HologramWorldFlow
-                    .worldPosition(x + cell.x, y + cell.y, z + cell.z, s.player.worldObj.getHeight()))
-                    throw new IOException("蓝图结构范围超出世界边界或高度");
-                if (placed) {
-                    HologramCapture.Cell originalCell = capture.cells.get(index);
-                    HologramAttachmentPlacementProof proof = originalCell.attachmentPlacementProof;
-                    if (proof != null && proof.matches(originalCell, cell)) generatedGeometry.add(index);
-                }
-                HologramPresets.validateBlueprintCell(cell, placed, validation);
+            // Placed rows were validated as the shared source projected them. Only the derived palette remains.
+            while (paletteCursor < draft.palette.size() && System.nanoTime() < deadline) {
+                HologramPresets.Cell cell = draft.palette.get(paletteCursor++);
+                HologramPresets.validateBlueprintCell(cell, false, validation);
                 validation.filter(cell);
                 data.freezeBlock(cell);
             }
-            if (cursor < total) return;
+            if (paletteCursor < draft.palette.size()) return;
             if (worker == null) {
                 HologramPresets.Preset frozen = draft;
                 java.util.Set<Integer> frozenGeometry = java.util.Collections
@@ -145,6 +132,18 @@ final class HologramCurrentPlacementPreparation {
                 .interrupt();
             cancel();
         }
+    }
+
+    private void preparePlacedRow(HologramPresets.Preset draft, int index, HologramPresets.Cell cell)
+        throws IOException {
+        if (validation == null) validation = new HologramBlueprintValidationCache(draft);
+        if (!HologramWorldFlow.worldPosition(x + cell.x, y + cell.y, z + cell.z, s.player.worldObj.getHeight()))
+            throw new IOException("蓝图结构范围超出世界边界或高度");
+        HologramCapture.Cell originalCell = capture.cells.get(index);
+        HologramAttachmentPlacementProof proof = originalCell.attachmentPlacementProof;
+        if (proof != null && proof.matches(originalCell, cell)) generatedGeometry.add(index);
+        HologramPresets.validateBlueprintCell(cell, true, validation);
+        validation.filter(cell);
     }
 
     private static HologramPresets.Preset prepareData(HologramPresets.Preset draft, java.util.Set<Integer> geometry,

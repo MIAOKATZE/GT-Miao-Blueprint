@@ -107,23 +107,28 @@ final class HologramSavedMaterialSource {
     /** Runs on the display reader's existing worker loop; a descriptor is inspected only at first use. */
     static final class Tally {
 
-        private static final int AIR = -1, PAYLOAD = -2, UNSUPPORTED = -3;
+        private static final int AIR = -1, PAYLOAD = -2, UNSUPPORTED = -3, LIMIT = -4;
         private final int[] buckets, counts;
         private final Map<Variant, Integer> indices = new LinkedHashMap<>();
         private final boolean knownSchema, retentionNeedsReview;
         private int airCells, payloadCells, unsupportedCells, limitCells;
 
         Tally(JsonObject blueprint, int dictionarySize) {
+            this(dictionarySize, integer(blueprint.get("schema"), 1, 1, 2) == 2,
+                nonemptyPolicy(blueprint, "retainedNbtKeys")
+                    || nonemptyPolicy(blueprint, "processingNbt")
+                    || nonemptyPolicy(blueprint, "semanticNbt")
+                    || nonemptyPolicy(blueprint, "quantumGroupingNbt")
+                    || !optionalBoolean(blueprint.get("retainNbt"))
+                    || !optionalBoolean(blueprint.get("retainCovers")));
+        }
+
+        Tally(int dictionarySize, boolean knownSchema, boolean retentionNeedsReview) {
             int capacity = Math.min(dictionarySize, MAX_TRACKED_DESCRIPTORS);
             buckets = new int[capacity];
             counts = new int[capacity];
-            knownSchema = integer(blueprint.get("schema"), 1, 1, 2) == 2;
-            retentionNeedsReview = nonemptyPolicy(blueprint, "retainedNbtKeys")
-                || nonemptyPolicy(blueprint, "processingNbt")
-                || nonemptyPolicy(blueprint, "semanticNbt")
-                || nonemptyPolicy(blueprint, "quantumGroupingNbt")
-                || !optionalBoolean(blueprint.get("retainNbt"))
-                || !optionalBoolean(blueprint.get("retainCovers"));
+            this.knownSchema = knownSchema;
+            this.retentionNeedsReview = retentionNeedsReview;
         }
 
         void include(int descriptorIndex, JsonObject firstUse) {
@@ -133,11 +138,32 @@ final class HologramSavedMaterialSource {
                 return;
             }
             int bucket = buckets[descriptorIndex];
-            if (bucket == 0) buckets[descriptorIndex] = bucket = classify(firstUse);
-            if (bucket == AIR) airCells++;
+            if (bucket == 0) buckets[descriptorIndex] = bucket = classify(firstUse, false);
+            count(bucket);
+        }
+
+        private void count(int bucket) {
+            if (bucket == LIMIT) limitCells++;
+            else if (bucket == AIR) airCells++;
             else if (bucket == PAYLOAD) payloadCells++;
             else if (bucket == UNSUPPORTED) unsupportedCells++;
             else counts[bucket - 1]++;
+        }
+
+        /** Folded into expanded-source decoding, never called when the material page opens. */
+        void includeExpanded(JsonObject row) { count(classify(row, true)); }
+
+        /** Frozen drafts already validated their scalar representation; no retained payload is decoded here. */
+        void includeFrozen(String block, int metadata, String item, int damage, int facing,
+            int count, boolean controller, String tileNbt, String itemNbt) {
+            if (!tileNbt.isEmpty() || !itemNbt.isEmpty()) count(PAYLOAD);
+            else if (!knownSchema || metadata < 0 || metadata > 15 || damage < 0 || damage > Short.MAX_VALUE
+                || facing < -1 || facing > 5 || count != 1) count(UNSUPPORTED);
+            else if ("minecraft:air".equals(block) && !controller
+                && (item.isEmpty() || "minecraft:air".equals(item))) count(AIR);
+            else if (!validRegistry(block) || !validRegistry(item) || "minecraft:air".equals(block)
+                || "minecraft:air".equals(item)) count(UNSUPPORTED);
+            else count(variant(new Variant(block, metadata, item, damage, facing, controller)));
         }
 
         HologramSavedMaterialSource snapshot() {
@@ -153,7 +179,7 @@ final class HologramSavedMaterialSource {
                 retentionNeedsReview);
         }
 
-        private int classify(JsonObject row) {
+        private int classify(JsonObject row, boolean expanded) {
             if (row == null) return UNSUPPORTED;
             // The strings may be resolved dictionary payloads. Their contents are deliberately not read or retained.
             if (!emptyString(row.get("tileNbt")) || !emptyString(row.get("itemNbt"))) return PAYLOAD;
@@ -161,7 +187,9 @@ final class HologramSavedMaterialSource {
             JsonElement controllerField = row.get("controller");
             if (!knownSchema || !optionalBoolean(excluded) || !optionalBoolean(controllerField)) return UNSUPPORTED;
             for (Map.Entry<String, JsonElement> field : row.entrySet())
-                if (!KNOWN_FIELDS.contains(field.getKey())) return UNSUPPORTED;
+                if (!KNOWN_FIELDS.contains(field.getKey()) && !(expanded
+                    && ("x".equals(field.getKey()) || "y".equals(field.getKey()) || "z".equals(field.getKey()))))
+                    return UNSUPPORTED;
             String block = registry(row.get("block")), item = registry(row.get("item"));
             boolean controller = present(controllerField) && controllerField.getAsBoolean();
             int metadata = integer(row.get("metadata"), 0, 0, 15);
@@ -174,8 +202,16 @@ final class HologramSavedMaterialSource {
                 && (!present(row.get("item")) || "minecraft:air".equals(item))) return AIR;
             if (block == null || item == null || "minecraft:air".equals(block) || "minecraft:air".equals(item))
                 return UNSUPPORTED;
-            Variant variant = new Variant(block, metadata, item, damage, facing, controller);
-            return indices.computeIfAbsent(variant, ignored -> indices.size() + 1);
+            return variant(new Variant(block, metadata, item, damage, facing, controller));
+        }
+
+        private int variant(Variant variant) {
+            Integer known = indices.get(variant);
+            if (known != null) return known;
+            if (indices.size() >= counts.length) return LIMIT;
+            int bucket = indices.size() + 1;
+            indices.put(variant, bucket);
+            return bucket;
         }
     }
 
@@ -207,8 +243,11 @@ final class HologramSavedMaterialSource {
                 .isString())
             return null;
         String id = value.getAsString();
-        return id.length() <= MAX_ID_CHARS && ID.matcher(id)
-            .matches() ? id : null;
+        return validRegistry(id) ? id : null;
+    }
+
+    private static boolean validRegistry(String id) {
+        return id != null && id.length() <= MAX_ID_CHARS && ID.matcher(id).matches();
     }
 
     private static int integer(JsonElement value, int absent, int min, int max) {

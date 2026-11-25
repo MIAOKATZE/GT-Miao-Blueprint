@@ -211,7 +211,7 @@ final class HologramStockCokeOvenProfileRegression {
                 HologramStockCokeOvenProfile.HATCH, 0, ForgeDirection.WEST.ordinal());
             var wrongFacing = new HologramStockNativeConstruction.HatchChoice(chosen[0], chosen[1], chosen[2],
                 HologramStockCokeOvenProfile.HATCH, 0, ForgeDirection.EAST.ordinal());
-            var consent = HologramIncrementalNativePlacement.Consent.PLACE_SAFE_CELLS_WITH_AVAILABLE_STOCK;
+            var consent = HologramStockNativeConstruction.Consent.PLACE_SAFE_CELLS_WITH_AVAILABLE_STOCK;
             refuse(endpoint, session, request(1), HologramStockCokeOvenProfile.SOURCE_ID, consent, wrongFacing);
             refuse(endpoint, session, request(2), "gregtech:ebf", consent, selected);
             refuse(endpoint, session, request(3), HologramStockCokeOvenProfile.SOURCE_ID, null, selected);
@@ -226,14 +226,14 @@ final class HologramStockCokeOvenProfileRegression {
                 "admission uses shared authority and walks no live shape or quote before first work");
             refuse(endpoint, session, initial, HologramStockCokeOvenProfile.SOURCE_ID, consent, selected);
             world.arm();
-            SimpleAssert.eq(HologramStockNativeConstruction.State.ACTIVE, job.drain(Long.MAX_VALUE, 32, 1),
+            SimpleAssert.eq(HologramStockNativeConstruction.State.ACTIVE, drainPrefix(job, 1),
                 "first stock checkpoint stays active after exactly one committed write");
-            SimpleAssert.that(job.placed() == 1 && job.visited() == 1 && world.writes().size() == 1
+            SimpleAssert.that(job.placed() == 1 && job.visited() <= 2 && world.writes().size() == 1
                 && firstPos.equals(world.writes().get(0)) && world.getBlock(first[0], 64 + first[1], first[2]) == casing
                 && player.inventory.mainInventory[1].stackSize == 1 && session.capture == null
                 && !HologramConstructionJournal.pending(player),
-                "real stock first casing and one real debit before advancing any other declaration row");
-            SimpleAssert.eq(HologramStockNativeConstruction.State.STOPPED, job.drain(Long.MAX_VALUE, 32, 32),
+                "real stock first casing and one real debit before a second transaction permit");
+            SimpleAssert.eq(HologramStockNativeConstruction.State.STOPPED, job.drain(Long.MAX_VALUE),
                 "exhausted exact backpack stops with the already placed prefix, not completed");
             SimpleAssert.that(job.placed() == 2 && world.writes().size() == 2
                 && player.inventory.mainInventory[1] == null && !job.reason().isEmpty()
@@ -245,10 +245,9 @@ final class HologramStockCokeOvenProfileRegression {
             var resume = request(5);
             job = HologramStockNativeConstruction.begin(
                 endpoint, session, resume, HologramStockCokeOvenProfile.SOURCE_ID, 1, consent, selected);
-            HologramStockNativeConstruction.State result = HologramStockNativeConstruction.State.ACTIVE;
-            for (int tick = 0; tick < 8 && result == HologramStockNativeConstruction.State.ACTIVE; tick++)
-                result = job.drain(Long.MAX_VALUE, 32, 8);
-            SimpleAssert.eq(HologramStockNativeConstruction.State.COMPLETE, result, "3D native cursor reached completion");
+            HologramStockNativeConstruction.State result = job.drain(Long.MAX_VALUE);
+            SimpleAssert.eq(HologramStockNativeConstruction.State.COMPLETE, result,
+                "actual native driver completes remaining 22 placements in one uninterrupted drain, no count quota");
             SimpleAssert.that(job.placed() == 22 && world.writes().size() == 24
                 && player.inventory.mainInventory[1].stackSize == 1 && !world.writes().contains(hatchPos)
                 && world.getTileEntity(liveHatch.xCoord, liveHatch.yCoord, liveHatch.zCoord) == liveHatch
@@ -258,7 +257,7 @@ final class HologramStockCokeOvenProfileRegression {
             var stale = HologramStockNativeConstruction.begin(
                 endpoint, session, request(6), HologramStockCokeOvenProfile.SOURCE_ID, 1, consent, selected);
             front.set(liveHatch, ForgeDirection.EAST);
-            SimpleAssert.eq(HologramStockNativeConstruction.State.STOPPED, stale.drain(Long.MAX_VALUE, 32, 32),
+            SimpleAssert.eq(HologramStockNativeConstruction.State.STOPPED, stale.drain(Long.MAX_VALUE),
                 "installed hatch turned after authorization cannot complete, recapture or start placement");
             SimpleAssert.that(stale.placed() == 0 && stale.visited() == 0 && world.writes().size() == 24
                 && player.inventory.mainInventory[1].stackSize == 1, "stale selected hatch has no world or stock effect");
@@ -444,6 +443,13 @@ final class HologramStockCokeOvenProfileRegression {
         var full = HologramStockNativeEntry.Funding.REQUIRE_FULL_BOUND;
         var partial = HologramStockNativeEntry.Funding.EXPLICIT_AVAILABLE_STOCK;
         var stock = player.inventory.mainInventory;
+        // With no count quota, the test must leave genuine work after the first commit to exercise STOP.
+        int[] next = new int[3];
+        previous.machine.getExtendedFacing().getWorldOffset(new int[] { 0, -1, 0 }, next);
+        int nextX = previous.x + next[0], nextY = previous.y + next[1], nextZ = previous.z + next[2];
+        SimpleAssert.that(world.getBlock(nextX, nextY, nextZ) == GregTechAPI.sBlockCasings12
+            && world.getBlockMetadata(nextX, nextY, nextZ) == 0, "fixture's second native casing was exactly installed");
+        world.setBlock(nextX, nextY, nextZ, Blocks.air, 0, 3);
         int writes = world.writes().size();
         stock[1] = new ItemStack(casingItem, 23, 0);
         stock[2] = new ItemStack(casingItem, 32, 1);
@@ -475,13 +481,19 @@ final class HologramStockCokeOvenProfileRegression {
             && world.writes().size() == writes && stock[1].stackSize == 1,
             "confirmed entry reserves an empty exact temporary session without preparing a geometry plan");
         SimpleAssert.that(!entry.stop(endpoint, request(19)), "different correlated request cannot stop the native entry");
-        entry.tick(Long.MAX_VALUE, 32, 1);
+        SimpleAssert.eq(HologramStockNativeConstruction.State.ACTIVE, tickPrefix(entry, 1),
+            "the test-only permit boundary leaves a second missing casing in progress");
         SimpleAssert.that(entry.placed() == 1 && stock[1] == null && world.writes().size() == writes + 1,
             "explicit partial short intent reaches the same actual world and debit transaction");
         SimpleAssert.that(entry.stop(endpoint, partialIntent.request())
-            && HologramWorkspace.find(endpoint.actor) == previous,
-            "exact stop preserves committed cells and restores only the original workspace");
+            && entry.tick(Long.MAX_VALUE) == HologramStockNativeConstruction.State.STOPPED
+            && HologramWorkspace.find(endpoint.actor) == previous
+            && world.getBlock(first[0], 64 + first[1], first[2]) == GregTechAPI.sBlockCasings12
+            && world.getBlock(nextX, nextY, nextZ) == Blocks.air
+            && world.writes().size() == writes + 1 && stock[1] == null,
+            "exact stop preserves only the committed cell/debit and restores the original workspace");
         refuseEntry(HologramStockNativeEntry.ingress(endpoint, partialIntent));
+        world.setBlock(nextX, nextY, nextZ, GregTechAPI.sBlockCasings12, 0, 3);
 
         HologramWorkspace.rollbackCompactNative(null, previous);
         SimpleAssert.eq(null, HologramWorkspace.find(endpoint.actor), "physical local opening has no server workspace");
@@ -493,7 +505,7 @@ final class HologramStockCokeOvenProfileRegression {
             "fresh client-local opening needs no previous editor, quote or geometry capture");
         var result = HologramStockNativeConstruction.State.ACTIVE;
         for (int i = 0; i < 8 && result == HologramStockNativeConstruction.State.ACTIVE; i++)
-            result = entry.tick(Long.MAX_VALUE, 32, 4);
+            result = entry.tick(Long.MAX_VALUE);
         SimpleAssert.that(result == HologramStockNativeConstruction.State.COMPLETE && entry.placed() == 1
             && stock[1].stackSize == 23 && stock[2].stackSize == 32
             && HologramWorkspace.find(endpoint.actor) == null,
@@ -524,7 +536,7 @@ final class HologramStockCokeOvenProfileRegression {
         int[] first, Runnable changeAuthority) throws IOException, ReflectiveOperationException {
         var job = HologramStockNativeConstruction.begin(endpoint, session, request,
             HologramStockCokeOvenProfile.SOURCE_ID, 1,
-            HologramIncrementalNativePlacement.Consent.PLACE_SAFE_CELLS_WITH_AVAILABLE_STOCK, selected);
+            HologramStockNativeConstruction.Consent.PLACE_SAFE_CELLS_WITH_AVAILABLE_STOCK, selected);
         Block casing = GregTechAPI.sBlockCasings12;
         int x = first[0], y = 64 + first[1], z = first[2], writes = world.writes().size();
         var oldStock = player.inventory.mainInventory[1];
@@ -548,7 +560,7 @@ final class HologramStockCokeOvenProfileRegression {
             }
         });
         try {
-            SimpleAssert.eq(HologramStockNativeConstruction.State.STOPPED, job.drain(Long.MAX_VALUE, 32, 1),
+            SimpleAssert.eq(HologramStockNativeConstruction.State.STOPPED, drainPrefix(job, 1),
                 "changed native authority cannot commit an otherwise valid casing");
         } finally {
             unsafe.putObjectVolatile(busBase, busOffset, previous);
@@ -567,7 +579,7 @@ final class HologramStockCokeOvenProfileRegression {
     }
 
     private static void refuse(HologramWorkspace.ActionEndpoint endpoint, HologramSession session,
-        HologramConstructionTaskGate.Request request, String source, HologramIncrementalNativePlacement.Consent consent,
+        HologramConstructionTaskGate.Request request, String source, HologramStockNativeConstruction.Consent consent,
         HologramStockNativeConstruction.HatchChoice selected) {
         try {
             HologramStockNativeConstruction.begin(endpoint, session, request, source, 1, consent, selected);
@@ -583,5 +595,18 @@ final class HologramStockCokeOvenProfileRegression {
         public ForgeDirection getFrontFacing() {
             return ForgeDirection.WEST;
         }
+    }
+
+    /** Test-only interposition for cancellation/rollback at a committed prefix, not a production speed limit. */
+    private static HologramStockNativeConstruction.State tickPrefix(HologramStockNativeEntry entry, int count) {
+        int stopAt = entry.placed() + count;
+        return entry.tick(Long.MAX_VALUE,
+            (gate, lease) -> entry.placed() >= stopAt ? null : gate.beginTransaction(lease));
+    }
+
+    private static HologramStockNativeConstruction.State drainPrefix(HologramStockNativeConstruction job, int count) {
+        int stopAt = job.placed() + count;
+        return job.drain(Long.MAX_VALUE,
+            (gate, lease) -> job.placed() >= stopAt ? null : gate.beginTransaction(lease));
     }
 }

@@ -3,26 +3,13 @@
 
 package com.miaokatze.gtmb.client.hologram;
 
-import java.io.IOException;
 import java.math.BigInteger;
 import java.util.AbstractList;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Comparator;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.PriorityQueue;
-import java.util.Set;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Executor;
-import java.util.concurrent.ForkJoinPool;
-import java.util.concurrent.FutureTask;
 import java.util.function.Function;
 
-import net.minecraft.block.Block;
-import net.minecraft.init.Blocks;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
@@ -30,65 +17,48 @@ import net.minecraft.nbt.NBTTagList;
 
 import com.github.bsideup.jabel.Desugar;
 import com.miaokatze.gtmb.hologram.HologramControllerMaterialCounts;
-import com.miaokatze.gtmb.hologram.HologramControllerTarget;
 import com.miaokatze.gtmb.hologram.HologramMaterialQuote;
-import com.miaokatze.gtmb.hologram.HologramStaticMaterials;
 
-/** Frozen scope planning off-thread and native resource/inventory reads on the owning client thread. */
+/** Reads capture-time material contributions; only detached inventory comparison occurs in this pane. */
 final class HologramLocalMaterialReview {
-
-    private static final int CELLS_PER_TICK = 128;
-    private static final long SLICE_NANOS = 2_000_000L;
 
     private final HologramState source;
     private final NBTTagCompound settings;
-    private final int selected, scope, layer, x, y, z;
+    private final int selected, scope, layer;
     private final int[] selection;
-    private final Block sourceWater;
     private final HologramControllerMaterialCounts captured;
     private List<HologramLibraryMaterialDescription.Row> description;
-    private FutureTask<Plan> planning;
-    private final PriorityQueue<Unbatched> pending = new PriorityQueue<>(Comparator.comparingInt(Unbatched::index));
-    private volatile int scanned;
-    private Plan plan;
-    private int nextWork, settled;
-    private boolean failed;
-    private final String family;
-    private HologramStaticMaterials.Builder demand = new HologramStaticMaterials.Builder();
     private int targetCount, unaccounted;
     private NBTTagCompound theory, visible = new NBTTagCompound();
     private ItemStack[] observed;
     private int observedSlot = -1;
 
     HologramLocalMaterialReview(HologramState source, NBTTagCompound settings) {
-        this(source, settings, ForkJoinPool.commonPool());
-    }
-
-    HologramLocalMaterialReview(HologramState source, NBTTagCompound settings, Executor executor) {
-        this(source, settings, false, executor);
+        this(source, settings, false);
     }
 
     HologramLocalMaterialReview(HologramState source, NBTTagCompound settings, boolean detailed) {
-        this(source, settings, detailed, ForkJoinPool.commonPool());
+        this(source, settings, detailed, null);
     }
 
-    HologramLocalMaterialReview(HologramState source, NBTTagCompound settings, boolean detailed, Executor executor) {
+    HologramLocalMaterialReview(HologramState source, NBTTagCompound settings, boolean detailed,
+        HologramSelection selectedMaterials) {
         this.source = source;
         this.settings = (NBTTagCompound) settings.copy();
         selected = settings.hasKey("selected", 3) ? settings.getInteger("selected") : -1;
         scope = settings.getInteger("scope");
         layer = settings.getInteger("layer");
-        x = source.data.getInteger("x");
-        y = source.data.getInteger("y");
-        z = source.data.getInteger("z");
         selection = this.settings.getIntArray("selectedIndices");
-        sourceWater = Blocks.water;
-        family = selected >= 0 && selected < source.cells.size() ? source.cells.get(selected).family : "";
         captured = detailed && !source.data.getBoolean("capturePending") ? null : capturedCounts();
         if (captured != null) description = description(captured, null);
-        else {
-            planning = new FutureTask<>(this::prepare);
-            executor.execute(planning);
+        else if (source.localMaterialIndex != null && source.localMaterialIndex.current()) {
+            HologramLocalMaterialIndex.Result result = source.localMaterialIndex
+                .select(source.cells, scope, layer, selected, selection,
+                    selectedMaterials == null ? null : selectedMaterials.materialResult(source));
+            if (result == null) return;
+            theory = result.theory();
+            targetCount = result.targets();
+            unaccounted = theory.getInteger("unaccounted");
         }
     }
 
@@ -96,12 +66,11 @@ final class HologramLocalMaterialReview {
 
     void close() {
         closed = true;
-        if (planning != null) planning.cancel(true);
-        planning = null;
     }
 
     boolean current(HologramState state, int layer) {
-        return !closed && (captured == null ? source.cells == state.cells && !state.data.getBoolean("capturePending")
+        return !closed && (captured == null ? source.localMaterialIndex == state.localMaterialIndex
+            && state.localMaterialIndex != null && state.localMaterialIndex.current() && !state.data.getBoolean("capturePending")
             : source.controllerMaterialCounts == state.controllerMaterialCounts) && source.session.equals(state.session)
             && source.data.getString("generation").equals(state.data.getString("generation"))
             && source.data.getLong("planRevision") == state.data.getLong("planRevision")
@@ -138,9 +107,7 @@ final class HologramLocalMaterialReview {
         if (captured != null) return captured.total() + " 个目标格"
             + (captured.unlisted() == 0 ? "" : " · " + captured.unlisted() + " 格基材未列明")
             + " · 施工用量未核算";
-        if (failed) return "本地材料统计未完成，请重新打开材料窗口";
-        if (!ready()) return plan == null ? "正在整理本地材料范围 " + scanned + " / " + source.cells.size()
-            : "正在核对本地目标材料 " + settled + " / " + plan.cells;
+        if (!ready()) return "当前来源尚未提供材料汇总，请重新读取结构";
         String status = targetCount + " 个目标格";
         if (unaccounted > 0) status += " · " + unaccounted + " 格未核算";
         if (theory.getBoolean("alternatives") || theory.getBoolean("cacheReviewRequired")) status += " · 替代料或设备缓存待施工核验";
@@ -152,55 +119,6 @@ final class HologramLocalMaterialReview {
     }
 
     void tick(ItemStack[] inventory, int protectedSlot) {
-        if (closed) return;
-        if (captured != null) {
-            refresh(inventory, protectedSlot);
-            return;
-        }
-        if (theory == null) {
-            if (plan == null) {
-                if (failed || planning == null || planning.isCancelled() || !planning.isDone()) return;
-                try {
-                    plan = planning.get();
-                } catch (InterruptedException interrupted) {
-                    Thread.currentThread().interrupt();
-                    failed = true;
-                    return;
-                } catch (ExecutionException failure) {
-                    failed = true;
-                    return;
-                } finally {
-                    planning = null;
-                }
-            }
-            long deadline = System.nanoTime() + SLICE_NANOS;
-            int stepped = 0;
-            while ((nextWork < plan.work.size() || !pending.isEmpty()) && stepped < CELLS_PER_TICK
-                && (stepped == 0 || System.nanoTime() < deadline)) {
-                Work work = nextWork < plan.work.size() ? plan.work.get(nextWork) : null;
-                Unbatched earlier = pending.peek();
-                if (earlier != null && (work == null || earlier.index() < work.first)) {
-                    pending.remove();
-                    collect(source.cells.get(earlier.index()));
-                    if (++earlier.cursor < earlier.work.repeats) pending.add(earlier);
-                    settled++;
-                } else {
-                    nextWork++;
-                    HologramState.Cell cell = source.cells.get(work.first);
-                    if (work.repeats > 0 && collectRepeated(cell, work.repeats + 1)) settled += work.repeats + 1;
-                    else {
-                        collect(cell);
-                        if (work.repeats > 0) pending.add(new Unbatched(work));
-                        settled++;
-                    }
-                }
-                stepped++;
-            }
-            if (nextWork < plan.work.size() || !pending.isEmpty()) return;
-            theory = demand.snapshot();
-            demand = null;
-            plan = null;
-        }
         refresh(inventory, protectedSlot);
     }
 
@@ -279,147 +197,6 @@ final class HologramLocalMaterialReview {
                 return rows.size();
             }
         };
-    }
-
-    private Plan prepare() {
-        Set<Integer> chosen = new HashSet<>();
-        if (scope == 2) for (int index : selection) {
-            if (Thread.currentThread().isInterrupted()) return null;
-            chosen.add(index);
-        }
-        List<Work> work = new ArrayList<>();
-        Map<PlainKey, Work> plain = new HashMap<>();
-        int cells = 0;
-        for (int index = 0; index < source.cells.size(); index++) {
-            if ((index & 1023) == 0) {
-                if (Thread.currentThread().isInterrupted()) return null;
-                scanned = index;
-            }
-            HologramState.Cell cell = source.cells.get(index);
-            if (!includes(cell, index, chosen)) continue;
-            cells++;
-            HologramControllerTarget.Cell nativeTarget = cell.capturedNativeTarget();
-            if (nativeTarget != null && nativeTarget.targetBlock() != null && cell.plainMaterialItem != null
-                && !cell.missingBlock && !cell.iconOnly) {
-                PlainKey key = new PlainKey(
-                    nativeTarget.targetBlock(),
-                    cell.wantMeta,
-                    cell.plainMaterialItem,
-                    cell.plainMaterialDamage);
-                Work existing = plain.get(key);
-                if (existing != null) existing.add(index);
-                else {
-                    Work first = new Work(index);
-                    plain.put(key, first);
-                    work.add(first);
-                }
-            } else work.add(new Work(index));
-        }
-        scanned = source.cells.size();
-        return new Plan(work, cells);
-    }
-
-    private boolean includes(HologramState.Cell cell, int index, Set<Integer> chosen) {
-        if (cell.excluded || !cell.inScope || cell.anchor || "minecraft:air".equals(cell.wantId)) return false;
-        if (cell.x == x && cell.y == y && cell.z == z) return false;
-        HologramControllerTarget.Cell nativeTarget = cell.capturedNativeTarget();
-        if (nativeTarget != null && nativeTarget.kind() == HologramControllerTarget.TargetKind.MACHINE_SOURCE_WATER
-            && nativeTarget.x() == cell.x
-            && nativeTarget.y() == cell.y
-            && nativeTarget.z() == cell.z
-            && nativeTarget.targetBlock() == sourceWater
-            && cell.wantMeta == 0
-            && cell.x - x == cell.dx
-            && cell.y - y == cell.dy
-            && cell.z - z == cell.dz) return false;
-        return switch (scope) {
-            case 0 -> true;
-            case 1 -> cell.dy == layer;
-            case 2 -> chosen.isEmpty() ? selected == index : chosen.contains(index);
-            case 3 -> !family.isEmpty() && family.equals(cell.family);
-            default -> false;
-        };
-    }
-
-    private boolean collectRepeated(HologramState.Cell cell, int count) {
-        ItemStack target = cell.targetStack;
-        if (target == null || target.hasTagCompound() || target.getItem() != cell.plainMaterialItem
-            || target.getItemDamage() != cell.plainMaterialDamage) return false;
-        try {
-            if (!demand.addRepeatedPlain(cell.block(false), cell.wantMeta, target, count)) return false;
-            targetCount += count;
-            return true;
-        } catch (IOException | RuntimeException | LinkageError unavailable) {
-            return false;
-        }
-    }
-
-    private void collect(HologramState.Cell cell) {
-        targetCount++;
-        if (cell.targetStack == null || cell.missingBlock || cell.iconOnly) {
-            unknown("部分格缺少可识别的目标材料");
-            return;
-        }
-        try {
-            // A native target provides the item payload, not a retained tile payload. Display NBT is not payment data.
-            ItemStack target = cell.targetStack.copy();
-            demand.add(cell.block(false), cell.wantMeta, target, null, target.getTagCompound());
-        } catch (IOException | RuntimeException | LinkageError unavailable) {
-            unknown("部分目标的材料身份或原生资源无法在本机核算");
-        }
-    }
-
-    @Desugar
-    private record PlainKey(Block block, int meta, Item item, int damage) {
-
-        @Override
-        public boolean equals(Object other) {
-            return other instanceof PlainKey key && block == key.block && item == key.item
-                && meta == key.meta && damage == key.damage;
-        }
-
-        @Override
-        public int hashCode() {
-            return 31 * (31 * (31 * System.identityHashCode(block) + meta) + System.identityHashCode(item)) + damage;
-        }
-    }
-
-    @Desugar
-    private record Plan(List<Work> work, int cells) {}
-
-    private static final class Work {
-        final int first;
-        int[] indices;
-        int repeats;
-
-        Work(int first) {
-            this.first = first;
-        }
-
-        void add(int index) {
-            if (indices == null) indices = new int[8];
-            else if (repeats == indices.length) indices = Arrays.copyOf(indices, repeats * 2);
-            indices[repeats++] = index;
-        }
-    }
-
-    /** If a provider prevents batching, visit repeated positions in their original global order. */
-    private static final class Unbatched {
-        final Work work;
-        int cursor;
-
-        Unbatched(Work work) {
-            this.work = work;
-        }
-
-        int index() {
-            return work.indices[cursor];
-        }
-    }
-
-    private void unknown(String detail) {
-        unaccounted++;
-        demand.unaccounted(detail);
     }
 
     private static boolean sameInventory(ItemStack[] old, ItemStack[] current, int protectedSlot) {

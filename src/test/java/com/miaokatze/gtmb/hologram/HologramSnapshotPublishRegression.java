@@ -14,7 +14,6 @@ import java.util.List;
 import java.util.Queue;
 import java.util.UUID;
 import java.util.concurrent.Executor;
-import java.util.concurrent.FutureTask;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -322,10 +321,6 @@ public final class HologramSnapshotPublishRegression {
             EntityPlayerMP directPlayer = (EntityPlayerMP) factory
                 .invoke(null, unsafe, directWorld, UUID.randomUUID(), "DirectFirstWorkFixture");
             directJobBeforeInitialSnapshot(directPlayer, directWorld);
-            HologramPlacementFixtureWorld writable = HologramPlacementFixtureWorld.create(unsafe);
-            EntityPlayerMP writingPlayer = HologramLibraryServiceRegression
-                .placementPlayer(unsafe, writable, "DirectActualWriteFixture");
-            retiredV4AndOfflineFirstWrite(writingPlayer, writable, 129);
             for (int i = 0; i < 8; i++) SimpleAssert.that(
                 HologramNetwork.reserveState(player, "fixture", false) != null,
                 "bounded pending slots accept requests up to player limit");
@@ -343,227 +338,31 @@ public final class HologramSnapshotPublishRegression {
         }
     }
 
-    /** Run v4 Start and the production workspace scheduler with a read-only world and a real snapshot queue. */
-    @SuppressWarnings("unchecked")
+    /** Existing snapshot timing policy, independent of the removed whole-placement transport. */
     private static void directJobBeforeInitialSnapshot(EntityPlayerMP player,
-        HologramServiceEditRegression.ReadOnlyWorld world)
-        throws ReflectiveOperationException, java.io.IOException {
-        HologramNetwork.clearServerQueues();
-        WIRE.clear();
-        Path previousRoot = HologramConstructionJournal.STORAGE_ROOT.get();
-        Path scratch = Files.createTempDirectory("gtmb-direct-first-work-");
-        HologramConstructionJournal.STORAGE_ROOT.set(scratch);
-        Field sessionsField = HologramWorkspace.class.getDeclaredField("SESSIONS");
-        sessionsField.setAccessible(true);
-        var sessions = (java.util.Map<UUID, HologramSession>) sessionsField.get(null);
-        UUID request = UUID.randomUUID();
-        ItemStack stock = new ItemStack(Blocks.cobblestone, 3);
-        player.inventory.mainInventory[1] = stock;
-        player.posX = .5;
-        player.posY = 64;
-        player.posZ = .5;
-        HologramMaterials.Settings settings = HologramMaterials.read(player.getHeldItem());
-        settings.main = true;
-        settings.containers = settings.me = false;
-        HologramMaterials.write(player.getHeldItem(), settings);
-        try {
-            List<HologramProjectedPlacement.Cell> cells = new ArrayList<>();
-            for (int z = 0; z < 3; z++) cells.add(new HologramProjectedPlacement.Cell(
-                0, 0, z, "minecraft:cobblestone", 0, "minecraft:cobblestone", 0, -1));
-            var plan = new HologramProjectedPlacement.Plan(cells, Collections.singletonList(
-                new HologramProjectedPlacement.Need("minecraft:cobblestone", 0, 3)));
-            NBTTagCompound tag = HologramPlacementRequest.encodeDirect(request, new int[] { 0, 64, 0 }, plan);
-            Class<?> jobType = Class.forName(HologramProjectedPlacementService.class.getName() + "$Job");
-            var constructor = jobType.getDeclaredConstructor(EntityPlayerMP.class, HologramPlacementRequest.Header.class,
-                NBTTagCompound.class);
-            constructor.setAccessible(true);
-            Object job = constructor.newInstance(player, HologramPlacementRequest.header(tag), tag);
-            Field decode = jobType.getDeclaredField("decoding");
-            decode.setAccessible(true);
-            ((FutureTask<?>) decode.get(job)).run();
-            var start = jobType.getDeclaredMethod("step", long.class);
-            start.setAccessible(true);
-            SimpleAssert.eq(true, start.invoke(job, Long.MAX_VALUE), "complete real ordinary v4 admission");
-            HologramSession s = HologramWorkspace.find(player.getUniqueID());
-            SimpleAssert.that(s != null && s.job == 1 && s.open && s.directOpeningPending
-                && s.work.size() == 3 && stock.stackSize == 3
-                && !HologramSnapshotPreparation.pending(s),
-                "exact admitted direct job owes its original opening but has no blocking baseline before world work");
-            SimpleAssert.that(WIRE.stream().anyMatch(message -> message instanceof HologramNetwork.State ack
-                && request.toString().equals(ack.tag.getString("placementRequestId"))
-                && ack.tag.getBoolean("placementRequestAccepted")), "existing exact accepted UUID still reaches client");
-            world.occupiedX = 0;
-            world.occupied = Blocks.stone; // Every candidate changed after admission, so the real tick must refuse all writes.
-            var scheduler = HologramWorkspaceScheduler.class.getDeclaredMethod("tickSession", HologramSession.class);
-            scheduler.setAccessible(true);
-            java.util.function.Consumer<HologramSession> realTick = session -> {
-                try {
-                    scheduler.invoke(null, session);
-                } catch (ReflectiveOperationException failure) {
-                    throw new AssertionError("actual workspace first-job path", failure);
-                }
-            };
-            long expired = System.nanoTime() - 1_000_000_000L;
-            // The real job still attempts one cell even after its soft deadline, then yields.
-            HologramWorkspaceScheduler.runRound(Collections.singletonList(s), realTick, () -> expired, 1L);
-            SimpleAssert.that(s.cursor == 1 && s.batchSeq == 1 && s.completed == 0 && stock.stackSize == 3
-                && s.directOpeningPending && !HologramSnapshotPreparation.pending(s),
-                "one real changed-world attempt is observed before any baseline or debit");
-            HologramWorkspaceScheduler.runRound(Collections.singletonList(s), realTick, () -> expired, 1L);
-            SimpleAssert.that(s.cursor == 2 && s.batchSeq == 2 && stock.stackSize == 3
-                && !s.directOpeningPending && HologramSnapshotPreparation.pending(s)
-                && s.jobPublication.indices.equals(Arrays.asList(0, 1)),
-                "second attempted batch releases one baseline, in order with both real outcomes retained");
-            HologramSnapshotPreparation.cancel(s);
-            s.directOpeningPending = true;
-            s.job = 1;
-            s.batchSeq = s.completed = 1;
-            SimpleAssert.that(!HologramSnapshots.deferDirectOpening(s) && !s.directOpeningPending,
-                "first actual committed result requests the existing baseline immediately");
-            s.directOpeningPending = true;
-            s.job = 5;
-            s.completed = 0;
-            SimpleAssert.that(!HologramSnapshots.deferDirectOpening(s) && !s.directOpeningPending,
-                "terminal outcomes never wait for a successful world mutation");
-        } finally {
-            HologramSession active = sessions.remove(player.getUniqueID());
-            if (active != null) HologramSnapshotPreparation.cancel(active);
-            HologramEditorWorkspaceRegistry.forget(player.getUniqueID());
-            HologramNetwork.clearServerQueues();
-            WIRE.clear();
-            player.playerNetServerHandler.netManager.channel().close();
-            if (previousRoot == null) HologramConstructionJournal.STORAGE_ROOT.remove();
-            else HologramConstructionJournal.STORAGE_ROOT.set(previousRoot);
-            Files.deleteIfExists(scratch.resolve("gtmb-construction-recovery"));
-            Files.deleteIfExists(scratch);
-        }
+        HologramServiceEditRegression.ReadOnlyWorld world) {
+        HologramSession s = new HologramSession(player, 0, 64, 0, false, 1);
+        s.open = true;
+        s.job = 1;
+        s.directOpeningPending = true;
+        SimpleAssert.that(HologramSnapshots.deferDirectOpening(s), "opening does not preempt initial work");
+        s.batchSeq = 1;
+        SimpleAssert.that(HologramSnapshots.deferDirectOpening(s), "one unsuccessful batch can still yield");
+        s.batchSeq = 2;
+        SimpleAssert.that(!HologramSnapshots.deferDirectOpening(s) && !s.directOpeningPending,
+            "second unsuccessful batch releases pending opening");
+        s.directOpeningPending = true;
+        s.completed = 1;
+        SimpleAssert.that(!HologramSnapshots.deferDirectOpening(s) && !s.directOpeningPending,
+            "successful work releases pending opening immediately");
+        s.directOpeningPending = true;
+        s.completed = 0;
+        s.job = 5;
+        SimpleAssert.that(!HologramSnapshots.deferDirectOpening(s) && !s.directOpeningPending,
+            "terminal work does not wait for a successful write");
+        player.playerNetServerHandler.netManager.channel().close();
     }
 
-    /** Production v4 refusal, followed by a detached historical worker/scheduler/survival first-write baseline. */
-    @SuppressWarnings("unchecked")
-    private static void retiredV4AndOfflineFirstWrite(EntityPlayerMP player, HologramPlacementFixtureWorld world,
-        int count) throws ReflectiveOperationException, java.io.IOException {
-        HologramNetwork.clearServerQueues();
-        WIRE.clear();
-        Path previousRoot = HologramConstructionJournal.STORAGE_ROOT.get();
-        Path scratch = Files.createTempDirectory("gtmb-direct-first-write-");
-        HologramConstructionJournal.STORAGE_ROOT.set(scratch);
-        Field sessionsField = HologramWorkspace.class.getDeclaredField("SESSIONS");
-        sessionsField.setAccessible(true);
-        var sessions = (java.util.Map<UUID, HologramSession>) sessionsField.get(null);
-        UUID request = UUID.randomUUID();
-        player.capabilities.isCreativeMode = false;
-        player.capabilities.allowEdit = true;
-        player.inventory.mainInventory[1] = new ItemStack(Blocks.cobblestone, 3);
-        player.posX = player.posZ = .5;
-        player.posY = 64;
-        HologramMaterials.Settings settings = HologramMaterials.read(player.getHeldItem());
-        settings.main = true;
-        settings.containers = settings.me = false;
-        HologramMaterials.write(player.getHeldItem(), settings);
-        try {
-            List<HologramProjectedPlacement.Cell> cells = new ArrayList<>(count);
-            for (int i = 0; i < count; i++) {
-                int x = i % 7, y = i / 49, z = i / 7 % 7;
-                cells.add(new HologramProjectedPlacement.Cell(
-                    x, y, z, "minecraft:cobblestone", 0, "minecraft:cobblestone", 0, -1));
-                if (i != 0 && i != count - 1) world.seed(x, 64 + y, z, Blocks.cobblestone, 0);
-            }
-            var plan = new HologramProjectedPlacement.Plan(cells, Collections.singletonList(
-                new HologramProjectedPlacement.Need("minecraft:cobblestone", 0, count)));
-            NBTTagCompound tag = HologramPlacementRequest.encodeDirect(request, new int[] { 0, 64, 0 }, plan);
-            var buffer = io.netty.buffer.Unpooled.buffer();
-            var decoded = new HologramNetwork.Action();
-            try {
-                new HologramNetwork.Action(tag).toBytes(buffer);
-                decoded.fromBytes(buffer);
-            } finally {
-                buffer.release();
-            }
-            SimpleAssert.eq(tag.getInteger("placementWireVersion"), decoded.tag.getInteger("placementWireVersion"),
-                "moderate test preserves the actual direct wire version after serialization");
-            var context = MessageContext.class.getDeclaredConstructor(INetHandler.class, Side.class);
-            context.setAccessible(true);
-            HologramWorkspace.publishActionEndpoint(player, false);
-            long beforeReads = world.loadReads + world.blockReads + world.metaReads + world.tileReads;
-            new HologramNetwork.ServerHandler()
-                .onMessage(decoded, context.newInstance(player.playerNetServerHandler, Side.SERVER));
-            ServerTaskScheduler.INSTANCE.onServerTick(new TickEvent.ServerTickEvent(TickEvent.Phase.END));
-            SimpleAssert.that(!HologramProjectedPlacementService.preparing(player)
-                && !HologramProjectedPlacementService.consumed(player, request.toString())
-                && HologramWorkspace.find(player.getUniqueID()) == null && world.writes().isEmpty()
-                && player.inventory.mainInventory[1].stackSize == 3
-                && beforeReads == world.loadReads + world.blockReads + world.metaReads + world.tileReads,
-                "retired v4 production ingress cannot inspect, prepare, debit, or write this exact fixture");
-            SimpleAssert.that(WIRE.size() == 1 && WIRE.get(0) instanceof HologramNetwork.State rejection
-                && rejection.tag.getBoolean("retiredWholePlacement")
-                && !rejection.tag.getBoolean("placementRequestAccepted")
-                && request.toString().equals(rejection.tag.getString("placementRequestId"))
-                && rejection.tag.func_150296_c().size() == 4,
-                "production sends one owned incompatibility and no legacy whole opening");
-            HologramWorkspace.revokeActionEndpoint(player);
-            WIRE.clear();
-
-            // The old worker is still a useful offline comparison. No registered network route can call it.
-            HologramProjectedPlacementService.receive(player, decoded.tag);
-            Field pendingField = HologramProjectedPlacementService.class.getDeclaredField("PENDING");
-            pendingField.setAccessible(true);
-            var pending = (java.util.Map<?, ?>) pendingField.get(null);
-            Object admitted = pending.get(player.getUniqueID());
-            SimpleAssert.that(admitted != null && HologramWorkspace.find(player.getUniqueID()) == null,
-                "detached v4 baseline owns preparation but has not started placement");
-            Field decodingField = admitted.getClass().getDeclaredField("decoding");
-            decodingField.setAccessible(true);
-            try {
-                ((FutureTask<?>) decodingField.get(admitted)).get(10, java.util.concurrent.TimeUnit.SECONDS);
-            } catch (InterruptedException interrupted) {
-                Thread.currentThread().interrupt();
-                throw new AssertionError("moderate v4 decode interrupted", interrupted);
-            } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException failure) {
-                throw new AssertionError("moderate v4 did not decode on the real worker", failure);
-            }
-            for (int tick = 0; pending.containsKey(player.getUniqueID()) && tick < 4096; tick++)
-                HologramProjectedPlacementService.tick();
-            HologramSession s = HologramWorkspace.find(player.getUniqueID());
-            SimpleAssert.that(s != null && s.job == 1 && !pending.containsKey(player.getUniqueID())
-                && s.capture.cells.size() == count && s.work.size() == 2 && s.directOpeningPending
-                && !HologramSnapshotPreparation.pending(s) && player.inventory.mainInventory[1].stackSize == 3
-                && world.writes().isEmpty(), "offline v4 admission has exactly two missing targets, no writes and no predebit: "
-                    + (s == null ? WIRE : s.status));
-            SimpleAssert.that(WIRE.stream().filter(message -> message instanceof HologramNetwork.State ack
-                && request.toString().equals(ack.tag.getString("placementRequestId"))
-                && ack.tag.getBoolean("placementRequestAccepted")).count() == 1,
-                "same v4 UUID gets one accepted response before any world write");
-            world.arm();
-            HologramPlacementFixtureWorld.firstJobTick(s);
-            int finalCell = count - 1;
-            SimpleAssert.that(s.job == 1 && s.cursor == 1 && s.completed == 1
-                && world.writes().equals(Collections.singletonList("0,64,0"))
-                && world.getBlock(0, 64, 0) == Blocks.cobblestone && world.getBlockMetadata(0, 64, 0) == 0
-                && world.getBlock(finalCell % 7, 64 + finalCell / 49, finalCell / 7 % 7) == Blocks.air
-                && player.inventory.mainInventory[1].stackSize == 2
-                && !s.directOpeningPending && HologramSnapshotPreparation.pending(s),
-                "offline v4 first commit writes one known block and takes one item before opening baseline: " + s.status);
-            HologramProjectedPlacementService.receive(player, decoded.tag);
-            SimpleAssert.that(HologramWorkspace.find(player.getUniqueID()) == s && world.writes().size() == 1
-                && player.inventory.mainInventory[1].stackSize == 2, "a v4 replay cannot write or debit again");
-        } finally {
-            HologramWorkspace.revokeActionEndpoint(player);
-            HologramProjectedPlacementService.forget(player);
-            HologramSession active = sessions.remove(player.getUniqueID());
-            if (active != null) HologramSnapshotPreparation.cancel(active);
-            HologramEditorWorkspaceRegistry.forget(player.getUniqueID());
-            HologramNetwork.clearServerQueues();
-            WIRE.clear();
-            player.playerNetServerHandler.netManager.channel().close();
-            if (previousRoot == null) HologramConstructionJournal.STORAGE_ROOT.remove();
-            else HologramConstructionJournal.STORAGE_ROOT.set(previousRoot);
-            Files.deleteIfExists(scratch.resolve("gtmb-construction-recovery"));
-            Files.deleteIfExists(scratch);
-        }
-    }
-
-    @SuppressWarnings("unchecked")
     private static void rejectedActionsPreserveSnapshotOwner(EntityPlayerMP player, Queue<Runnable> work)
         throws ReflectiveOperationException, java.io.IOException {
         Field sessionsField = HologramWorkspace.class.getDeclaredField("SESSIONS");

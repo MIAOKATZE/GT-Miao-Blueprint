@@ -135,17 +135,15 @@ final class HologramStockEbfConstruction {
             && site.physicalCurrent() && transportCurrent() && bound(null) && permitted();
     }
 
-    State drain(long deadline, int entries, int commits, PermitAdmission admission) {
+    State drain(long deadline, PermitAdmission admission) {
         if (!gate.onOwnerThread()) throw new IllegalStateException("Native EBF construction owner thread");
-        if (entries < 1 || commits < 1) throw new IllegalArgumentException("Native EBF slice quotas");
         if (state != State.ACTIVE || System.nanoTime() >= deadline) return state;
         if (advancing) throw new IllegalStateException("Native EBF construction cannot re-enter a permit");
         advancing = true;
         try {
             if (!current(true)) return stop("高炉的线圈、仓室、持有工具或现场已变化。");
-            int before = placed;
-            for (int work = 0; work < Math.min(32, entries) && placed - before < commits
-                && System.nanoTime() < deadline; work++) {
+            // Native construction is continuous; only the shared owner-thread time budget may yield.
+            while (System.nanoTime() < deadline) {
                 if (activeRow < 0) {
                     if (cursor.done() == cursor.total()) return finish();
                     int index = cursor.done();

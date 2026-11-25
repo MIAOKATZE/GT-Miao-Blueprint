@@ -17,8 +17,9 @@ import io.netty.buffer.ByteBuf;
 /** Dedicated, uncompressed plain-layer protocol. Registration and peer negotiation are deliberately external. */
 public final class HologramProjectedLayerTransport {
 
-    public static final int VERSION = 1;
-    static final int MAX_BEGIN = 2 * 1024; // At most three supported vanilla material rows; never a full plan.
+    public static final int VERSION = 2; // Explicit bounded-window capability; v1 peers cannot silently fall back.
+    public static final int FRAME_WINDOW = HologramProjectedLayerWire.WINDOW;
+    static final int MAX_BEGIN = 2 * 1024; // At most six supported vanilla material rows; never a full plan.
     static final int KEY_BYTES = 32, REQUEST_FIXED = 2 + KEY_BYTES;
     static final int REPLY_FIXED = 1 + KEY_BYTES + 2 * 8 + 2 + 8 * 4 + 1;
     private static volatile HologramProjectedLayerServer server;
@@ -197,7 +198,7 @@ public final class HologramProjectedLayerTransport {
 
         private void validate() throws IOException {
             if (sequence < 0 || controlSequence < 0 || settledSlices < 0 || acceptedSlices < settledSlices
-                || acceptedSlices - settledSlices > 1 || totalSlices < acceptedSlices
+                || acceptedSlices - settledSlices > FRAME_WINDOW || totalSlices < acceptedSlices
                 || totalSlices > HologramProjectedLayerService.MAX_SLICES || placed < 0 || alreadySatisfied < 0
                 || (long) placed + alreadySatisfied > totalCells || validatedInSlice < 0
                 || validatedInSlice > sliceCells || sliceCells > HologramProjectedLayerWire.MAX_SLICE_CELLS
@@ -213,6 +214,7 @@ public final class HologramProjectedLayerTransport {
                 if (!request.equals(value.request) || value.nextSlice != settledSlices
                     || value.settledCells > placed + alreadySatisfied
                     || value.credit > 0 && phase != Phase.AWAITING_SLICE
+                        && phase != Phase.VALIDATING_SLICE && phase != Phase.PLACING
                     || value.complete != (phase == Phase.COMPLETE)
                     || value.aborted != (phase == Phase.STOPPED || phase == Phase.RECOVERY_PENDING))
                     throw HologramProjectedLayerWire.malformed();
