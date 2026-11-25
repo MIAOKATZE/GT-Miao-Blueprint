@@ -82,8 +82,12 @@ final class HologramStockNativeEntry {
                 materialPriority, funding, hatch, null);
         }
 
-        private boolean allowsCreative() {
+        private boolean preservesIdleDraft() {
             return declaration != null && declaration.operation() == 0;
+        }
+
+        private boolean allowsCreative() {
+            return preservesIdleDraft();
         }
 
         boolean valid() {
@@ -314,7 +318,7 @@ final class HologramStockNativeEntry {
         Prior prior = Prior.capture(endpoint);
         String refusal = submission.refusal();
         boolean current = refusal == null;
-        boolean competing = !current || HologramConstructionAuthority.competingWork(player)
+        boolean competing = !current || HologramConstructionAuthority.competingWork(player, intent.preservesIdleDraft())
             || prior.session != null && !HologramSessionPolicy.valid(prior.session);
         boolean recovery = current && HologramConstructionAuthority.hasKnownRecovery(player);
         // Consume the authenticated sequence even for refusal. A transport replay may not wait out missing stock,
@@ -337,7 +341,7 @@ final class HologramStockNativeEntry {
         var endpoint = submission.endpoint;
         var intent = submission.intent;
         var player = endpoint.player;
-        if (submission.projector.hasTagCompound()
+        if (!intent.preservesIdleDraft() && submission.projector.hasTagCompound()
             && submission.projector.getTagCompound().hasKey(HologramSessionKeys.DRAFT))
             throw new IOException("此投影仪有未移开的本地草稿；未启动原生补建。");
         if (intent.declaration != null) return openDeclared(submission, gate, lease, prior);
@@ -473,9 +477,9 @@ final class HologramStockNativeEntry {
             || !(GregTechAPI.METATILEENTITIES[intent.controller] instanceof MTEEnhancedMultiBlockBase<?> profile)
             || machine.getClass() != profile.getClass() || machine.getExtendedFacing().ordinal() != intent.facing)
             throw new IOException("现场控制器、注册声明或朝向与确认不一致。");
-        var target = new HologramSession(player, intent.x, intent.y, intent.z, true, intent.side);
+        var target = new HologramSession(player, intent.x, intent.y, intent.z, true, intent.side, false);
         target.stockNativePrivate = true;
-        if (!submission.current() || HologramConstructionAuthority.competingWork(player)
+        if (!submission.current() || HologramConstructionAuthority.competingWork(player, intent.preservesIdleDraft())
             || !submission.toolId.equals(target.toolId) || !prior.current(endpoint) || target.boundTool != submission.projector
             || target.target != tile || target.machine != machine || target.facing != intent.facing
             || gate.query(lease.scope, lease.request).phase != HologramConstructionTaskGate.Phase.ACTIVE

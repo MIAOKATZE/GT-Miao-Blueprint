@@ -246,6 +246,11 @@ final class HologramSession {
     }
 
     HologramSession(EntityPlayerMP p, int x, int y, int z, boolean targetMode, int side) {
+        this(p, x, y, z, targetMode, side, true);
+    }
+
+    /** A private construction session already has an authenticated tool; it never initializes or dirties its tag. */
+    HologramSession(EntityPlayerMP p, int x, int y, int z, boolean targetMode, int side, boolean initializeTool) {
         this.side = side;
         player = p;
         libraryWorld = p.worldObj;
@@ -266,7 +271,7 @@ final class HologramSession {
                 .getBoolean("gtitHologramDowngrade");
         // Copies retain identity. Exact creative NBT clones represent the same logical tool;
         // opening any target rotates the session nonce and invalidates old client actions.
-        if (heldStack != null) {
+        if (initializeTool && heldStack != null) {
             if (!heldStack.hasTagCompound()) heldStack.setTagCompound(new NBTTagCompound());
             if (heldStack.getTagCompound()
                 .getString(HologramSessionKeys.TOOL_ID)
@@ -278,7 +283,7 @@ final class HologramSession {
                             .toString());
             p.inventory.markDirty();
         }
-        toolId = heldStack == null ? ""
+        toolId = heldStack == null || !heldStack.hasTagCompound() ? ""
             : heldStack.getTagCompound()
                 .getString(HologramSessionKeys.TOOL_ID);
         openTick = p.worldObj.getTotalWorldTime();
@@ -288,7 +293,7 @@ final class HologramSession {
                 1,
                 heldStack.getTagCompound()
                     .getInteger("gtitHologramMain"));
-            mainExplicit = heldStack.getTagCompound()
+            mainExplicit = heldStack.hasTagCompound() && heldStack.getTagCompound()
                 .getBoolean("gtitHologramMainExplicit") || main != 1;
             ChannelDataAccessor.iterateChannelData(heldStack)
                 .forEach(entry -> { if (entry.getValue() > 0) channels.setInteger(entry.getKey(), entry.getValue()); });

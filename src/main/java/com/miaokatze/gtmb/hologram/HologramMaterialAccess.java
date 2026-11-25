@@ -31,9 +31,14 @@ final class HologramMaterialAccess {
     }
 
     static ItemStack[] copyInventory(EntityPlayerMP p) {
+        return copyInventory(p, -1);
+    }
+
+    static ItemStack[] copyInventory(EntityPlayerMP p, int untouchedSlot) {
         ItemStack[] result = new ItemStack[p.inventory.mainInventory.length];
         for (int i = 0; i < result.length; i++)
-            result[i] = p.inventory.mainInventory[i] == null ? null : p.inventory.mainInventory[i].copy();
+            result[i] = i == untouchedSlot || p.inventory.mainInventory[i] == null
+                ? null : p.inventory.mainInventory[i].copy();
         return result;
     }
 

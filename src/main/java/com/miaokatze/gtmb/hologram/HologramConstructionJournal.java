@@ -180,6 +180,11 @@ final class HologramConstructionJournal {
 
     static NBTTagCompound begin(EntityPlayer player, int x, int y, int z, Block block, int meta, NBTTagCompound tile,
         ItemStack[] inventory) {
+        return begin(player, x, y, z, block, meta, tile, inventory, -1);
+    }
+
+    static NBTTagCompound begin(EntityPlayer player, int x, int y, int z, Block block, int meta, NBTTagCompound tile,
+        ItemStack[] inventory, int untouchedSlot) {
         if (pending(player)) throw new IllegalStateException("存在待核定施工凭据，施工已暂停；请联系管理员 /gtmb recovery");
         NBTTagCompound journal = new NBTTagCompound();
         journal.setInteger("version", 1);
@@ -198,18 +203,24 @@ final class HologramConstructionJournal {
         journal.setString("block", String.valueOf(Block.blockRegistry.getNameForObject(block)));
         journal.setInteger("meta", meta);
         if (tile != null) journal.setTag("tile", tile.copy());
-        journal.setTag("beforeInventory", inventory(inventory));
+        if (untouchedSlot >= 0) journal.setInteger("untouchedProjectorSlot", untouchedSlot);
+        journal.setTag("beforeInventory", inventory(inventory, untouchedSlot));
         journal.setString("phase", "reserved");
         owner(player).setTag(KEY, journal);
         return journal;
     }
 
     static NBTTagList inventory(ItemStack[] inventory) {
+        return inventory(inventory, -1);
+    }
+
+    private static NBTTagList inventory(ItemStack[] inventory, int untouchedSlot) {
         NBTTagList result = new NBTTagList();
         for (int i = 0; i < inventory.length; i++) {
             NBTTagCompound slot = new NBTTagCompound();
             slot.setInteger("slot", i);
-            if (inventory[i] != null) slot.setTag("stack", HologramMaterials.itemReceipt(inventory[i]));
+            if (i != untouchedSlot && inventory[i] != null)
+                slot.setTag("stack", HologramMaterials.itemReceipt(inventory[i]));
             result.appendTag(slot);
         }
         return result;
@@ -235,7 +246,7 @@ final class HologramConstructionJournal {
             failure.getClass()
                 .getName() + ": "
                 + String.valueOf(failure.getMessage()));
-        journal.setTag("heldInventory", inventory(session.player.inventory.mainInventory));
+        journal.setTag("heldInventory", inventory(session.player.inventory.mainInventory, untouchedSlot(journal)));
         NBTTagCompound recovery = new NBTTagCompound();
         for (Object key : owner(session.player).func_150296_c()) {
             String name = String.valueOf(key);
@@ -266,6 +277,10 @@ final class HologramConstructionJournal {
     }
 
     /** Explicit OP4 adjudication. No replay of unknown external calls; inventory must still match the frozen state. */
+    private static int untouchedSlot(NBTTagCompound journal) {
+        return journal.hasKey("untouchedProjectorSlot", 3) ? journal.getInteger("untouchedProjectorSlot") : -1;
+    }
+
     static String resolve(EntityPlayerMP player, String id, String action) {
         boolean pending = pending(player);
         NBTTagCompound journal = owner(player).getCompoundTag(KEY);
@@ -294,7 +309,8 @@ final class HologramConstructionJournal {
         if (player.worldObj.provider.dimensionId != journal.getInteger("dimension")
             || !player.worldObj.blockExists(journal.getInteger("x"), journal.getInteger("y"), journal.getInteger("z")))
             throw new IllegalStateException("请进入凭据原维度并加载原区块");
-        if (!inventory(player.inventory.mainInventory).equals(journal.getTagList("heldInventory", 10)))
+        int untouchedSlot = untouchedSlot(journal);
+        if (!inventory(player.inventory.mainInventory, untouchedSlot).equals(journal.getTagList("heldInventory", 10)))
             throw new IllegalStateException("库存已变化；请恢复暂停时完整库存后再核定，禁止覆盖当前物品");
         Object block = Block.blockRegistry.getObject(journal.getString("block"));
         if (!(block instanceof Block)) throw new IllegalStateException("原方块注册已不存在，保留凭据");
@@ -316,7 +332,7 @@ final class HologramConstructionJournal {
         transaction.rollbackExternal();
         ItemStack[] before = inventory(journal.getTagList("beforeInventory", 10));
         if (before.length != player.inventory.mainInventory.length) throw new IllegalStateException("库存长度不匹配");
-        for (int i = 0; i < before.length; i++) player.inventory.mainInventory[i] = before[i];
+        for (int i = 0; i < before.length; i++) if (i != untouchedSlot) player.inventory.mainInventory[i] = before[i];
         transaction.afterInventoryRestore();
         player.inventory.markDirty();
         journal.setString("resolution", "rollback-confirmed-world-and-payment");
