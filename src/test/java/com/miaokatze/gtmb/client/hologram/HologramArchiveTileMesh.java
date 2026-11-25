@@ -102,15 +102,25 @@ final class HologramArchiveTileMesh {
         return caps[side][index];
     }
 
-    static int x(int quad) { return quad >>> 8 & 15; }
+    static int x(int quad) {
+        return quad >>> 8 & 15;
+    }
 
-    static int y(int quad) { return quad >>> 4 & 15; }
+    static int y(int quad) {
+        return quad >>> 4 & 15;
+    }
 
-    static int z(int quad) { return quad & 15; }
+    static int z(int quad) {
+        return quad & 15;
+    }
 
-    static int side(int quad) { return quad >>> 12 & 7; }
+    static int side(int quad) {
+        return quad >>> 12 & 7;
+    }
 
-    static int code(int quad) { return quad >>> 15 & 3; }
+    static int code(int quad) {
+        return quad >>> 15 & 3;
+    }
 
     static boolean neighbor(int side, HologramArchiveRegionSource.Region tile,
         HologramArchiveRegionSource.Region other) {

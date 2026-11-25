@@ -47,12 +47,15 @@ final class HologramLegacySaveTaskIdentityRegression {
                     default -> throw new AssertionError("fixture token form");
                 }
                 HologramLibraryFacade.resolveSavedResult(player, stale, true);
-                SimpleAssert.that(!HologramLibraryWorkflow.acknowledgeBlueprintSave(owner, stale)
-                    && owner.blueprintSaveReceipt.equals(old.getString("saveReceipt")) && owner.blueprintDirty,
+                SimpleAssert.that(
+                    !HologramLibraryWorkflow.acknowledgeBlueprintSave(owner, stale)
+                        && owner.blueprintSaveReceipt.equals(old.getString("saveReceipt"))
+                        && owner.blueprintDirty,
                     "wrong or ill-typed task cannot ACK or cancel the exact staged owner receipt: " + form);
             }
-            SimpleAssert.that(HologramLibraryWorkflow.acknowledgeBlueprintSave(owner, old)
-                && owner.blueprintSaveReceipt.isEmpty() && !owner.blueprintDirty,
+            SimpleAssert.that(
+                HologramLibraryWorkflow.acknowledgeBlueprintSave(owner, old) && owner.blueprintSaveReceipt.isEmpty()
+                    && !owner.blueprintDirty,
                 "the original positive token still ACKs even after unrelated UI correlation changes");
 
             NBTTagCompound pending = stage(owner, 91L, true, remember);
@@ -62,39 +65,48 @@ final class HologramLegacySaveTaskIdentityRegression {
             HologramLibraryFacade.resolveSavedResult(player, wrongCancel, true);
             NBTTagCompound noLocalReceipt = (NBTTagCompound) pending.copy();
             noLocalReceipt.removeTag("localSaveReceipt");
-            SimpleAssert.that(!HologramLibraryWorkflow.acknowledgeBlueprintSave(owner, noLocalReceipt)
-                && owner.blueprintDirty, "no old-verifier fallback can clear the exact issued owner token");
-            SimpleAssert.that(HologramLibraryWorkflow.acknowledgeBlueprintSave(owner, pending)
-                && owner.blueprintSaveReceipt.isEmpty() && !owner.blueprintDirty,
+            SimpleAssert.that(
+                !HologramLibraryWorkflow.acknowledgeBlueprintSave(owner, noLocalReceipt) && owner.blueprintDirty,
+                "no old-verifier fallback can clear the exact issued owner token");
+            SimpleAssert.that(
+                HologramLibraryWorkflow.acknowledgeBlueprintSave(owner, pending) && owner.blueprintSaveReceipt.isEmpty()
+                    && !owner.blueprintDirty,
                 "a staged positive client-only PNG receipt and its exact disk ACK remain valid");
 
             NBTTagCompound cancelled = stage(owner, 111L, true, remember);
             owner.blueprintClientTaskToken = 112L;
             HologramLibraryFacade.resolveSavedResult(player, cancelled, true);
-            SimpleAssert.that(owner.blueprintSaveReceipt.isEmpty() && owner.blueprintDirty
-                && !HologramLibraryWorkflow.acknowledgeBlueprintSave(owner, cancelled),
+            SimpleAssert.that(
+                owner.blueprintSaveReceipt.isEmpty() && owner.blueprintDirty
+                    && !HologramLibraryWorkflow.acknowledgeBlueprintSave(owner, cancelled),
                 "the same exact old token can cancel instead, and a late ACK cannot revive it");
 
             for (boolean explicitZero : new boolean[] { false, true }) {
                 NBTTagCompound receipt = stage(owner, 0L, explicitZero, remember);
-                SimpleAssert.that(HologramLibraryWorkflow.acknowledgeBlueprintSave(owner, receipt)
-                    && owner.blueprintSaveReceipt.isEmpty() && !owner.blueprintDirty,
+                SimpleAssert.that(
+                    HologramLibraryWorkflow.acknowledgeBlueprintSave(owner, receipt)
+                        && owner.blueprintSaveReceipt.isEmpty()
+                        && !owner.blueprintDirty,
                     "token-zero owner receipts also settle the bound pair, including omitted token");
             }
-            SimpleAssert.eq(0, world.writes().size(), "receipt bookkeeping does not write world blocks");
+            SimpleAssert.eq(
+                0,
+                world.writes()
+                    .size(),
+                "receipt bookkeeping does not write world blocks");
         } finally {
             HologramSnapshotPreparation.cancel(owner);
             ((Map<?, ?>) results.get(null)).remove(player.getUniqueID());
             ((Map<?, ?>) sessions.get(null)).remove(player.getUniqueID());
             HologramEditorWorkspaceRegistry.forget(player.getUniqueID());
-            player.playerNetServerHandler.netManager.channel().close();
+            player.playerNetServerHandler.netManager.channel()
+                .close();
         }
     }
 
     private static NBTTagCompound stage(HologramSession owner, long task, boolean hasToken, Method remember)
         throws ReflectiveOperationException {
-        byte[] source = "{\"blueprint\":{\"name\":\"task_identity\",\"cells\":[]}}"
-            .getBytes(StandardCharsets.UTF_8);
+        byte[] source = "{\"blueprint\":{\"name\":\"task_identity\",\"cells\":[]}}".getBytes(StandardCharsets.UTF_8);
         String sourceDigest = HologramBlueprintArtifact.hash(source);
         String previewDigest = HologramBlueprintArtifact.hash(new byte[] { 4, 5, 6 });
         String boundDigest;
@@ -104,7 +116,8 @@ final class HologramLegacySaveTaskIdentityRegression {
             throw new AssertionError("fixture source must support exact preview binding", failure);
         }
         owner.blueprintClientTaskToken = task;
-        owner.blueprintSaveReceipt = UUID.randomUUID().toString();
+        owner.blueprintSaveReceipt = UUID.randomUUID()
+            .toString();
         owner.blueprintSaveLocalId = "local_" + UUID.randomUUID();
         owner.blueprintSaveRevision = owner.planRevision;
         owner.blueprintSaveJsonSha256 = sourceDigest;

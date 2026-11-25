@@ -289,8 +289,16 @@ public final class HologramCapture {
     }
 
     static HologramCapture collectOrdinary(HologramSession session, ItemStack trigger, HologramCapture resumed) {
-        return collect(session.machine, trigger, session.machine.getExtendedFacing(), session.captureIntent,
-            resumed, false, 0, null, true);
+        return collect(
+            session.machine,
+            trigger,
+            session.machine.getExtendedFacing(),
+            session.captureIntent,
+            resumed,
+            false,
+            0,
+            null,
+            true);
     }
 
     private static HologramCapture collect(MTEEnhancedMultiBlockBase<?> machine, ItemStack trigger,

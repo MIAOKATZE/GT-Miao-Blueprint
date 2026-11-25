@@ -63,7 +63,8 @@ public final class HologramArchiveTileGlRegression {
                 for (double component : point)
                     SimpleAssert.that(Double.isFinite(component), "nonfinite positions/UV cannot be accepted");
                 near(center + (side % 2 == 0 ? -.5 : .5), point[axis], "voxel-centered signed face plane");
-                SimpleAssert.that(point[3] >= .125 && point[3] <= .25 && point[4] >= .5 && point[4] <= .75,
+                SimpleAssert.that(
+                    point[3] >= .125 && point[3] <= .25 && point[4] >= .5 && point[4] <= .75,
                     "UV stays inside detached atlas sample");
             }
             near(1, tint[3], "tint encoding never claims texel alpha proof");
@@ -82,13 +83,14 @@ public final class HologramArchiveTileGlRegression {
     private static void exactScopeBeforeRaw() {
         Object context = new Object();
         var before = new Target(context, 4, 12, 23, 1720, 960, 51, 62, 600, 420);
-        SimpleAssert.that(before.same(new Target(context, 4, 12, 23, 1720, 960, 51, 62, 600, 420)),
+        SimpleAssert.that(
+            before.same(new Target(context, 4, 12, 23, 1720, 960, 51, 62, 600, 420)),
             "same exact observed viewport permits the next proof step");
-        SimpleAssert.that(!before.same(null)
-            && !before.same(new Target(new Object(), 4, 12, 23, 1720, 960, 51, 62, 600, 420))
-            && !before.same(new Target(context, 5, 12, 23, 1720, 960, 51, 62, 600, 420))
-            && !before.same(new Target(context, 4, 12, 23, 1721, 960, 51, 62, 600, 420))
-            && !before.same(new Target(context, 4, 12, 23, 1720, 960, 52, 62, 600, 420)),
+        SimpleAssert.that(
+            !before.same(null) && !before.same(new Target(new Object(), 4, 12, 23, 1720, 960, 51, 62, 600, 420))
+                && !before.same(new Target(context, 5, 12, 23, 1720, 960, 51, 62, 600, 420))
+                && !before.same(new Target(context, 4, 12, 23, 1721, 960, 51, 62, 600, 420))
+                && !before.same(new Target(context, 4, 12, 23, 1720, 960, 52, 62, 600, 420)),
             "missing proof or changed context, framebuffer, viewport or scissor fails closed");
 
         try {
@@ -131,8 +133,10 @@ public final class HologramArchiveTileGlRegression {
             byte[] scratch = new byte[8192];
             for (int n; (n = in.read(scratch)) != -1;) hash.update(scratch, 0, n);
         }
-        SimpleAssert.that(MessageDigest.isEqual(hash.digest(),
-            hex("7a0db465717b4c1003e0e9e0faa40a7fc67621e837b94aaef61c23f7ae36880d")), "original Five digest");
+        SimpleAssert.that(
+            MessageDigest
+                .isEqual(hash.digest(), hex("7a0db465717b4c1003e0e9e0faa40a7fc67621e837b94aaef61c23f7ae36880d")),
+            "original Five digest");
         byte[] manifest = hex("07665fd32a1bd5dd667a7997f21e6ba0345bd18b6c888599a824e1bf525b1163");
         Views owner = new Views();
         Region tile = new Region(-13, -1, -9);
@@ -141,7 +145,8 @@ public final class HologramArchiveTileGlRegression {
             var camera = new HologramEditorCameraFrame(0, 0, 320, 210, .2, .38, 1, -200.5, -8.5, -136.5, 128);
             var candidates = Collections.singletonList(tile);
             var announced = planner.plan(camera, candidates, 1, -16, 0);
-            Budget work = new Budget(HologramArchiveRegionSource.MAX_PAGE_READS,
+            Budget work = new Budget(
+                HologramArchiveRegionSource.MAX_PAGE_READS,
                 HologramArchiveRegionSource.MAX_ROW_VISITS);
             var exact = source.read(announced.enqueue.view, work).window;
             SimpleAssert.that(planner.install(announced.enqueue.build(exact)), "exact Five physical geometry source");
@@ -156,8 +161,9 @@ public final class HologramArchiveTileGlRegression {
                 SimpleAssert.eq(1, report.uploadCalls, "one real encoder slice per host frame");
                 SimpleAssert.eq(512, report.uploadQuads, "exact encoder work per frame");
                 if (stamp < 3) SimpleAssert.eq(0, report.drawCalls, "unallocated body does not submit");
-                else SimpleAssert.that(report.status == Status.SUBMITTED && report.drawCalls == 3
-                    && report.submittedQuads == 1536, "unproved alpha never hides any selected Five face");
+                else SimpleAssert.that(
+                    report.status == Status.SUBMITTED && report.drawCalls == 3 && report.submittedQuads == 1536,
+                    "unproved alpha never hides any selected Five face");
             }
             SimpleAssert.eq(6144, backend.vertices, "actual production encoder emitted three bounded streams");
             parity(camera, tile, 15.5, -.5, .5);
@@ -175,13 +181,23 @@ public final class HologramArchiveTileGlRegression {
         }
 
         @Override
-        public Object context() { return token; }
+        public Object context() {
+            return token;
+        }
 
         @Override
         public Slice upload(Slice slice) {
             HologramArchiveTileGl.encode(slice, palette, (r, g, b, a) -> {}, (x, y, z, u, v) -> {
-                SimpleAssert.that(x >= -.5 && x <= 15.5 && y >= -.5 && y <= .5 && z >= -.5 && z <= 15.5
-                    && u >= .125 && u <= .25 && v >= .5 && v <= .75,
+                SimpleAssert.that(
+                    x >= -.5 && x <= 15.5
+                        && y >= -.5
+                        && y <= .5
+                        && z >= -.5
+                        && z <= 15.5
+                        && u >= .125
+                        && u <= .25
+                        && v >= .5
+                        && v <= .75,
                     "finite tile-local geometry/UV stays in its exact selected plane and sample");
                 vertices++;
             });
@@ -189,16 +205,22 @@ public final class HologramArchiveTileGlRegression {
         }
 
         @Override
-        public boolean begin(HologramEditorCameraFrame pose) { return true; }
+        public boolean begin(HologramEditorCameraFrame pose) {
+            return true;
+        }
 
         @Override
-        public boolean draw(Slice handle, Slice slice) { return handle == slice; }
+        public boolean draw(Slice handle, Slice slice) {
+            return handle == slice;
+        }
 
         @Override
         public void end() {}
 
         @Override
-        public boolean release(Slice handle) { return true; }
+        public boolean release(Slice handle) {
+            return true;
+        }
     }
 
     private static Palette samplePalette() {
@@ -214,7 +236,8 @@ public final class HologramArchiveTileGlRegression {
 
     private static byte[] hex(String value) {
         byte[] bytes = new byte[value.length() / 2];
-        for (int i = 0; i < bytes.length; i++) bytes[i] = (byte) Integer.parseInt(value.substring(2 * i, 2 * i + 2), 16);
+        for (int i = 0; i < bytes.length; i++)
+            bytes[i] = (byte) Integer.parseInt(value.substring(2 * i, 2 * i + 2), 16);
         return bytes;
     }
 

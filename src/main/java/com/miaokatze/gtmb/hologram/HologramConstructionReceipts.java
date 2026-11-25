@@ -53,8 +53,10 @@ final class HologramConstructionReceipts {
         if (!HologramNativeCompactStart.canonical(id)) return;
         retire(player, id);
         HologramSession published = HologramWorkspace.find(player.getUniqueID());
-        if (published != null && published.player == player && published.job == 0
-            && !id.isEmpty() && id.equals(published.executionRequestId)) {
+        if (published != null && published.player == player
+            && published.job == 0
+            && !id.isEmpty()
+            && id.equals(published.executionRequestId)) {
             NBTTagCompound cancel = new NBTTagCompound();
             cancel.setString("session", published.id);
             cancel.setLong("planRevision", published.planRevision);

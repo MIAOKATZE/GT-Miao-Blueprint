@@ -18,16 +18,21 @@ final class HologramBlockTransformLittleTiles {
 
     private HologramBlockTransformLittleTiles() {}
 
-    /** A field named tilesCount in an unrelated device is not a link. Only an actual marked structure member
-     * needs neighbouring hosts; independent microboxes use the original adapter and its normal validation. */
-    static boolean needsNeighbours(net.minecraft.block.Block host,NBTTagCompound tag)throws IOException {
-        if(tag==null||!tag.hasKey("tilesCount"))return false;
-        boolean isLittle="LittleTilesTileEntity".equals(tag.getString("id"));
-        for(Class<?> type=host==null?null:host.getClass();!isLittle&&type!=null;type=type.getSuperclass())
-            isLittle=type.getName().startsWith("com.creativemd.littletiles.");
-        if(!isLittle)return false;
-        int count=bounded(tag.getInteger("tilesCount"));
-        for(int i=0;i<count;i++)if(tag.getCompoundTag("t"+i).getBoolean("isStructure"))return true;
+    /**
+     * A field named tilesCount in an unrelated device is not a link. Only an actual marked structure member
+     * needs neighbouring hosts; independent microboxes use the original adapter and its normal validation.
+     */
+    static boolean needsNeighbours(net.minecraft.block.Block host, NBTTagCompound tag) throws IOException {
+        if (tag == null || !tag.hasKey("tilesCount")) return false;
+        boolean isLittle = "LittleTilesTileEntity".equals(tag.getString("id"));
+        for (Class<?> type = host == null ? null : host.getClass(); !isLittle
+            && type != null; type = type.getSuperclass())
+            isLittle = type.getName()
+                .startsWith("com.creativemd.littletiles.");
+        if (!isLittle) return false;
+        int count = bounded(tag.getInteger("tilesCount"));
+        for (int i = 0; i < count; i++) if (tag.getCompoundTag("t" + i)
+            .getBoolean("isStructure")) return true;
         return false;
     }
 

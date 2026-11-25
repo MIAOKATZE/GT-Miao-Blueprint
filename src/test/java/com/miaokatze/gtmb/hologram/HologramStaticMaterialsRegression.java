@@ -5,13 +5,13 @@ package com.miaokatze.gtmb.hologram;
 
 import net.minecraft.block.Block;
 import net.minecraft.init.Blocks;
-import net.minecraftforge.fluids.Fluid;
-import net.minecraftforge.fluids.FluidRegistry;
-import net.minecraftforge.fluids.FluidStack;
 import net.minecraft.init.Items;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
+import net.minecraftforge.fluids.Fluid;
+import net.minecraftforge.fluids.FluidRegistry;
+import net.minecraftforge.fluids.FluidStack;
 
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
@@ -49,7 +49,8 @@ final class HologramStaticMaterialsRegression {
             NBTTagCompound sealedTag = new NBTTagCompound();
             NBTTagCompound sealedTile = new NBTTagCompound();
             sealedTile.setInteger("mID", 25);
-            sealedTag.setTag(HologramRecovery.TAG,
+            sealedTag.setTag(
+                HologramRecovery.TAG,
                 HologramRecovery.sealNBT(sealedTile, "minecraft:chest", 0, "minecraft:chest", 0, 25));
             ItemStack sealed = new ItemStack(Blocks.chest);
             sealed.setTagCompound(sealedTag);
@@ -115,9 +116,12 @@ final class HologramStaticMaterialsRegression {
             sequential.add(block, metadata, target, tile, item);
             sequential.unaccounted("explicit unknown component");
         }
-        SimpleAssert.eq(sequential.snapshot(), aggregated.snapshot(),
+        SimpleAssert.eq(
+            sequential.snapshot(),
+            aggregated.snapshot(),
             "resolved aggregate preserves exact item/fluid quantities, tagged identities and explicit uncertainties");
-        aggregated.snapshot().setBoolean("mutated", true);
+        aggregated.snapshot()
+            .setBoolean("mutated", true);
         SimpleAssert.eq(before, one.snapshot(), "consumer snapshots cannot mutate a sealed contribution");
         try {
             one.unaccounted("late mutation");

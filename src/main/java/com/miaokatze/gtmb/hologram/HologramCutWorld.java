@@ -69,6 +69,7 @@ final class HologramCutWorld {
         private boolean staged;
 
         private static final class BoundChunk {
+
             final int x, z;
             final Chunk chunk;
             final ExtendedBlockStorage[] sections;
@@ -84,15 +85,19 @@ final class HologramCutWorld {
         }
 
         private void verifyProvider() throws IOException {
-            if (world.theChunkProviderServer != provider || world.provider != worldProvider || provider.worldObj != world
-                || provider.currentChunkLoader != loader || provider.loadedChunkHashMap != loadedChunks)
-                throw new IOException("剪切原区块提供器或存储已变化；暂存已保留");
+            if (world.theChunkProviderServer != provider || world.provider != worldProvider
+                || provider.worldObj != world
+                || provider.currentChunkLoader != loader
+                || provider.loadedChunkHashMap != loadedChunks) throw new IOException("剪切原区块提供器或存储已变化；暂存已保留");
         }
 
         private Chunk loadedChunk(int x, int z) {
             Object value = loadedChunks.getValueByKey(ChunkCoordIntPair.chunkXZ2Int(x, z));
-            if (!(value instanceof Chunk chunk) || chunk.getClass() != Chunk.class || !chunk.isChunkLoaded
-                || chunk.worldObj != world || chunk.xPosition != x || chunk.zPosition != z) return null;
+            if (!(value instanceof Chunk chunk) || chunk.getClass() != Chunk.class
+                || !chunk.isChunkLoaded
+                || chunk.worldObj != world
+                || chunk.xPosition != x
+                || chunk.zPosition != z) return null;
             return chunk;
         }
 
@@ -110,8 +115,8 @@ final class HologramCutWorld {
 
         private void verifyChunkSlot(BoundChunk bound) throws IOException {
             Chunk now = loadedChunk(bound.x, bound.z);
-            if (now != bound.chunk || now.getBlockStorageArray() != bound.sections || now.chunkTileEntityMap != bound.tiles)
-                throw new IOException("剪切原区块或方块实体存储已变化；暂存已保留");
+            if (now != bound.chunk || now.getBlockStorageArray() != bound.sections
+                || now.chunkTileEntityMap != bound.tiles) throw new IOException("剪切原区块或方块实体存储已变化；暂存已保留");
         }
 
         private void verifyBoundChunks(Map<BoundChunk, Map<Integer, ExtendedBlockStorage>> expected)
@@ -120,16 +125,18 @@ final class HologramCutWorld {
             verifyProvider();
             for (BoundChunk bound : originalChunks.values()) verifyChunkSlot(bound);
             for (Map.Entry<BoundChunk, Map<Integer, ExtendedBlockStorage>> chunk : expected.entrySet())
-                for (Map.Entry<Integer, ExtendedBlockStorage> section : chunk.getValue().entrySet()) {
-                    ExtendedBlockStorage now = chunk.getKey().sections[section.getKey()];
-                    if (now != section.getValue() || now != null && now.getClass() != ExtendedBlockStorage.class)
-                        throw new IOException("剪切原区段已变化；暂存已保留");
-                }
+                for (Map.Entry<Integer, ExtendedBlockStorage> section : chunk.getValue()
+                    .entrySet()) {
+                        ExtendedBlockStorage now = chunk.getKey().sections[section.getKey()];
+                        if (now != section.getValue() || now != null && now.getClass() != ExtendedBlockStorage.class)
+                            throw new IOException("剪切原区段已变化；暂存已保留");
+                    }
         }
 
         private static void rememberSection(Map<BoundChunk, Map<Integer, ExtendedBlockStorage>> expected,
             BoundChunk bound, int y) {
-            Map<Integer, ExtendedBlockStorage> sections = expected.computeIfAbsent(bound, ignored -> new LinkedHashMap<>());
+            Map<Integer, ExtendedBlockStorage> sections = expected
+                .computeIfAbsent(bound, ignored -> new LinkedHashMap<>());
             if (!sections.containsKey(y)) sections.put(y, bound.sections[y]);
         }
 
@@ -144,15 +151,14 @@ final class HologramCutWorld {
             Class<?> type = index.getClass();
             if (type == LongHashMap.class) return;
             String fast = "com.mitchej123.hodgepodge.util.FastUtilLongHashMap";
-            Class<?> base = type.getName().equals("com.mitchej123.hodgepodge.util.ServerThreadLongHashMap")
-                ? type.getSuperclass() : type;
-            if (!base.getName().equals(fast))
-                throw new IOException("剪切无法验证当前区块索引：" + type.getName());
+            Class<?> base = type.getName()
+                .equals("com.mitchej123.hodgepodge.util.ServerThreadLongHashMap") ? type.getSuperclass() : type;
+            if (!base.getName()
+                .equals(fast)) throw new IOException("剪切无法验证当前区块索引：" + type.getName());
             try {
                 java.lang.reflect.Field owner = base.getDeclaredField("ownerThread");
                 owner.setAccessible(true);
-                if (owner.get(index) != Thread.currentThread())
-                    throw new IOException("剪切必须在区块索引所属线程执行；暂存已保留");
+                if (owner.get(index) != Thread.currentThread()) throw new IOException("剪切必须在区块索引所属线程执行；暂存已保留");
             } catch (ReflectiveOperationException | SecurityException unavailable) {
                 throw new IOException("剪切无法确认区块索引所属线程；暂存已保留", unavailable);
             }
@@ -165,7 +171,8 @@ final class HologramCutWorld {
             this.world = world;
             provider = world.theChunkProviderServer;
             worldProvider = world.provider;
-            if (provider == null || worldProvider == null || !(provider.currentChunkLoader instanceof AnvilChunkLoader anvil))
+            if (provider == null || worldProvider == null
+                || !(provider.currentChunkLoader instanceof AnvilChunkLoader anvil))
                 throw new IOException("剪切需要可验证存盘的原生 Anvil 世界");
             loader = anvil;
             loadedChunks = provider.loadedChunkHashMap;
@@ -239,9 +246,11 @@ final class HologramCutWorld {
             for (int i = 0; i < originalTiles.size(); i++) {
                 NBTTagCompound cell = cells.getCompoundTagAt(i);
                 TileEntity tile = originalTiles.get(i);
-                if (tile != null && (tile.isInvalid() || tile.getWorldObj() != world
-                    || tile.xCoord != x + cell.getInteger("x") || tile.yCoord != y + cell.getInteger("y")
-                    || tile.zCoord != z + cell.getInteger("z"))
+                if (tile != null
+                    && (tile.isInvalid() || tile.getWorldObj() != world
+                        || tile.xCoord != x + cell.getInteger("x")
+                        || tile.yCoord != y + cell.getInteger("y")
+                        || tile.zCoord != z + cell.getInteger("z"))
                     || !sameNbt(tileState(tile), cell.hasKey("tile", 10) ? cell.getCompoundTag("tile") : null))
                     throw new IOException("保护回调改变了原方块实体内容，操作已停止");
             }
@@ -265,6 +274,7 @@ final class HologramCutWorld {
 
         @FunctionalInterface
         interface Fence {
+
             void require() throws IOException;
         }
 
@@ -326,10 +336,18 @@ final class HologramCutWorld {
                 verifyChunkSlot(bound);
                 bound.tiles.remove(target);
                 ExtendedBlockStorage written = writeSection(
-                    worldProvider, bound.chunk, bound.sections, px, py, pz, blocks[i], cell.getInteger("meta"));
+                    worldProvider,
+                    bound.chunk,
+                    bound.sections,
+                    px,
+                    py,
+                    pz,
+                    blocks[i],
+                    cell.getInteger("meta"));
                 verifyWrittenSection(bound, py >> 4, written);
                 // Earlier selected air can leave a null section before a later selected cell allocates it.
-                stagedSections.computeIfAbsent(bound, ignored -> new LinkedHashMap<>()).put(py >> 4, written);
+                stagedSections.computeIfAbsent(bound, ignored -> new LinkedHashMap<>())
+                    .put(py >> 4, written);
                 TileEntity candidate = candidates.get(i);
                 if (candidate != null) {
                     bound.tiles.put(target, candidate);
@@ -359,10 +377,10 @@ final class HologramCutWorld {
             verifyStaged(entry);
             Set<TileEntity> loaded = Collections.newSetFromMap(new IdentityHashMap<>());
             for (Object tile : world.loadedTileEntityList) loaded.add((TileEntity) tile);
-            for (TileEntity parked : originalIdentities) if (loaded.contains(parked))
-                throw new IOException("原方块实体的加载状态已变化，原日志已保留");
-            for (TileEntity candidate : candidates) if (candidate != null && !loaded.contains(candidate))
-                throw new IOException("候选方块实体的加载状态已变化，原日志已保留");
+            for (TileEntity parked : originalIdentities)
+                if (loaded.contains(parked)) throw new IOException("原方块实体的加载状态已变化，原日志已保留");
+            for (TileEntity candidate : candidates)
+                if (candidate != null && !loaded.contains(candidate)) throw new IOException("候选方块实体的加载状态已变化，原日志已保留");
             verifyBoundChunks(stagedSections);
             verifyPhysical(entry, candidates);
             restorePrepared();
@@ -382,8 +400,15 @@ final class HologramCutWorld {
                 verifyProvider();
                 verifyChunkSlot(bound);
                 bound.tiles.remove(target);
-                ExtendedBlockStorage written = writeSection(worldProvider, bound.chunk, bound.sections, px, py, pz,
-                    originalBlocks.get(i), cell.getInteger("meta"));
+                ExtendedBlockStorage written = writeSection(
+                    worldProvider,
+                    bound.chunk,
+                    bound.sections,
+                    px,
+                    py,
+                    pz,
+                    originalBlocks.get(i),
+                    cell.getInteger("meta"));
                 verifyWrittenSection(bound, py >> 4, written);
                 TileEntity original = originalTiles.get(i);
                 if (original != null) bound.tiles.put(target, original);
@@ -392,12 +417,13 @@ final class HologramCutWorld {
             for (int i = 0; i < originalTiles.size(); i++)
                 if (originalLoaded.get(i)) world.loadedTileEntityList.add(originalTiles.get(i));
             for (Map.Entry<BoundChunk, Map<Integer, ExtendedBlockStorage>> chunk : originalSections.entrySet())
-                for (Map.Entry<Integer, ExtendedBlockStorage> section : chunk.getValue().entrySet()) {
-                    ExtendedBlockStorage[] sections = chunk.getKey().sections;
-                    int index = section.getKey();
-                    if (section.getValue() == null && sections[index] != null && sections[index].isEmpty())
-                        sections[index] = null;
-                }
+                for (Map.Entry<Integer, ExtendedBlockStorage> section : chunk.getValue()
+                    .entrySet()) {
+                        ExtendedBlockStorage[] sections = chunk.getKey().sections;
+                        int index = section.getKey();
+                        if (section.getValue() == null && sections[index] != null && sections[index].isEmpty())
+                            sections[index] = null;
+                    }
             staged = false;
         }
 
@@ -406,8 +432,7 @@ final class HologramCutWorld {
             // Vanilla section mutation can call mod Block code. If it detached the section, stop subsequent writes.
             verifyProvider();
             verifyChunkSlot(bound);
-            if (bound.sections[index] != written)
-                throw new IOException("剪切写入期间原区段已变化，原日志已保留");
+            if (bound.sections[index] != written) throw new IOException("剪切写入期间原区段已变化，原日志已保留");
         }
 
         private static NBTTagCompound tileState(TileEntity tile) {
@@ -419,12 +444,11 @@ final class HologramCutWorld {
     }
 
     private static ExtendedBlockStorage writeSection(WorldProvider provider, Chunk chunk,
-        ExtendedBlockStorage[] sections, int x,
-        int y, int z, Block block, int metadata) {
+        ExtendedBlockStorage[] sections, int x, int y, int z, Block block, int metadata) {
         int index = y >> 4;
         ExtendedBlockStorage section = sections[index];
-        if (section == null && block != Blocks.air) sections[index] = section = new ExtendedBlockStorage(
-            index << 4, !provider.hasNoSky);
+        if (section == null && block != Blocks.air)
+            sections[index] = section = new ExtendedBlockStorage(index << 4, !provider.hasNoSky);
         if (section != null) {
             section.func_150818_a(x & 15, y & 15, z & 15, block);
             section.setExtBlockMetadata(x & 15, y & 15, z & 15, metadata);

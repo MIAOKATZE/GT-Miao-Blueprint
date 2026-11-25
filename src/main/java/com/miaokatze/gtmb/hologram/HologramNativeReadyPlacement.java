@@ -240,8 +240,7 @@ final class HologramNativeReadyPlacement {
         HologramSession s = session;
         String scopedRefusal = HologramWorkspace.legacyConstructionRefusal(s.player);
         if (scopedRefusal != null) throw new IOException(scopedRefusal);
-        if (!ordinary && (!enabled() || clock.getAsLong() - started >= LIFETIME_NANOS)
-            || s.capture != capture
+        if (!ordinary && (!enabled() || clock.getAsLong() - started >= LIFETIME_NANOS) || s.capture != capture
             || s.nativeReadyBill != bill
             || x != s.x
             || y != s.y

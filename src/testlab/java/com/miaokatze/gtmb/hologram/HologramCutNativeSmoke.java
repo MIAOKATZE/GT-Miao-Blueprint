@@ -285,7 +285,8 @@ public final class HologramCutNativeSmoke {
         NBTTagList fluidSummaries = liquid.getTagList("entries", 10);
         for (int i = 0; i < fluidSummaries.tagCount(); i++) {
             NBTTagCompound row = fluidSummaries.getCompoundTagAt(i);
-            if (liquidPaste.getString("id").equals(row.getString("id")) && row.hasKey("sequence", 4))
+            if (liquidPaste.getString("id")
+                .equals(row.getString("id")) && row.hasKey("sequence", 4))
                 liquidPaste.setLong("entrySequence", row.getLong("sequence"));
         }
         require(liquidPaste.getLong("entrySequence") > 0, "exact flowing fluid clipboard sequence");

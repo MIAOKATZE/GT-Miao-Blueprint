@@ -31,7 +31,7 @@ final class HologramStockEbfConstruction {
     private final ItemStack projector, pinnedTool, trigger;
     private final NBTTagCompound channels;
     private final long epoch, plan;
-    private final int ax, ay, az, side, slot, main, priority, recoveryDestination,sourceKey;
+    private final int ax, ay, az, side, slot, main, priority, recoveryDestination, sourceKey;
     private final boolean mainExplicit, noHatches;
     private int cx, cy, cz, activeRow = -1, placed;
     private boolean positioned, loaded, advancing;
@@ -48,8 +48,8 @@ final class HologramStockEbfConstruction {
         }
 
         @Override
-        public boolean blockNotLoaded(IStructureElement<Object> element, World world, int x, int y, int z,
-            int a, int b, int c) {
+        public boolean blockNotLoaded(IStructureElement<Object> element, World world, int x, int y, int z, int a, int b,
+            int c) {
             locate(x, y, z, false);
             return true;
         }
@@ -81,13 +81,16 @@ final class HologramStockEbfConstruction {
         main = session.main;
         mainExplicit = session.mainExplicit;
         noHatches = session.noHatches;
-        sourceKey=HologramProjectedMainPolicy.settingsKey(settings);
+        sourceKey = HologramProjectedMainPolicy.settingsKey(settings);
         priority = settings.priority;
         recoveryDestination = settings.recoveryDestination;
     }
 
     boolean admissionCurrent() {
-        return current(true) && site.fullyFunded(inventory, slot, settings) && site.armWriter() && bound(null) && permitted();
+        return current(true) && site.fullyFunded(inventory, slot, settings)
+            && site.armWriter()
+            && bound(null)
+            && permitted();
     }
 
     private boolean permitted() {
@@ -97,7 +100,8 @@ final class HologramStockEbfConstruction {
     private boolean transportCurrent() {
         // An isOpen implementation can reenter. Never call it after a final raw world witness.
         return HologramWorkspace.ebfActionCurrentPure(endpoint, gate)
-            && HologramWorkspace.currentActionEndpoint(endpoint) && HologramWorkspace.ebfActionCurrentPure(endpoint, gate);
+            && HologramWorkspace.currentActionEndpoint(endpoint)
+            && HologramWorkspace.ebfActionCurrentPure(endpoint, gate);
     }
 
     private boolean bound(HologramCapture capture) {
@@ -105,35 +109,72 @@ final class HologramStockEbfConstruction {
         var area = HologramWorkspace.AREAS.get(endpoint.actor);
         double dx = actor.posX - (ax + .5), dy = actor.posY - (ay + .5), dz = actor.posZ - (az + .5);
         return state == State.ACTIVE && HologramWorkspace.ebfActionCurrentPure(endpoint, gate)
-            && HologramWorkspace.find(endpoint.actor) == session && session.stockNativePrivate
+            && HologramWorkspace.find(endpoint.actor) == session
+            && session.stockNativePrivate
             && (area == null || !area.selecting && !area.importing)
-            && !session.blueprintDirty && session.blueprintSaveReceipt.isEmpty()
+            && !session.blueprintDirty
+            && session.blueprintSaveReceipt.isEmpty()
             && session.executionStart == null
-            && session.nativeReadyPlacement == null && session.nativeCompactStart == null
+            && session.nativeReadyPlacement == null
+            && session.nativeCompactStart == null
             && session.presentationTransition == null
-            && !actor.isDead && actor.capabilities.allowEdit && !actor.capabilities.isCreativeMode
+            && !actor.isDead
+            && actor.capabilities.allowEdit
+            && !actor.capabilities.isCreativeMode
             && dx * dx + dy * dy + dz * dz <= 64
-            && session.editorWorkspaceEpoch == epoch && session.planRevision == plan && session.capture == capture
-            && session.x == ax && session.y == ay && session.z == az && session.side == side && session.slot == slot
-            && session.facing == facing.ordinal() && session.mode == 0 && session.scope == 0 && session.job == 0
-            && !session.virtual && !session.cancelled && !session.hatchDowngrade && !session.localPlanPending
-            && session.areaStructureId.isEmpty() && session.main == main && session.mainExplicit == mainExplicit
-            && session.noHatches == noHatches && channels.equals(session.channels)
-            && site.boundSession(session) && site.linksCurrent()
-            && session.coordinatePins.isEmpty() && session.facingPins.isEmpty() && session.manualPositions.isEmpty()
-            && session.nativeOperationInputs == null && session.pendingAssetBudget.isEmpty()
-            && session.cellAssetBudgets.isEmpty() && !session.jobVoucherRequested && !StructureLibAPI.isInstrumentEnabled()
-            && session.materialSettings == settings && sourceKey>=0 && sourceKey==HologramProjectedMainPolicy.settingsKey(settings)
-            && settings.priority == priority && settings.recoveryDestination == recoveryDestination
-            && actor.inventory == inventory && inventory.mainInventory == mainInventory && inventory.currentItem == slot
-            && slot >= 0 && slot < mainInventory.length && mainInventory[slot] == projector
+            && session.editorWorkspaceEpoch == epoch
+            && session.planRevision == plan
+            && session.capture == capture
+            && session.x == ax
+            && session.y == ay
+            && session.z == az
+            && session.side == side
+            && session.slot == slot
+            && session.facing == facing.ordinal()
+            && session.mode == 0
+            && session.scope == 0
+            && session.job == 0
+            && !session.virtual
+            && !session.cancelled
+            && !session.hatchDowngrade
+            && !session.localPlanPending
+            && session.areaStructureId.isEmpty()
+            && session.main == main
+            && session.mainExplicit == mainExplicit
+            && session.noHatches == noHatches
+            && channels.equals(session.channels)
+            && site.boundSession(session)
+            && site.linksCurrent()
+            && session.coordinatePins.isEmpty()
+            && session.facingPins.isEmpty()
+            && session.manualPositions.isEmpty()
+            && session.nativeOperationInputs == null
+            && session.pendingAssetBudget.isEmpty()
+            && session.cellAssetBudgets.isEmpty()
+            && !session.jobVoucherRequested
+            && !StructureLibAPI.isInstrumentEnabled()
+            && session.materialSettings == settings
+            && sourceKey >= 0
+            && sourceKey == HologramProjectedMainPolicy.settingsKey(settings)
+            && settings.priority == priority
+            && settings.recoveryDestination == recoveryDestination
+            && actor.inventory == inventory
+            && inventory.mainInventory == mainInventory
+            && inventory.currentItem == slot
+            && slot >= 0
+            && slot < mainInventory.length
+            && mainInventory[slot] == projector
             && ItemStack.areItemStacksEqual(projector, pinnedTool)
             && (capture != null || session.pins.isEmpty() && session.planTargets.isEmpty());
     }
 
     private boolean current(boolean journal) {
-        return bound(null) && permitted() && (!journal || !HologramConstructionAuthority.hasKnownRecovery(endpoint.player))
-            && site.physicalCurrent() && transportCurrent() && bound(null) && permitted();
+        return bound(null) && permitted()
+            && (!journal || !HologramConstructionAuthority.hasKnownRecovery(endpoint.player))
+            && site.physicalCurrent()
+            && transportCurrent()
+            && bound(null)
+            && permitted();
     }
 
     State drain(long deadline, PermitAdmission admission) {
@@ -149,8 +190,10 @@ final class HologramStockEbfConstruction {
                     if (cursor.done() == cursor.total()) return finish();
                     int index = cursor.done();
                     positioned = false;
-                    if (!bound(null) || !cursor.consumePinned(endpoint.world, facing, ax, ay, az, receiver, index,
-                        site.element(index)) || !bound(null)) return stop("原生高炉声明已变化。");
+                    if (!bound(null)
+                        || !cursor
+                            .consumePinned(endpoint.world, facing, ax, ay, az, receiver, index, site.element(index))
+                        || !bound(null)) return stop("原生高炉声明已变化。");
                     if (!positioned) continue;
                     if (!loaded) return stop("高炉所需区块未加载。");
                     activeRow = index;
@@ -200,14 +243,22 @@ final class HologramStockEbfConstruction {
             session.pins.put(0, prepared.material);
             session.planTargets.add(prepared.material);
             java.util.function.BooleanSupplier authority = () -> gate.transactionCurrent(permit) && bound(scratch)
-                && session.pins.get(0) == prepared.material && session.planTargets.size() == 1
-                && session.planTargets.get(0) == prepared.material && gate.transactionCurrent(permit);
-            boolean result = HologramWorldTransactions.operateScopedEbf(session, prepared, authority,
-                () -> site.physicalCurrent() && authority.getAsBoolean(), this::transportCurrent);
+                && session.pins.get(0) == prepared.material
+                && session.planTargets.size() == 1
+                && session.planTargets.get(0) == prepared.material
+                && gate.transactionCurrent(permit);
+            boolean result = HologramWorldTransactions.operateScopedEbf(
+                session,
+                prepared,
+                authority,
+                () -> site.physicalCurrent() && authority.getAsBoolean(),
+                this::transportCurrent);
             if (session.job == 4 || HologramConstructionJournal.pending(endpoint.player)) return false;
             boolean committed = result && "placed".equals(prepared.cell.status);
-            settled = gate.settle(permit, committed ? HologramConstructionTaskGate.Settlement.COMMITTED
-                : HologramConstructionTaskGate.Settlement.ROLLED_BACK);
+            settled = gate.settle(
+                permit,
+                committed ? HologramConstructionTaskGate.Settlement.COMMITTED
+                    : HologramConstructionTaskGate.Settlement.ROLLED_BACK);
             if (!settled) return false;
             if (committed) {
                 placed++;

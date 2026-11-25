@@ -329,15 +329,19 @@ final class HologramControllerCapture {
             ItemStack initialTrigger = HologramSessionPolicy.trigger(s);
             s.capture = s.nativeCompactSource != null ? HologramCapture.collectCompact(s, initialTrigger, resumed)
                 : HologramNativeCompactStart.ordinary(s) ? HologramCapture.collectOrdinary(s, initialTrigger, resumed)
-                : projection
-                    ? HologramCapture.collectProjection(
-                        s.machine,
-                        initialTrigger,
-                        s.machine.getExtendedFacing(),
-                        s.captureIntent,
-                        resumed)
-                    : HologramCapture
-                        .collect(s.machine, initialTrigger, s.machine.getExtendedFacing(), s.captureIntent, resumed);
+                    : projection
+                        ? HologramCapture.collectProjection(
+                            s.machine,
+                            initialTrigger,
+                            s.machine.getExtendedFacing(),
+                            s.captureIntent,
+                            resumed)
+                        : HologramCapture.collect(
+                            s.machine,
+                            initialTrigger,
+                            s.machine.getExtendedFacing(),
+                            s.captureIntent,
+                            resumed);
             if (s.capture.pending) {
                 scheduleCaptureRetry(s);
                 return;
@@ -348,15 +352,15 @@ final class HologramControllerCapture {
             if (!s.capture.incomplete && !ItemStack.areItemStackTagsEqual(initialTrigger, observedTrigger)) {
                 s.capture = s.nativeCompactSource != null ? HologramCapture.collectCompact(s, observedTrigger, null)
                     : HologramNativeCompactStart.ordinary(s) ? HologramCapture.collectOrdinary(s, observedTrigger, null)
-                    : projection
-                        ? HologramCapture.collectProjection(
-                            s.machine,
-                            observedTrigger,
-                            s.machine.getExtendedFacing(),
-                            s.captureIntent,
-                            null)
-                        : HologramCapture
-                            .collect(s.machine, observedTrigger, s.machine.getExtendedFacing(), s.captureIntent);
+                        : projection
+                            ? HologramCapture.collectProjection(
+                                s.machine,
+                                observedTrigger,
+                                s.machine.getExtendedFacing(),
+                                s.captureIntent,
+                                null)
+                            : HologramCapture
+                                .collect(s.machine, observedTrigger, s.machine.getExtendedFacing(), s.captureIntent);
                 if (s.capture.pending) {
                     scheduleCaptureRetry(s);
                     return;
@@ -573,8 +577,9 @@ final class HologramControllerCapture {
             }
             s.scanSelectedPosition = null;
             s.scanSelectedPositions.clear();
-            planner = HologramResourcePlanner
-                .beginCapturePlan(s, (HologramNativeReadyPlacement.enabled() || HologramNativeCompactStart.ordinary(s))
+            planner = HologramResourcePlanner.beginCapturePlan(
+                s,
+                (HologramNativeReadyPlacement.enabled() || HologramNativeCompactStart.ordinary(s))
                     && s.capture.readyPlacementSource(s));
             stage = 7;
         }

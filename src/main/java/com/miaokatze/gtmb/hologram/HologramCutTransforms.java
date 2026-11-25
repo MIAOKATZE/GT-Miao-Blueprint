@@ -48,8 +48,8 @@ public final class HologramCutTransforms {
     }
 
     /** Check known vanilla orientations before running any adapter, permission callback or world edit. */
-    static NBTTagCompound applyForPlacement(NBTTagCompound original, CutTransforms.Transform transform, int ox,
-        int oy, int oz) throws IOException {
+    static NBTTagCompound applyForPlacement(NBTTagCompound original, CutTransforms.Transform transform, int ox, int oy,
+        int oz) throws IOException {
         if (transform.identity()) return apply(original, transform, ox, oy, oz);
         HologramCutEntry.validate(original);
         NBTTagList cells = original.getTagList("cells", 10);
@@ -57,8 +57,8 @@ public final class HologramCutTransforms {
         for (int i = 0; i < cells.tagCount(); i++) {
             NBTTagCompound cell = cells.getCompoundTagAt(i);
             String id = cell.getString("block");
-            checked[i] = HologramCutTransformMetadata.placementMetadata(
-                Block.getBlockFromName(id), id, cell.getInteger("meta"), transform);
+            checked[i] = HologramCutTransformMetadata
+                .placementMetadata(Block.getBlockFromName(id), id, cell.getInteger("meta"), transform);
             if (checked[i] == HologramCutTransformMetadata.UNREPRESENTABLE)
                 throw new IOException("无法表示原版方块 " + id + " 的旋转或镜像；未放置，暂存仍保留。");
         }

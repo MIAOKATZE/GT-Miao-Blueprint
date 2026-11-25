@@ -104,7 +104,7 @@ final class HologramMaterialWorkflow {
     }
 
     static void validateConfirmation(HologramSession s, NBTTagCompound action) throws IOException {
-        requireReview(s,action);
+        requireReview(s, action);
         if (HologramAeCraftingOrders.active(s.player)) throw new IOException("请等待 AE 合成完成并刷新材料后再施工");
         validateVoucherChoice(s, action);
     }
@@ -118,8 +118,6 @@ final class HologramMaterialWorkflow {
         if (voucherSelected && !s.player.capabilities.isCreativeMode
             && HologramDecorationVoucher.available(s.player) < 1) throw new IOException("主背包中没有可用建筑材料抵扣券，请取消抵扣或补充后再确认");
     }
-
-
 
     /** Replaces the startup inventory check with a recount of the already reviewed exact identities. */
     static boolean recheckBuild(HologramSession s, NBTTagCompound action) {

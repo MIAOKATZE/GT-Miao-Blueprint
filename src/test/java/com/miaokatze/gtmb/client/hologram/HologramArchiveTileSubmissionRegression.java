@@ -70,20 +70,22 @@ public final class HologramArchiveTileSubmissionRegression {
             SimpleAssert.that(earlyCap, "CPU-ready but partially uploaded neighbor does not open the seam");
             SimpleAssert.eq(5, result.handles, "two bodies plus three independently uploaded caps");
             SimpleAssert.eq(Status.SUBMITTED, result.status, "submitted commands, not pixels");
-            SimpleAssert.that(!rig.backend.drew(A, EAST) && !rig.backend.drew(B, WEST) && rig.backend.drew(B, EAST),
+            SimpleAssert.that(
+                !rig.backend.drew(A, EAST) && !rig.backend.drew(B, WEST) && rig.backend.drew(B, EAST),
                 "only exact same-frame drawn neighbor can suppress; absent third tile retains east cap");
 
             rig.backend.fail(B, BODY);
             Frame both = rig.plan(initial, chosen, 1, ALL_LAYERS, PROVED_STONE_FOR_FIXTURE);
             result = rig.draw(both, 1);
             SimpleAssert.eq(Status.BACKEND_REFUSED, result.status, "false body submission is not drawn");
-            SimpleAssert.that(rig.backend.drew(A, EAST) && !rig.backend.drew(B, BODY),
-                "failed body preserves neighboring cap");
+            SimpleAssert
+                .that(rig.backend.drew(A, EAST) && !rig.backend.drew(B, BODY), "failed body preserves neighboring cap");
 
             rig.backend.fail(B, EAST);
             result = rig.draw(both, 1);
             SimpleAssert.eq(Status.BACKEND_REFUSED, result.status, "false cap also disqualifies its tile");
-            SimpleAssert.that(rig.backend.drew(B, BODY) && !rig.backend.drew(B, EAST) && rig.backend.drew(A, EAST),
+            SimpleAssert.that(
+                rig.backend.drew(B, BODY) && !rig.backend.drew(B, EAST) && rig.backend.drew(A, EAST),
                 "cap failure rechecks earlier suppressions within worst-case reservation");
             rig.assertCharged(result);
             rig.backend.fail(null, BODY);
@@ -93,7 +95,8 @@ public final class HologramArchiveTileSubmissionRegression {
             SimpleAssert.eq(Status.STALE, rig.draw(both, 1).status, "old pose cannot acquire backend");
             SimpleAssert.eq(polls, rig.polls, "no backend lookup for stale frame");
             result = rig.draw(turned, 1);
-            SimpleAssert.that(result.uploadCalls == 0 && result.handles == 5 && turned.pose == rig.backend.lastPose,
+            SimpleAssert.that(
+                result.uploadCalls == 0 && result.handles == 5 && turned.pose == rig.backend.lastPose,
                 "pose-only draw reuses handles with exact live transform");
             var wrongThread = new AtomicReference<Throwable>();
             Thread offOwner = new Thread(() -> {
@@ -106,35 +109,44 @@ public final class HologramArchiveTileSubmissionRegression {
             polls = rig.polls;
             offOwner.start();
             offOwner.join();
-            SimpleAssert.that(wrongThread.get() instanceof IllegalStateException && rig.polls == polls,
+            SimpleAssert.that(
+                wrongThread.get() instanceof IllegalStateException && rig.polls == polls,
                 "wrong thread never obtains backend");
 
             Fake old = rig.backend;
             rig.backend = null;
             result = rig.draw(turned, 1);
-            SimpleAssert.that(result.status == Status.UNSUPPORTED && result.handles == 5 && result.debt == 0
-                && result.uploadCalls == 0 && result.drawCalls == 0 && result.deleteCalls == 0,
+            SimpleAssert.that(
+                result.status == Status.UNSUPPORTED && result.handles == 5
+                    && result.debt == 0
+                    && result.uploadCalls == 0
+                    && result.drawCalls == 0
+                    && result.deleteCalls == 0,
                 "temporary unsupported draw has no backend work or false context loss");
             rig.backend = old;
             polls = rig.polls;
             result = rig.draw(turned, 2);
-            SimpleAssert.that(result.status == Status.STALE && result.debt == 5 && polls == rig.polls,
+            SimpleAssert.that(
+                result.status == Status.STALE && result.debt == 5 && polls == rig.polls,
                 "texture change retires old handles without issuing any GL-like call");
             rig.backend = null;
             result = rig.pump();
-            SimpleAssert.that(result.status == Status.UNSUPPORTED && result.deleteCalls == 0 && result.debt == 5,
+            SimpleAssert.that(
+                result.status == Status.UNSUPPORTED && result.deleteCalls == 0 && result.debt == 5,
                 "no calls against unavailable context");
             rig.backend = new Fake();
             result = rig.pump();
-            SimpleAssert.that(result.status == Status.DELETION_DEFERRED && result.deleteCalls == 0 && result.debt == 5,
+            SimpleAssert.that(
+                result.status == Status.DELETION_DEFERRED && result.deleteCalls == 0 && result.debt == 5,
                 "other supported context is not confirmed destruction of old context");
             rig.backend = old;
             result = rig.pump();
-            SimpleAssert.that(result.deleteCalls == 2 && result.debt == 3,
-                "when exact context returns, bounded release only");
+            SimpleAssert
+                .that(result.deleteCalls == 2 && result.debt == 3, "when exact context returns, bounded release only");
             rig.submission.forgetDestroyedContext(old.context);
             result = rig.pump();
-            SimpleAssert.that(result.handles == 0 && result.debt == 0 && old.deleted == 2,
+            SimpleAssert.that(
+                result.handles == 0 && result.debt == 0 && old.deleted == 2,
                 "independent confirmed teardown forgets remaining handles without unauthorized release");
 
             rig.backend = new Fake();
@@ -147,19 +159,24 @@ public final class HologramArchiveTileSubmissionRegression {
             try {
                 Frame rogue = foreign.plan(initial, chosen, 2, ALL_LAYERS, PROVED_STONE_FOR_FIXTURE);
                 polls = rig.polls;
-                SimpleAssert.that(rig.draw(rogue, 2).status == Status.STALE && polls == rig.polls, "foreign source denied");
+                SimpleAssert
+                    .that(rig.draw(rogue, 2).status == Status.STALE && polls == rig.polls, "foreign source denied");
             } finally {
                 foreign.close();
             }
             Fake previous = rig.backend;
             rig.backend = new Fake();
             result = rig.draw(fresh, 2);
-            SimpleAssert.that(result.debt > 0 && result.deleteCalls == 0 && previous.deleted == 0
-                && result.uploadCalls == 1 && result.drawCalls == 0,
+            SimpleAssert.that(
+                result.debt > 0 && result.deleteCalls == 0
+                    && previous.deleted == 0
+                    && result.uploadCalls == 1
+                    && result.drawCalls == 0,
                 "foreign current context does not draw/delete previous handles or publish incomplete replacements");
             rig.views.retire();
             result = rig.draw(fresh, 2);
-            SimpleAssert.that(result.status == Status.STALE && result.debt > 0 && result.drawCalls == 0,
+            SimpleAssert.that(
+                result.status == Status.STALE && result.debt > 0 && result.drawCalls == 0,
                 "retired exact source cannot submit even resident GPU state");
         }
     }
@@ -175,8 +192,10 @@ public final class HologramArchiveTileSubmissionRegression {
             Frame tooMany = rig.plan(pose, only, 1, ALL_LAYERS, 0);
             for (int i = 0; i < 2; i++) {
                 Report result = rig.draw(tooMany, 1);
-                SimpleAssert.that(result.status == Status.CAPACITY_LIMITED && result.uploadCalls == 0
-                    && result.drawCalls == 0 && result.handles == 0,
+                SimpleAssert.that(
+                    result.status == Status.CAPACITY_LIMITED && result.uploadCalls == 0
+                        && result.drawCalls == 0
+                        && result.handles == 0,
                     "oversized unproved full view fails closed instead of never-ending partial upload");
             }
             rig.plan(pose, only, 1, 0, 0);
@@ -204,22 +223,29 @@ public final class HologramArchiveTileSubmissionRegression {
             rig.backend.refuseReleaseBefore = 1024;
             long same = ++rig.stamp;
             Report first = rig.submission.pumpRetired(same);
-            SimpleAssert.that(first.deleteCalls == 2 && first.debt == 3 && rig.backend.deleted == 0,
+            SimpleAssert.that(
+                first.deleteCalls == 2 && first.debt == 3 && rig.backend.deleted == 0,
                 "first two handles refuse exact-context release without losing debt");
             Report submitted = rig.drawAt(same, frame, 1);
-            SimpleAssert.that(submitted.uploadCalls == 1 && submitted.deleteCalls == 0 && submitted.debt == 3,
+            SimpleAssert.that(
+                submitted.uploadCalls == 1 && submitted.deleteCalls == 0 && submitted.debt == 3,
                 "submit shares the already charged cleanup budget with pump");
             int polls = rig.polls;
             Report duplicate = rig.drawAt(same, frame, 1);
-            SimpleAssert.that(duplicate.status == Status.FRAME_SPENT && duplicate.uploadCalls == 0
-                && duplicate.drawCalls == 0 && rig.polls == polls, "same physical stamp cannot submit twice");
+            SimpleAssert.that(
+                duplicate.status == Status.FRAME_SPENT && duplicate.uploadCalls == 0
+                    && duplicate.drawCalls == 0
+                    && rig.polls == polls,
+                "same physical stamp cannot submit twice");
             Report samePump = rig.submission.pumpRetired(same);
-            SimpleAssert.that(samePump.deleteCalls == 0 && samePump.debt == 3 && rig.polls == polls,
+            SimpleAssert.that(
+                samePump.deleteCalls == 0 && samePump.debt == 3 && rig.polls == polls,
                 "duplicate pump cannot increase physical delete budget");
             SimpleAssert.eq(Status.STALE, rig.drawAt(same - 1, frame, 1).status, "old physical stamp rejected");
 
             Report after = rig.pump();
-            SimpleAssert.that(after.deleteCalls == 2 && rig.backend.deleted == 1 && after.debt == 2,
+            SimpleAssert.that(
+                after.deleteCalls == 2 && rig.backend.deleted == 1 && after.debt == 2,
                 "rotated refused items cannot starve a later healthy handle on next physical frame");
             SimpleAssert.eq(1024, rig.backend.deletedAt, "the later healthy part really released");
         }
@@ -236,16 +262,22 @@ public final class HologramArchiveTileSubmissionRegression {
             Fake foreign = new Fake();
             old.afterUpload = () -> rig.backend = foreign;
             Report uploadLoss = rig.draw(frame, 1);
-            SimpleAssert.that(uploadLoss.status == Status.UNSUPPORTED && uploadLoss.uploadCalls == 1
-                && uploadLoss.drawCalls == 0 && uploadLoss.debt == 1 && foreign.uploads == 0,
+            SimpleAssert.that(
+                uploadLoss.status == Status.UNSUPPORTED && uploadLoss.uploadCalls == 1
+                    && uploadLoss.drawCalls == 0
+                    && uploadLoss.debt == 1
+                    && foreign.uploads == 0,
                 "returned upload is old context debt, no draw or new-context work");
-            SimpleAssert.that(rig.pump().deleteCalls == 0 && foreign.deleted == 0,
+            SimpleAssert.that(
+                rig.pump().deleteCalls == 0 && foreign.deleted == 0,
                 "replacement context cannot release old upload");
             int probes = rig.polls;
-            SimpleAssert.that(rig.submission.pumpRetired(rig.stamp).deleteCalls == 0 && rig.polls == probes,
+            SimpleAssert.that(
+                rig.submission.pumpRetired(rig.stamp).deleteCalls == 0 && rig.polls == probes,
                 "duplicate foreign-context pump cannot spin context probes in one physical frame");
             rig.backend = old;
-            SimpleAssert.that(rig.pump().deleteCalls == 1 && old.deleted == 1,
+            SimpleAssert.that(
+                rig.pump().deleteCalls == 1 && old.deleted == 1,
                 "exact context returns and releases the accepted upload");
 
             rig.failSupplier = true;
@@ -262,21 +294,28 @@ public final class HologramArchiveTileSubmissionRegression {
                 old.drawing = false; // The fake backend itself abandons the revoked draw scope.
             };
             Report beginLoss = rig.draw(frame, 1);
-            SimpleAssert.that(beginLoss.status == Status.UNSUPPORTED && beginLoss.drawCalls == 0
-                && old.ends == priorEnds && beginLoss.debt == 3, "revoked begin cannot draw or end in foreign context");
+            SimpleAssert.that(
+                beginLoss.status == Status.UNSUPPORTED && beginLoss.drawCalls == 0
+                    && old.ends == priorEnds
+                    && beginLoss.debt == 3,
+                "revoked begin cannot draw or end in foreign context");
             rig.backend = old;
             old.afterRelease = () -> rig.backend = foreign;
             Report deleteLoss = rig.pump();
-            SimpleAssert.that(deleteLoss.status == Status.UNSUPPORTED && deleteLoss.deleteCalls == 1
-                && deleteLoss.debt == 2 && foreign.deleted == 0, "loss in first release forbids a second release");
+            SimpleAssert.that(
+                deleteLoss.status == Status.UNSUPPORTED && deleteLoss.deleteCalls == 1
+                    && deleteLoss.debt == 2
+                    && foreign.deleted == 0,
+                "loss in first release forbids a second release");
         }
 
         try (var rig = new Rig(new Memory(data), manifest(data, 1))) {
             Frame frame = fillThree(rig);
             rig.backend.afterDraw = () -> rig.textureEpoch = 2;
             Report stale = rig.draw(frame, 1);
-            SimpleAssert.that(stale.status == Status.STALE && stale.drawCalls == 1 && stale.submittedQuads == 0
-                && stale.debt == 3, "fresh atlas generation is checked after every physical draw");
+            SimpleAssert.that(
+                stale.status == Status.STALE && stale.drawCalls == 1 && stale.submittedQuads == 0 && stale.debt == 3,
+                "fresh atlas generation is checked after every physical draw");
         }
 
         try (var rig = new Rig(new Memory(data), manifest(data, 1))) {
@@ -285,8 +324,11 @@ public final class HologramArchiveTileSubmissionRegression {
             int priorEnds = same.ends;
             same.afterDraw = rig.views::retire;
             Report stale = rig.draw(frame, 1);
-            SimpleAssert.that(stale.status == Status.STALE && stale.drawCalls == 1 && stale.submittedQuads == 0
-                && same.ends == priorEnds + 1 && stale.debt == 3,
+            SimpleAssert.that(
+                stale.status == Status.STALE && stale.drawCalls == 1
+                    && stale.submittedQuads == 0
+                    && same.ends == priorEnds + 1
+                    && stale.debt == 3,
                 "owner invalidation stops body and caps; only restoration in the exact legal context is allowed");
         }
     }
@@ -315,8 +357,10 @@ public final class HologramArchiveTileSubmissionRegression {
             byte[] bytes = new byte[8192];
             for (int n; (n = in.read(bytes)) >= 0;) hash.update(bytes, 0, n);
         }
-        SimpleAssert.that(MessageDigest.isEqual(hash.digest(),
-            hex("7a0db465717b4c1003e0e9e0faa40a7fc67621e837b94aaef61c23f7ae36880d")), "no substitute Five");
+        SimpleAssert.that(
+            MessageDigest
+                .isEqual(hash.digest(), hex("7a0db465717b4c1003e0e9e0faa40a7fc67621e837b94aaef61c23f7ae36880d")),
+            "no substitute Five");
         byte[] manifest = hex("07665fd32a1bd5dd667a7997f21e6ba0345bd18b6c888599a824e1bf525b1163");
         Region a = new Region(-13, -1, -9), b = new Region(-12, -1, -9);
         List<Region> chosen = Arrays.asList(a, b);
@@ -330,12 +374,16 @@ public final class HologramArchiveTileSubmissionRegression {
                 result = rig.draw(f, 1);
                 rig.assertCharged(result);
             }
-            SimpleAssert.that(result.submittedQuads > 0 && rig.backend.drew(a, BODY) && rig.backend.drew(b, BODY)
-                && rig.reads == 10 && rig.rows == 37_184,
+            SimpleAssert.that(
+                result.submittedQuads > 0 && rig.backend.drew(a, BODY)
+                    && rig.backend.drew(b, BODY)
+                    && rig.reads == 10
+                    && rig.rows == 37_184,
                 "both exact Five bodies accepted by the recorder; work charged only to ten verified pages");
             Frame otherPose = rig.plan(pose(-197.5, -8.5, -136.5, .1), chosen, 1, ALL_LAYERS, fixtureOpaque);
             result = rig.draw(otherPose, 1);
-            SimpleAssert.that(result.uploadCalls == 0 && rig.reads == 10 && result.submittedQuads > 0,
+            SimpleAssert.that(
+                result.uploadCalls == 0 && rig.reads == 10 && result.submittedQuads > 0,
                 "pose-only change on resident real geometry has no upload or file reads");
         }
     }
@@ -364,7 +412,8 @@ public final class HologramArchiveTileSubmissionRegression {
             throws IOException {
             Frame frame = planner.plan(pose, chosen, textures, layer, opaque);
             if (frame.enqueue != null) {
-                Budget budget = new Budget(HologramArchiveRegionSource.MAX_PAGE_READS,
+                Budget budget = new Budget(
+                    HologramArchiveRegionSource.MAX_PAGE_READS,
                     HologramArchiveRegionSource.MAX_ROW_VISITS);
                 var window = source.read(frame.enqueue.view, budget).window;
                 SimpleAssert.that(planner.install(frame.enqueue.build(window)), "fixture CPU tile installed");
@@ -389,9 +438,14 @@ public final class HologramArchiveTileSubmissionRegression {
         }
 
         void assertCharged(Report report) {
-            SimpleAssert.that(report.uploadCalls <= 1 && report.uploadQuads <= 512 && report.drawCalls <= 12
-                && report.drawQuads <= 6144 && report.deleteCalls <= 2 && report.handles <= 24
-                && report.submittedQuads <= report.drawQuads && report.debt <= report.handles,
+            SimpleAssert.that(
+                report.uploadCalls <= 1 && report.uploadQuads <= 512
+                    && report.drawCalls <= 12
+                    && report.drawQuads <= 6144
+                    && report.deleteCalls <= 2
+                    && report.handles <= 24
+                    && report.submittedQuads <= report.drawQuads
+                    && report.debt <= report.handles,
                 "strict upload/draw/deletion/bounded resident limits");
             SimpleAssert.eq(backend.uploads, report.uploadCalls, "upload uses recorder exactly");
             SimpleAssert.eq(backend.draws, report.drawCalls, "false draws are charged too");
@@ -439,7 +493,8 @@ public final class HologramArchiveTileSubmissionRegression {
         }
 
         boolean drew(Region region, int stream) {
-            return presented.stream().anyMatch(s -> s.tile.region.equals(region) && s.stream == stream);
+            return presented.stream()
+                .anyMatch(s -> s.tile.region.equals(region) && s.stream == stream);
         }
 
         @Override
@@ -472,7 +527,8 @@ public final class HologramArchiveTileSubmissionRegression {
 
         @Override
         public boolean draw(Handle handle, Slice slice) {
-            SimpleAssert.that(drawing && handle.context == context && !handle.deleted && handle.slice == slice,
+            SimpleAssert.that(
+                drawing && handle.context == context && !handle.deleted && handle.slice == slice,
                 "exact live handle and current scope");
             draws++;
             if (slice.tile.region.equals(failRegion) && slice.stream == failStream) return false;
@@ -492,7 +548,8 @@ public final class HologramArchiveTileSubmissionRegression {
 
         @Override
         public boolean release(Handle handle) {
-            SimpleAssert.that(!drawing && handle.context == context && !handle.deleted,
+            SimpleAssert.that(
+                !drawing && handle.context == context && !handle.deleted,
                 "retirement only in the exactly matching context");
             if (handle.slice.first < refuseReleaseBefore) return false;
             handle.deleted = true;
@@ -514,11 +571,21 @@ public final class HologramArchiveTileSubmissionRegression {
         for (int[] page : rows) total += page.length;
         byte[] palette = hex("48548e482e250fa98f1cf26a21714f4d14545ebd95d4fd0175b96405eadf338a");
         ByteBuffer data = ByteBuffer.allocate(next + total * 4)
-            .putInt(0x47545047).putInt(1).putLong(total).putInt(rows.length).putInt(3).put(palette);
+            .putInt(0x47545047)
+            .putInt(1)
+            .putLong(total)
+            .putInt(rows.length)
+            .putInt(3)
+            .put(palette);
         for (int i = 0; i < rows.length; i++) {
             ByteBuffer page = ByteBuffer.allocate(rows[i].length * 4);
             for (int packed : rows[i]) page.putInt(packed);
-            data.putInt(i).putInt(0).putInt(0).putInt(rows[i].length).putLong(next).put(digest().digest(page.array()));
+            data.putInt(i)
+                .putInt(0)
+                .putInt(0)
+                .putInt(rows[i].length)
+                .putLong(next)
+                .put(digest().digest(page.array()));
             System.arraycopy(page.array(), 0, data.array(), next, page.capacity());
             next += page.capacity();
         }
@@ -564,10 +631,14 @@ public final class HologramArchiveTileSubmissionRegression {
         }
 
         @Override
-        public int write(ByteBuffer src) { throw new NonWritableChannelException(); }
+        public int write(ByteBuffer src) {
+            throw new NonWritableChannelException();
+        }
 
         @Override
-        public long position() { return position; }
+        public long position() {
+            return position;
+        }
 
         @Override
         public SeekableByteChannel position(long requested) throws IOException {
@@ -577,15 +648,23 @@ public final class HologramArchiveTileSubmissionRegression {
         }
 
         @Override
-        public long size() { return bytes.length; }
+        public long size() {
+            return bytes.length;
+        }
 
         @Override
-        public SeekableByteChannel truncate(long size) { throw new NonWritableChannelException(); }
+        public SeekableByteChannel truncate(long size) {
+            throw new NonWritableChannelException();
+        }
 
         @Override
-        public boolean isOpen() { return open; }
+        public boolean isOpen() {
+            return open;
+        }
 
         @Override
-        public void close() { open = false; }
+        public void close() {
+            open = false;
+        }
     }
 }

@@ -9,8 +9,7 @@ import java.util.regex.Pattern;
 final class HologramArchiveNamedImport {
 
     private static final String SUFFIX = ".gtpg";
-    private static final Pattern LEAF = Pattern.compile(
-        "[\\p{L}\\p{N}_-][\\p{L}\\p{N} _.-]{0,94}\\.[gG][tT][pP][gG]");
+    private static final Pattern LEAF = Pattern.compile("[\\p{L}\\p{N}_-][\\p{L}\\p{N} _.-]{0,94}\\.[gG][tT][pP][gG]");
 
     private HologramArchiveNamedImport() {}
 
@@ -20,7 +19,9 @@ final class HologramArchiveNamedImport {
     }
 
     static boolean validLeaf(String name) {
-        return name != null && name.length() <= 100 && LEAF.matcher(name).matches();
+        return name != null && name.length() <= 100
+            && LEAF.matcher(name)
+                .matches();
     }
 
     static String refusal(String name) {

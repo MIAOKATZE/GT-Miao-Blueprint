@@ -229,12 +229,21 @@ final class HologramBlockTransformRegression {
     }
 
     private static void littleTiles() throws IOException {
-        NBTTagCompound linked=HologramBlueprintNbt.decode(littleCell(0,true).tileNbt);
-        SimpleAssert.that(HologramBlockTransformLittleTiles.needsNeighbours(null,linked),"genuine linked LittleTiles host requires cross-position transform");
-        linked.getCompoundTag("t0").setBoolean("isStructure",false);
-        SimpleAssert.that(!HologramBlockTransformLittleTiles.needsNeighbours(null,linked),"standalone microbox needs no neighbour lookup");
-        linked.setString("id","another_mod:gauge");linked.getCompoundTag("t0").setBoolean("isStructure",true);
-        SimpleAssert.that(!HologramBlockTransformLittleTiles.needsNeighbours(null,linked),"unrelated NBT field isn't LittleTiles");
+        NBTTagCompound linked = HologramBlueprintNbt.decode(littleCell(0, true).tileNbt);
+        SimpleAssert.that(
+            HologramBlockTransformLittleTiles.needsNeighbours(null, linked),
+            "genuine linked LittleTiles host requires cross-position transform");
+        linked.getCompoundTag("t0")
+            .setBoolean("isStructure", false);
+        SimpleAssert.that(
+            !HologramBlockTransformLittleTiles.needsNeighbours(null, linked),
+            "standalone microbox needs no neighbour lookup");
+        linked.setString("id", "another_mod:gauge");
+        linked.getCompoundTag("t0")
+            .setBoolean("isStructure", true);
+        SimpleAssert.that(
+            !HologramBlockTransformLittleTiles.needsNeighbours(null, linked),
+            "unrelated NBT field isn't LittleTiles");
         int[] original = { 1, 2, 3, 5, 8, 12 };
         for (boolean vertical : new boolean[] { false, true }) {
             int[] box = original.clone();

@@ -12,7 +12,8 @@ final class HologramCutStoragePreview implements HologramCutStoragePreviewView {
     private static HologramCutStoragePreview active;
     final HologramCutStoragePreviewState state = new HologramCutStoragePreviewState();
     private final Object world = Minecraft.getMinecraft().theWorld;
-    private final Object connection = Minecraft.getMinecraft().getNetHandler();
+    private final Object connection = Minecraft.getMinecraft()
+        .getNetHandler();
 
     HologramCutStoragePreview() {
         if (active != null) active.close();
@@ -30,7 +31,8 @@ final class HologramCutStoragePreview implements HologramCutStoragePreviewView {
 
     /** Claim legacy browser IDs without reading their raw data or reusing their progress. */
     static boolean receive(NBTTagCompound reply) {
-        return reply.getString("requestId").startsWith(HologramCutStoragePreviewState.PREFIX);
+        return reply.getString("requestId")
+            .startsWith(HologramCutStoragePreviewState.PREFIX);
     }
 
     void retry() {
@@ -50,7 +52,8 @@ final class HologramCutStoragePreview implements HologramCutStoragePreviewView {
     }
 
     public String notice() {
-        if (state.selected().isEmpty()) return "";
+        if (state.selected()
+            .isEmpty()) return "";
         HologramCutClient.ClipBounds bounds = HologramCutClient.INSTANCE.clipboardBounds(state.selected());
         if (bounds == null) return "没有已确认的剪切范围。";
         return bounds.sx + " × " + bounds.sy + " × " + bounds.sz + " · 仅显示范围，不下载完整结构。";
@@ -67,9 +70,10 @@ final class HologramCutStoragePreview implements HologramCutStoragePreviewView {
 
     /** An acknowledged directory can consume a row while a recipe viewer temporarily hides this panel. */
     static void directoryChanged(java.util.List<NBTTagCompound> summaries) {
-        if (active == null || active.state.selected().isEmpty()) return;
-        for (NBTTagCompound summary : summaries)
-            if (active.state.selected().equals(summary.getString("id"))) return;
+        if (active == null || active.state.selected()
+            .isEmpty()) return;
+        for (NBTTagCompound summary : summaries) if (active.state.selected()
+            .equals(summary.getString("id"))) return;
         active.select("");
     }
 

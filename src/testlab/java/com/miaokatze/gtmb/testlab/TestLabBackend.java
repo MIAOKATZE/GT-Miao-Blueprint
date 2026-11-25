@@ -40,8 +40,8 @@ final class TestLabBackend {
                 int.class);
         execute.setAccessible(true);
         capture.setAccessible(true);
-        transform = Class.forName("com.miaokatze.gtmb.hologram.HologramCutTransforms").getDeclaredMethod(
-            "apply", NBTTagCompound.class, Transform.class, int.class, int.class, int.class);
+        transform = Class.forName("com.miaokatze.gtmb.hologram.HologramCutTransforms")
+            .getDeclaredMethod("apply", NBTTagCompound.class, Transform.class, int.class, int.class, int.class);
         transform.setAccessible(true);
     }
 
@@ -80,13 +80,14 @@ final class TestLabBackend {
     }
 
     /** Detached oracle from the live actor's validated save file, not a packet or alternate production route. */
-    NBTTagCompound localClipboardPose(String id, long sequence, Transform pose, int x, int y, int z)
-        throws Exception {
+    NBTTagCompound localClipboardPose(String id, long sequence, Transform pose, int x, int y, int z) throws Exception {
         runtime.requireActor();
-        NBTTagList entries = HologramSnapshotCodec.decode(cacheBytes()).getTagList("entries", 10);
+        NBTTagList entries = HologramSnapshotCodec.decode(cacheBytes())
+            .getTagList("entries", 10);
         for (int i = 0; i < entries.tagCount(); i++) {
             NBTTagCompound entry = entries.getCompoundTagAt(i);
-            if (sequence > 0 && id.equals(entry.getString("id")) && entry.hasKey("sequence", 4)
+            if (sequence > 0 && id.equals(entry.getString("id"))
+                && entry.hasKey("sequence", 4)
                 && sequence == entry.getLong("sequence"))
                 return (NBTTagCompound) invoke(transform, entry, pose, x, y, z);
         }

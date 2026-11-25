@@ -133,9 +133,7 @@ final class HologramEditorCutWorkspace {
             .widthRel(1f)
             .height(18)
             .childPadding(3);
-        secondary.child(
-            button("undo", "撤回原处", "undo", this::canAct, this::armUndo)
-                .expanded());
+        secondary.child(button("undo", "撤回原处", "undo", this::canAct, this::armUndo).expanded());
         secondary.child(
             button("sync", "同步 / 重试", "reset-view", () -> active && !closed, this::refresh).expanded()
                 .tooltipBuilder(t -> t.addLine("同步剪切列表 / 重试预览")));

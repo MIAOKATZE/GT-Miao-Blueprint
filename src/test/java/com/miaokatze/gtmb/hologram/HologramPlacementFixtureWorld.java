@@ -21,6 +21,7 @@ import net.minecraft.world.storage.MapStorage;
 final class HologramPlacementFixtureWorld extends HologramServiceEditRegression.ReadOnlyWorld {
 
     private static final class State {
+
         final Block block;
         final int metadata;
 
@@ -103,7 +104,9 @@ final class HologramPlacementFixtureWorld extends HologramServiceEditRegression.
     @Override
     public boolean canPlaceEntityOnSide(Block block, int x, int y, int z, boolean replace, int side, Entity entity,
         ItemStack stack) {
-        return block != null && block != Blocks.air && blockExists(x, y, z) && isAirBlock(x, y, z)
+        return block != null && block != Blocks.air
+            && blockExists(x, y, z)
+            && isAirBlock(x, y, z)
             && getTileEntity(x, y, z) == null;
     }
 

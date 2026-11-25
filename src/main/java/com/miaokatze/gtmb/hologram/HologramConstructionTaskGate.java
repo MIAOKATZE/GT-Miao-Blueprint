@@ -17,23 +17,49 @@ import java.util.UUID;
 final class HologramConstructionTaskGate {
 
     enum Kind {
-        INCREMENTAL_NATIVE, PROJECTED_LAYER, LEGACY_NATIVE, LEGACY_PROJECTED, CURRENT_DRAFT, DEMOLITION, AE_ORDER, LOCAL_BLUEPRINT
+        INCREMENTAL_NATIVE,
+        PROJECTED_LAYER,
+        LEGACY_NATIVE,
+        LEGACY_PROJECTED,
+        CURRENT_DRAFT,
+        DEMOLITION,
+        AE_ORDER,
+        LOCAL_BLUEPRINT
     }
 
     enum Decision {
-        GRANTED, ACTIVE_REPLAY, TERMINAL_REPLAY, STALE_SCOPE, RETIRED_UNKNOWN, BUSY, RECOVERY_PENDING, CAPACITY
+        GRANTED,
+        ACTIVE_REPLAY,
+        TERMINAL_REPLAY,
+        STALE_SCOPE,
+        RETIRED_UNKNOWN,
+        BUSY,
+        RECOVERY_PENDING,
+        CAPACITY
     }
 
     enum Phase {
-        UNSEEN, ACTIVE, STOPPING, RECOVERY_PENDING, TERMINAL, STALE_SCOPE, RETIRED_UNKNOWN
+        UNSEEN,
+        ACTIVE,
+        STOPPING,
+        RECOVERY_PENDING,
+        TERMINAL,
+        STALE_SCOPE,
+        RETIRED_UNKNOWN
     }
 
     enum End {
-        COMPLETE, FAILED, CANCELLED, OWNER_REVOKED, STOPPED_FOR_RECOVERY
+        COMPLETE,
+        FAILED,
+        CANCELLED,
+        OWNER_REVOKED,
+        STOPPED_FOR_RECOVERY
     }
 
     enum Settlement {
-        COMMITTED, ROLLED_BACK, RECOVERY_PENDING
+        COMMITTED,
+        ROLLED_BACK,
+        RECOVERY_PENDING
     }
 
     static final class Scope {
@@ -51,7 +77,8 @@ final class HologramConstructionTaskGate {
         }
 
         boolean matches(UUID actor, Object player, Object world, Object connection) {
-            return this.actor.equals(actor) && this.player == player && this.world == world
+            return this.actor.equals(actor) && this.player == player
+                && this.world == world
                 && this.connection == connection;
         }
     }
@@ -282,9 +309,10 @@ final class HologramConstructionTaskGate {
         Owner owner = current(scope);
         if (owner == null) return new View(Phase.STALE_SCOPE, 0, null);
         Lease job = active.get(scope.actor);
-        if (job != null && job.scope == scope && job.request.equals(request))
-            return new View(job.recovery ? Phase.RECOVERY_PENDING : job.stop == null ? Phase.ACTIVE : Phase.STOPPING,
-                job.committed, null);
+        if (job != null && job.scope == scope && job.request.equals(request)) return new View(
+            job.recovery ? Phase.RECOVERY_PENDING : job.stop == null ? Phase.ACTIVE : Phase.STOPPING,
+            job.committed,
+            null);
         Outcome result = outcomes.get(new ResultKey(scope, request));
         if (result != null) return new View(Phase.TERMINAL, result.committedTransactions, result);
         return new View(request.sequence <= owner.seenThrough ? Phase.RETIRED_UNKNOWN : Phase.UNSEEN, 0, null);
@@ -292,8 +320,10 @@ final class HologramConstructionTaskGate {
 
     Permit beginTransaction(Lease exact) {
         requireThread();
-        if (!owns(exact) || current(exact.scope) == null || exact.stop != null
-            || exact.recovery || exact.inFlight != null) return null;
+        if (!owns(exact) || current(exact.scope) == null
+            || exact.stop != null
+            || exact.recovery
+            || exact.inFlight != null) return null;
         exact.inFlight = new Permit(exact);
         return exact.inFlight;
     }
@@ -303,7 +333,9 @@ final class HologramConstructionTaskGate {
         requireThread();
         if (exact == null) return false;
         Lease lease = exact.lease;
-        return owns(lease) && lease.inFlight == exact && lease.stop == null && !lease.recovery
+        return owns(lease) && lease.inFlight == exact
+            && lease.stop == null
+            && !lease.recovery
             && current(lease.scope) != null;
     }
 
@@ -393,7 +425,10 @@ final class HologramConstructionTaskGate {
         active.remove(lease.scope.actor, lease);
         if (current(lease.scope) == null) return;
         outcomes.put(new ResultKey(lease.scope, lease.request), new Outcome(lease, end));
-        while (outcomes.size() > maxOutcomes) outcomes.remove(outcomes.keySet().iterator().next());
+        while (outcomes.size() > maxOutcomes) outcomes.remove(
+            outcomes.keySet()
+                .iterator()
+                .next());
     }
 
     private void requireThread() {

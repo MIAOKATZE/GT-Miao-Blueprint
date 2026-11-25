@@ -117,13 +117,19 @@ public final class HologramUiLifecycleRegression {
             queue.offer(() -> calls.add("modal's own close"));
         });
         queue.run(true);
-        SimpleAssert.eq(Arrays.asList("escape", "route top modal"), calls,
+        SimpleAssert.eq(
+            Arrays.asList("escape", "route top modal"),
+            calls,
             "the existing modal owner can defer its close without a stale callback taking the slot");
         queue.run(true);
-        SimpleAssert.eq(Arrays.asList("escape", "route top modal", "modal's own close"), calls,
+        SimpleAssert.eq(
+            Arrays.asList("escape", "route top modal", "modal's own close"),
+            calls,
             "modal follow-up does not run inline or dismiss another layer");
         queue.run(true);
-        SimpleAssert.eq(Arrays.asList("escape", "route top modal", "modal's own close", "accepted internal callback"), calls,
+        SimpleAssert.eq(
+            Arrays.asList("escape", "route top modal", "modal's own close", "accepted internal callback"),
+            calls,
             "only unrelated already accepted work survives, and runs after dismissal if the screen remains active");
 
         queue.offer(() -> calls.add("wrong-screen callback"));

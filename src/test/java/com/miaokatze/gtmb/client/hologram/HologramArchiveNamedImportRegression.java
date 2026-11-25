@@ -28,15 +28,20 @@ public final class HologramArchiveNamedImportRegression {
     }
 
     public static void run() throws IOException {
-        SimpleAssert.that(!HologramArchiveNamedImport.archiveName("old blueprint")
-            && !HologramArchiveNamedImport.archiveName("old blueprint.json"), "normal named import stays ordinary");
+        SimpleAssert.that(
+            !HologramArchiveNamedImport.archiveName("old blueprint")
+                && !HologramArchiveNamedImport.archiveName("old blueprint.json"),
+            "normal named import stays ordinary");
         for (String name : new String[] { "../a.gtpg", "/a.gtpg", "C:\\a.gtpg", ".gtpg", "a:b.gtpg" }) {
-            SimpleAssert.that(HologramArchiveNamedImport.archiveName(name)
-                && !HologramArchiveNamedImport.validLeaf(name)
-                && HologramArchiveNamedImport.refusal(name).contains("不含路径"), "explicit invalid name never falls back");
+            SimpleAssert.that(
+                HologramArchiveNamedImport.archiveName(name) && !HologramArchiveNamedImport.validLeaf(name)
+                    && HologramArchiveNamedImport.refusal(name)
+                        .contains("不含路径"),
+                "explicit invalid name never falls back");
         }
-        SimpleAssert.that(HologramArchiveNamedImport.validLeaf("十二塔-1.GTPG")
-            && HologramArchiveNamedImport.refusal("十二塔-1.GTPG").contains("未导入"),
+        SimpleAssert.that(
+            HologramArchiveNamedImport.validLeaf("十二塔-1.GTPG") && HologramArchiveNamedImport.refusal("十二塔-1.GTPG")
+                .contains("未导入"),
             "even a valid explicit name gets truthful refusal while safe opener absent");
 
         byte[] bytes = sample();
@@ -68,7 +73,8 @@ public final class HologramArchiveNamedImportRegression {
         SimpleAssert.eq(1, changed.closes, "mid-inspection retirement closes exact handle");
 
         byte[] invalidDirectory = sample();
-        ByteBuffer.wrap(invalidDirectory).putLong(72, INDEX_END + 1L);
+        ByteBuffer.wrap(invalidDirectory)
+            .putLong(72, INDEX_END + 1L);
         CountingChannel invalid = new CountingChannel(invalidDirectory);
         expectIo(() -> HologramArchiveGeometryReader.inspectExplicitIndex(invalid, () -> true));
         SimpleAssert.eq(INDEX_END, invalid.readBytes, "bad directory rejected without reading body");
@@ -83,12 +89,25 @@ public final class HologramArchiveNamedImportRegression {
         byte[] page = new byte[4]; // center (0,0,0), first exact palette member
         byte[] palette = sha256().digest(
             "minecraft:stonebrick\nminecraft:quartz_block\nminecraft:glowstone\n".getBytes(StandardCharsets.US_ASCII));
-        return data.putInt(0x47545047).putInt(1).putLong(1).putInt(1).putInt(3).put(palette)
-            .putInt(0).putInt(0).putInt(0).putInt(1).putLong(INDEX_END).put(sha256().digest(page)).put(page).array();
+        return data.putInt(0x47545047)
+            .putInt(1)
+            .putLong(1)
+            .putInt(1)
+            .putInt(3)
+            .put(palette)
+            .putInt(0)
+            .putInt(0)
+            .putInt(0)
+            .putInt(1)
+            .putLong(INDEX_END)
+            .put(sha256().digest(page))
+            .put(page)
+            .array();
     }
 
     @FunctionalInterface
     private interface Opening {
+
         void run() throws IOException;
     }
 
@@ -129,7 +148,9 @@ public final class HologramArchiveNamedImportRegression {
             return count;
         }
 
-        public int write(ByteBuffer src) { throw new NonWritableChannelException(); }
+        public int write(ByteBuffer src) {
+            throw new NonWritableChannelException();
+        }
 
         public long position() throws IOException {
             requireOpen();
@@ -148,11 +169,17 @@ public final class HologramArchiveNamedImportRegression {
             return bytes.length;
         }
 
-        public SeekableByteChannel truncate(long size) { throw new NonWritableChannelException(); }
+        public SeekableByteChannel truncate(long size) {
+            throw new NonWritableChannelException();
+        }
 
-        public boolean isOpen() { return closes == 0; }
+        public boolean isOpen() {
+            return closes == 0;
+        }
 
-        public void close() { closes++; }
+        public void close() {
+            closes++;
+        }
 
         private void requireOpen() throws IOException {
             if (!isOpen()) throw new ClosedChannelException();

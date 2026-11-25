@@ -27,8 +27,8 @@ public final class HologramBusinessWirePolicyRegression {
         for (String op : new String[] { "choosePlacementPreset", "previewPreset", "editPreset", "placeCurrentBlueprint",
             "exportDraft", "saveBlueprint", "saveBlueprintAs", "saveBlueprintReplace", "requestFullSnapshot",
             "refreshPresetLibrary", "refreshMaterialQuote", "refreshMaterialChoices", "setDecorativeVoucher",
-            "configure", "scan", "lockVirtual", "rotateVirtual", "configurePlacementDeidentification",
-            "placeTextBox", "aePreviewOpen", "switchEditorWorkspace", "close", "start", "build" }) {
+            "configure", "scan", "lockVirtual", "rotateVirtual", "configurePlacementDeidentification", "placeTextBox",
+            "aePreviewOpen", "switchEditorWorkspace", "close", "start", "build" }) {
             for (Owner owner : Owner.values())
                 expect(Intent.BLOCK, HologramBusinessWirePolicy.action(op(op), owner), "legacy action " + op);
         }
@@ -57,7 +57,9 @@ public final class HologramBusinessWirePolicyRegression {
         NBTTagCompound transport = op("snapshotFlow");
         transport.setLong("snapshotFlowGeneration", 1);
         transport.setBoolean("ready", true);
-        expect(Intent.TRANSPORT_CONTROL, HologramBusinessWirePolicy.action(transport, Owner.NONE),
+        expect(
+            Intent.TRANSPORT_CONTROL,
+            HologramBusinessWirePolicy.action(transport, Owner.NONE),
             "transport capability is not business");
         transport.setIntArray("placementOperations", new int[] { 0, 1, 2 });
         expect(Intent.BLOCK, HologramBusinessWirePolicy.action(transport, Owner.NONE), "no control smuggling");
@@ -66,7 +68,9 @@ public final class HologramBusinessWirePolicyRegression {
         control.setString("session", ID);
         control.setLong("uiSequence", 2);
         expect(Intent.BLOCK, HologramBusinessWirePolicy.action(control, Owner.NONE), "unowned pause");
-        expect(Intent.CONSTRUCTION_CONTROL, HologramBusinessWirePolicy.action(control, Owner.ORDINARY_CONSTRUCTION),
+        expect(
+            Intent.CONSTRUCTION_CONTROL,
+            HologramBusinessWirePolicy.action(control, Owner.ORDINARY_CONSTRUCTION),
             "admitted ordinary execution can pause");
 
         NBTTagCompound order = op("orderMissingMaterials");
@@ -78,22 +82,30 @@ public final class HologramBusinessWirePolicyRegression {
         order.setString("op", "cancelMaterialOrder");
         order.setString("orderId", ID);
         expect(Intent.AE_CONTROL, HologramBusinessWirePolicy.action(order, Owner.AE_ORDER), "owned AE cancel");
-        expect(Intent.BLOCK, HologramBusinessWirePolicy.action(order, Owner.NATIVE_CONSTRUCTION),
+        expect(
+            Intent.BLOCK,
+            HologramBusinessWirePolicy.action(order, Owner.NATIVE_CONSTRUCTION),
             "native lease cannot cancel AE order");
     }
 
     private static void explicitLibraryTransferNeedsOriginAndOwner() {
         NBTTagCompound request = transfer("download");
         request.setString("id", PUBLIC_ID);
-        expect(Intent.BLOCK, HologramBusinessWirePolicy.libraryRequest(request, Owner.NONE, Origin.NETWORK_INGRESS),
+        expect(
+            Intent.BLOCK,
+            HologramBusinessWirePolicy.libraryRequest(request, Owner.NONE, Origin.NETWORK_INGRESS),
             "legacy browse, place and edit share this unmarked request");
         request.setString(HologramBusinessWirePolicy.DOWNLOAD_INTENT_KEY, HologramBusinessWirePolicy.PUBLIC_COPY);
-        expect(Intent.BLOCK, HologramBusinessWirePolicy.libraryRequest(request, Owner.NONE, Origin.NONE),
+        expect(
+            Intent.BLOCK,
+            HologramBusinessWirePolicy.libraryRequest(request, Owner.NONE, Origin.NONE),
             "a local packet field alone cannot claim a user click");
-        expect(Intent.LIBRARY_DOWNLOAD,
+        expect(
+            Intent.LIBRARY_DOWNLOAD,
             HologramBusinessWirePolicy.libraryRequest(request, Owner.NONE, Origin.EXPLICIT_LIBRARY_DOWNLOAD),
             "explicit public library copy can request the exact pair");
-        expect(Intent.LIBRARY_DOWNLOAD,
+        expect(
+            Intent.LIBRARY_DOWNLOAD,
             HologramBusinessWirePolicy.libraryRequest(request, Owner.NONE, Origin.NETWORK_INGRESS),
             "new explicit-copy protocol reaches authenticated server admission");
 
@@ -102,9 +114,12 @@ public final class HologramBusinessWirePolicyRegression {
         upload.setString("hash", HASH);
         upload.setInteger("total", 32768);
         upload.setInteger("artifactVersion", HologramBlueprintArtifact.VERSION);
-        expect(Intent.BLOCK, HologramBusinessWirePolicy.libraryRequest(upload, Owner.NONE, Origin.NONE),
+        expect(
+            Intent.BLOCK,
+            HologramBusinessWirePolicy.libraryRequest(upload, Owner.NONE, Origin.NONE),
             "a file payload cannot enter by automatic reuse");
-        expect(Intent.LIBRARY_UPLOAD,
+        expect(
+            Intent.LIBRARY_UPLOAD,
             HologramBusinessWirePolicy.libraryRequest(upload, Owner.NONE, Origin.EXPLICIT_LIBRARY_UPLOAD),
             "explicit public publication retains its real transfer");
 
@@ -112,19 +127,26 @@ public final class HologramBusinessWirePolicyRegression {
         chunk.setString("transfer", ID);
         chunk.setInteger("index", 0);
         chunk.setByteArray("data", new byte[] { 1 });
-        expect(Intent.BLOCK, HologramBusinessWirePolicy.libraryRequest(chunk, Owner.NONE, Origin.NETWORK_INGRESS),
+        expect(
+            Intent.BLOCK,
+            HologramBusinessWirePolicy.libraryRequest(chunk, Owner.NONE, Origin.NETWORK_INGRESS),
             "no orphan chunks");
-        expect(Intent.LIBRARY_CHUNK,
+        expect(
+            Intent.LIBRARY_CHUNK,
             HologramBusinessWirePolicy.libraryRequest(chunk, Owner.LIBRARY_UPLOAD, Origin.NETWORK_INGRESS),
             "an admitted library upload retains chunks");
         chunk.setString("op", "previewChunk");
-        expect(Intent.BLOCK, HologramBusinessWirePolicy.libraryRequest(chunk, Owner.LIBRARY_UPLOAD, Origin.NETWORK_INGRESS),
+        expect(
+            Intent.BLOCK,
+            HologramBusinessWirePolicy.libraryRequest(chunk, Owner.LIBRARY_UPLOAD, Origin.NETWORK_INGRESS),
             "preview writeback cannot reuse upload owner");
 
         for (String op : new String[] { "list", "configGet", "configSet", "upgradeLibrary", "delete", "exportDraft",
             "previewBegin", "privateBegin", "privateChunk", "quickBootstrap", "activate", "admission", "saveStatus" })
-            expect(Intent.BLOCK, HologramBusinessWirePolicy.libraryRequest(transfer(op), Owner.LIBRARY_UPLOAD,
-                Origin.NETWORK_INGRESS), "not an explicit file operation: " + op);
+            expect(
+                Intent.BLOCK,
+                HologramBusinessWirePolicy.libraryRequest(transfer(op), Owner.LIBRARY_UPLOAD, Origin.NETWORK_INGRESS),
+                "not an explicit file operation: " + op);
 
         NBTTagCompound header = transfer("downloadBegin");
         header.setBoolean("library", true);
@@ -139,16 +161,24 @@ public final class HologramBusinessWirePolicyRegression {
         header.setInteger("artifactVersion", HologramBlueprintArtifact.VERSION);
         header.setString("sourceHash", HASH);
         header.setLong("sourceRevision", 1);
-        expect(Intent.LIBRARY_REPLY, HologramBusinessWirePolicy.libraryReply(header, Owner.LIBRARY_DOWNLOAD),
+        expect(
+            Intent.LIBRARY_REPLY,
+            HologramBusinessWirePolicy.libraryReply(header, Owner.LIBRARY_DOWNLOAD),
             "the exact public pair may be downloaded");
-        expect(Intent.BLOCK, HologramBusinessWirePolicy.libraryReply(header, Owner.LIBRARY_UPLOAD),
+        expect(
+            Intent.BLOCK,
+            HologramBusinessWirePolicy.libraryReply(header, Owner.LIBRARY_UPLOAD),
             "upload cannot receive a full download");
         header.setString("purpose", "draft");
-        expect(Intent.BLOCK, HologramBusinessWirePolicy.libraryReply(header, Owner.LIBRARY_DOWNLOAD),
+        expect(
+            Intent.BLOCK,
+            HologramBusinessWirePolicy.libraryReply(header, Owner.LIBRARY_DOWNLOAD),
             "server save/export is not a library download");
         header.setString("purpose", "public");
         header.setBoolean("capturePreview", true);
-        expect(Intent.BLOCK, HologramBusinessWirePolicy.libraryReply(header, Owner.LIBRARY_DOWNLOAD),
+        expect(
+            Intent.BLOCK,
+            HologramBusinessWirePolicy.libraryReply(header, Owner.LIBRARY_DOWNLOAD),
             "relabelled authoring preview cannot reserve a download assembly");
     }
 
@@ -156,18 +186,26 @@ public final class HologramBusinessWirePolicyRegression {
         NBTTagCompound receipt = new NBTTagCompound();
         receipt.setString("placementRequestId", ID);
         receipt.setBoolean("placementRequestAccepted", true);
-        expect(Intent.CONSTRUCTION_STATUS, HologramBusinessWirePolicy.status(receipt, Owner.NATIVE_CONSTRUCTION),
+        expect(
+            Intent.CONSTRUCTION_STATUS,
+            HologramBusinessWirePolicy.status(receipt, Owner.NATIVE_CONSTRUCTION),
             "native action acknowledgment survives");
         receipt.setBoolean("nativeCompactStarted", true);
         receipt.setInteger("slot", 0);
         receipt.setString("toolId", ID);
-        expect(Intent.CONSTRUCTION_STATUS, HologramBusinessWirePolicy.status(receipt, Owner.NATIVE_CONSTRUCTION),
+        expect(
+            Intent.CONSTRUCTION_STATUS,
+            HologramBusinessWirePolicy.status(receipt, Owner.NATIVE_CONSTRUCTION),
             "owner-bound NativeCompactStart accepts with real held-slot correlation");
         expect(Intent.BLOCK, HologramBusinessWirePolicy.status(receipt, Owner.NONE), "unowned native acceptance");
-        expect(Intent.BLOCK, HologramBusinessWirePolicy.status(receipt, Owner.ORDINARY_CONSTRUCTION),
+        expect(
+            Intent.BLOCK,
+            HologramBusinessWirePolicy.status(receipt, Owner.ORDINARY_CONSTRUCTION),
             "native acceptance may not complete an ordinary stream");
         receipt.setTag("cells", new net.minecraft.nbt.NBTTagList());
-        expect(Intent.BLOCK, HologramBusinessWirePolicy.status(receipt, Owner.NATIVE_CONSTRUCTION),
+        expect(
+            Intent.BLOCK,
+            HologramBusinessWirePolicy.status(receipt, Owner.NATIVE_CONSTRUCTION),
             "construction cannot carry a full geometry view by adding a cell list");
 
         NBTTagCompound envelope = new NBTTagCompound(), progress = new NBTTagCompound();
@@ -178,16 +216,24 @@ public final class HologramBusinessWirePolicyRegression {
         progress.setString("phase", "placement.capture");
         progress.setLong("done", 800);
         progress.setLong("sequence", 3); // added by the real State transport
-        expect(Intent.CONSTRUCTION_STATUS, HologramBusinessWirePolicy.status(envelope, Owner.NATIVE_CONSTRUCTION),
+        expect(
+            Intent.CONSTRUCTION_STATUS,
+            HologramBusinessWirePolicy.status(envelope, Owner.NATIVE_CONSTRUCTION),
             "real native progress");
-        expect(Intent.BLOCK, HologramBusinessWirePolicy.status(envelope, Owner.ORDINARY_CONSTRUCTION),
+        expect(
+            Intent.BLOCK,
+            HologramBusinessWirePolicy.status(envelope, Owner.ORDINARY_CONSTRUCTION),
             "native progress does not attach to ordinary request");
         progress.setString("scope", "projectedJob");
         progress.setLong("total", 5000);
-        expect(Intent.CONSTRUCTION_STATUS, HologramBusinessWirePolicy.status(envelope, Owner.ORDINARY_CONSTRUCTION),
+        expect(
+            Intent.CONSTRUCTION_STATUS,
+            HologramBusinessWirePolicy.status(envelope, Owner.ORDINARY_CONSTRUCTION),
             "real ordinary progress counters");
         progress.setTag("geometry", new NBTTagCompound());
-        expect(Intent.BLOCK, HologramBusinessWirePolicy.status(envelope, Owner.ORDINARY_CONSTRUCTION),
+        expect(
+            Intent.BLOCK,
+            HologramBusinessWirePolicy.status(envelope, Owner.ORDINARY_CONSTRUCTION),
             "nested progress is not a side channel for geometry");
 
         // Mirrors AeCraftingOrders.Order.publish and Network.sendState, without starting an AE worker.
@@ -228,22 +274,30 @@ public final class HologramBusinessWirePolicyRegression {
         order.setLong("cpuTotal", 15);
         order.setLong("cpuDone", 3);
         orderProgress.setTag("materialOrder", order);
-        expect(Intent.AE_STATUS, HologramBusinessWirePolicy.status(envelope, Owner.AE_ORDER),
+        expect(
+            Intent.AE_STATUS,
+            HologramBusinessWirePolicy.status(envelope, Owner.AE_ORDER),
             "owned real AE progress can reach the existing UI");
         expect(Intent.BLOCK, HologramBusinessWirePolicy.status(envelope, Owner.NONE), "unowned AE progress");
         order.setLong("orderSequence", 4);
-        expect(Intent.BLOCK, HologramBusinessWirePolicy.status(envelope, Owner.AE_ORDER),
+        expect(
+            Intent.BLOCK,
+            HologramBusinessWirePolicy.status(envelope, Owner.AE_ORDER),
             "mixed old and new AE order receipts are not legitimate progress");
         order.setLong("orderSequence", 3);
         order.setTag("materialQuote", new NBTTagCompound());
-        expect(Intent.BLOCK, HologramBusinessWirePolicy.status(envelope, Owner.AE_ORDER),
+        expect(
+            Intent.BLOCK,
+            HologramBusinessWirePolicy.status(envelope, Owner.AE_ORDER),
             "a material quote is not AE order progress");
         order.removeTag("materialQuote");
         order.setBoolean("active", false);
         order.setString("state", "complete");
         orderProgress.setBoolean("complete", true);
         orderProgress.setString("outcome", "completed");
-        expect(Intent.AE_STATUS, HologramBusinessWirePolicy.status(envelope, Owner.AE_ORDER),
+        expect(
+            Intent.AE_STATUS,
+            HologramBusinessWirePolicy.status(envelope, Owner.AE_ORDER),
             "owned AE terminal can retire the existing progress indicator");
     }
 

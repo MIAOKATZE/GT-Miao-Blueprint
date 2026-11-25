@@ -12,11 +12,6 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
-import com.google.gson.JsonObject;
-import com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintCodecRegression;
-import com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintEdits;
-import com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintMigration;
-import com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintPairStore;
 import net.minecraft.block.Block;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.player.EntityPlayerMP;
@@ -33,10 +28,19 @@ import net.minecraft.world.storage.MapStorage;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.event.world.BlockEvent;
 
+import com.google.gson.JsonObject;
+import com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintCodecRegression;
+import com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintEdits;
+import com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintMigration;
+import com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintPairStore;
+
 import cpw.mods.fml.common.eventhandler.Event;
 import cpw.mods.fml.common.eventhandler.EventBus;
 
-/** Existing codecs, registry factories, authorization, source selection and ledger; only live transport and world storage are absent. */
+/**
+ * Existing codecs, registry factories, authorization, source selection and ledger; only live transport and world
+ * storage are absent.
+ */
 final class HologramSavedPlacementAdapterRegression {
 
     private static final String ID = "local_41e99281-89fa-41fa-b61a-d7892cb3cffd";
@@ -54,23 +58,29 @@ final class HologramSavedPlacementAdapterRegression {
 
     static void unboundMaterial() throws Exception {
         HologramNativeSavedWorldRegression.withConnectedWorld(0, connected -> {
-            EntityPlayerMP player=connected.nativeActor();
-            player.inventory.mainInventory[1]=new ItemStack(Items.sign, 1);
-            player.inventory.mainInventory[2]=new ItemStack(Items.stick, 2);
+            EntityPlayerMP player = connected.nativeActor();
+            player.inventory.mainInventory[1] = new ItemStack(Items.sign, 1);
+            player.inventory.mainInventory[2] = new ItemStack(Items.stick, 2);
             connected.arm();
-            NBTTagCompound tag=new NBTTagCompound();
-            tag.setString("id","Sign");
+            NBTTagCompound tag = new NBTTagCompound();
+            tag.setString("id", "Sign");
             NBTTagCompound oldStack = new ItemStack(Items.stick).writeToNBT(new NBTTagCompound());
-            tag.setTag("historicalNested",oldStack);
-            JsonObject row=cell("minecraft:standing_sign","minecraft:sign");
-            row.addProperty("metadata",4);
-            row.addProperty("tileNbt",java.util.Base64.getEncoder().encodeToString(HologramSnapshotCodec.compress(tag)));
-            var result=place(connected,player,row,true);
-            check(result.phase==HologramNativeLocalConstruction.Phase.FAILED && result.placed==0
-                && result.detail.contains("unbound numeric ItemStack ID")
-                && connected.at(X,Y,Z,Blocks.air) && stock(player,Items.sign)==1 && stock(player,Items.stick)==2
-                && !connected.pendingPayment(), "real saved entry refuses unbound occupied ID without world write or charge: "
-                + describe(result));
+            tag.setTag("historicalNested", oldStack);
+            JsonObject row = cell("minecraft:standing_sign", "minecraft:sign");
+            row.addProperty("metadata", 4);
+            row.addProperty(
+                "tileNbt",
+                java.util.Base64.getEncoder()
+                    .encodeToString(HologramSnapshotCodec.compress(tag)));
+            var result = place(connected, player, row, true);
+            check(
+                result.phase == HologramNativeLocalConstruction.Phase.FAILED && result.placed == 0
+                    && result.detail.contains("unbound numeric ItemStack ID")
+                    && connected.at(X, Y, Z, Blocks.air)
+                    && stock(player, Items.sign) == 1
+                    && stock(player, Items.stick) == 2
+                    && !connected.pendingPayment(),
+                "real saved entry refuses unbound occupied ID without world write or charge: " + describe(result));
         });
     }
 
@@ -97,6 +107,7 @@ final class HologramSavedPlacementAdapterRegression {
             long offset = unsafe.staticFieldOffset(eventBus);
             EventBus prior = MinecraftForge.EVENT_BUS;
             if (veto) unsafe.putObjectVolatile(base, offset, new EventBus() {
+
                 @Override
                 public boolean post(Event event) {
                     if (event instanceof BlockEvent.PlaceEvent place && place.player == player) {
@@ -110,22 +121,35 @@ final class HologramSavedPlacementAdapterRegression {
                 var result = place(connected, player, sign);
                 if (!veto) {
                     var actual = world.getTileEntity(X, Y, Z);
-                    check(result.phase == HologramNativeLocalConstruction.Phase.COMPLETE && result.placed == 1
-                        && result.satisfied == 0 && world.getBlock(X, Y, Z) == Blocks.standing_sign
-                        && world.getBlockMetadata(X, Y, Z) == 4 && actual instanceof TileEntitySign
-                        && SIGN_TEXT.equals(((TileEntitySign) actual).signText[0])
-                        && "second row".equals(((TileEntitySign) actual).signText[1])
-                        && actual.getWorldObj() == world && actual.xCoord == X && actual.yCoord == Y && actual.zCoord == Z
-                        && stock(player, Items.sign) == 0 && !connected.pendingPayment(),
-                        "native built-in sign restores exact variant/typed tile text and debits one sign: " + describe(result));
+                    check(
+                        result.phase == HologramNativeLocalConstruction.Phase.COMPLETE && result.placed == 1
+                            && result.satisfied == 0
+                            && world.getBlock(X, Y, Z) == Blocks.standing_sign
+                            && world.getBlockMetadata(X, Y, Z) == 4
+                            && actual instanceof TileEntitySign
+                            && SIGN_TEXT.equals(((TileEntitySign) actual).signText[0])
+                            && "second row".equals(((TileEntitySign) actual).signText[1])
+                            && actual.getWorldObj() == world
+                            && actual.xCoord == X
+                            && actual.yCoord == Y
+                            && actual.zCoord == Z
+                            && stock(player, Items.sign) == 0
+                            && !connected.pendingPayment(),
+                        "native built-in sign restores exact variant/typed tile text and debits one sign: "
+                            + describe(result));
                 } else {
-                    check(result.phase == HologramNativeLocalConstruction.Phase.FAILED && result.placed == 0
-                        && world.vetoed > 0 && world.getBlock(X, Y, Z) == Blocks.air
-                        && world.getTileEntity(X, Y, Z) == null && stock(player, Items.sign) == 1
-                        && !connected.pendingPayment(),
-                        "Forge-rejected native tile restores air, removes the tile, refunds exact bill: " + describe(result));
+                    check(
+                        result.phase == HologramNativeLocalConstruction.Phase.FAILED && result.placed == 0
+                            && world.vetoed > 0
+                            && world.getBlock(X, Y, Z) == Blocks.air
+                            && world.getTileEntity(X, Y, Z) == null
+                            && stock(player, Items.sign) == 1
+                            && !connected.pendingPayment(),
+                        "Forge-rejected native tile restores air, removes the tile, refunds exact bill: "
+                            + describe(result));
                 }
-                System.out.println("[GTMB-NATIVE-SAVED-ADAPTER] sign " + (veto ? "veto+rollback" : "world+text+debit") + " PASS");
+                System.out.println(
+                    "[GTMB-NATIVE-SAVED-ADAPTER] sign " + (veto ? "veto+rollback" : "world+text+debit") + " PASS");
             } finally {
                 if (veto) unsafe.putObjectVolatile(base, offset, prior);
             }
@@ -133,59 +157,113 @@ final class HologramSavedPlacementAdapterRegression {
     }
 
     static void realZtonesUsersSource(Path mixed) throws Exception {
-        byte[] original=Files.readAllBytes(mixed);
-        check(HologramBlueprintArtifact.hash(original).equals("26cdd671942dbc5b1bfb4f15a84f892403d07900a0a789116d0f11bb2fca9108"),
+        byte[] original = Files.readAllBytes(mixed);
+        check(
+            HologramBlueprintArtifact.hash(original)
+                .equals("26cdd671942dbc5b1bfb4f15a84f892403d07900a0a789116d0f11bb2fca9108"),
             "exact authorized mixed blueprint, not generated sample");
-        Path converted=Files.createTempFile("gtmb-mixed-ztones-",".gtnb");
+        Path converted = Files.createTempFile("gtmb-mixed-ztones-", ".gtnb");
         try {
-            Files.write(converted,NativeBlueprintMigration.convert(original).bytes);
-            try(var definition=com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintDefinition.open(converted)){
-                check(definition.cells()==123369,"original full file decoded");
-                HologramNativeSavedWorldRegression.withConnectedWorld(0,connected->{
-                    var draft=new HologramNativeBlueprintDraft(new NativeBlueprintEdits(definition));
-                    EntityPlayerMP player=connected.nativeActor();
-                    // Original class / original ItemDecoBlocks2 factory / original canonical names, registered into FML.
+            Files.write(converted, NativeBlueprintMigration.convert(original).bytes);
+            try (var definition = com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintDefinition.open(converted)) {
+                check(definition.cells() == 123369, "original full file decoded");
+                HologramNativeSavedWorldRegression.withConnectedWorld(0, connected -> {
+                    var draft = new HologramNativeBlueprintDraft(new NativeBlueprintEdits(definition));
+                    EntityPlayerMP player = connected.nativeActor();
+                    // Original class / original ItemDecoBlocks2 factory / original canonical names, registered into
+                    // FML.
                     // No Ztones registry stand-ins, and no claim that this loads its complete FML lifecycle.
-                    boolean extra=Boolean.getBoolean("gtmb.mixedExtraUtilities");
-                    String[] names={"Ztones:tile.laveBlock","Ztones:tile.glaxx","ExtraUtilities:greenscreen"};
-                    String[] classes={"com.riciJak.Ztones.block.MBlocks.BlockLave","com.riciJak.Ztones.block.VBlocks.BlockGlaxx","com.rwtema.extrautils.block.BlockGreenScreen"};
-                    int covered=0;
-                    int variants=0;
-                    for(int k=0;k<(extra?3:2);k++){
-                        Block block=(Block)Class.forName(classes[k]).getConstructor().newInstance();
-                        Item item=(Item)Class.forName(k==2?"com.rwtema.extrautils.item.ItemBlockMetadata":"com.riciJak.Ztones.item.block.ItemDecoBlocks2").getConstructor(Block.class).newInstance(block);
-                        check(k==2?"tile.extrautils:greenscreen".equals(block.getUnlocalizedName()):names[k].equals("Ztones:"+block.getUnlocalizedName()),"canonical name from original constructor");
-                        int free=3500;while(free<4095&&(Block.getBlockById(free)!=null&&Block.getBlockById(free)!=Blocks.air||Item.getItemById(free)!=null))free++;
-                        check(free<4095,"dedicated registry slot");
-                        var cls=cpw.mods.fml.common.registry.GameData.class;
-                        var main=cls.getDeclaredMethod("getMain");var b=cls.getDeclaredMethod("registerBlock",Block.class,String.class,int.class);
-                        var i=cls.getDeclaredMethod("registerItem",Item.class,String.class,int.class);
-                        main.setAccessible(true);b.setAccessible(true);i.setAccessible(true);
-                        b.invoke(main.invoke(null),block,names[k],free);i.invoke(main.invoke(null),item,names[k],free);
-                        int paid=0;
-                        for(var e:draft.space().counts().entrySet()) {
-                            var entry=draft.placementShape(e.getKey(),draft.space().wrapper(e.getKey()));
-                            if(!names[k].equals(entry.block))continue;
-                            check(entry.block()==block&&Item.getItemFromBlock(block)==item,"real registry binding");
-                            var effective=draft.executionCell(e.getKey(),draft.space().wrapper(e.getKey()));
-                            check(effective.tileNbt.isEmpty()&&effective.itemNbt.isEmpty()&&effective.facing==-1,"Ztones descriptor has no ignored state");
-                            var row=cell(effective.block,effective.item);row.addProperty("damage",effective.damage);row.addProperty("metadata",effective.metadata);
-                            TestWorld world=TestWorld.create(unsafe());player.worldObj=world;
-                            HologramWorkspace.publishActionEndpoint(player,false);player.inventory.mainInventory[1]=new ItemStack(item,2,effective.damage);
-                            var result=place(connected,player,row);
-                            check(result.phase==HologramNativeLocalConstruction.Phase.COMPLETE&&result.placed==1&&world.getBlock(X,Y,Z)==block
-                                &&world.getBlockMetadata(X,Y,Z)==effective.metadata&&stock(player,item)==1,
-                                "original registered block placed and paid: "+names[k]+" metadata "+effective.metadata+" "+describe(result));
-                            paid+=e.getValue();variants++;
+                    boolean extra = Boolean.getBoolean("gtmb.mixedExtraUtilities");
+                    String[] names = { "Ztones:tile.laveBlock", "Ztones:tile.glaxx", "ExtraUtilities:greenscreen" };
+                    String[] classes = { "com.riciJak.Ztones.block.MBlocks.BlockLave",
+                        "com.riciJak.Ztones.block.VBlocks.BlockGlaxx", "com.rwtema.extrautils.block.BlockGreenScreen" };
+                    int covered = 0;
+                    int variants = 0;
+                    for (int k = 0; k < (extra ? 3 : 2); k++) {
+                        Block block = (Block) Class.forName(classes[k])
+                            .getConstructor()
+                            .newInstance();
+                        Item item = (Item) Class
+                            .forName(
+                                k == 2 ? "com.rwtema.extrautils.item.ItemBlockMetadata"
+                                    : "com.riciJak.Ztones.item.block.ItemDecoBlocks2")
+                            .getConstructor(Block.class)
+                            .newInstance(block);
+                        check(
+                            k == 2 ? "tile.extrautils:greenscreen".equals(block.getUnlocalizedName())
+                                : names[k].equals("Ztones:" + block.getUnlocalizedName()),
+                            "canonical name from original constructor");
+                        int free = 3500;
+                        while (free < 4095
+                            && (Block.getBlockById(free) != null && Block.getBlockById(free) != Blocks.air
+                                || Item.getItemById(free) != null))
+                            free++;
+                        check(free < 4095, "dedicated registry slot");
+                        var cls = cpw.mods.fml.common.registry.GameData.class;
+                        var main = cls.getDeclaredMethod("getMain");
+                        var b = cls.getDeclaredMethod("registerBlock", Block.class, String.class, int.class);
+                        var i = cls.getDeclaredMethod("registerItem", Item.class, String.class, int.class);
+                        main.setAccessible(true);
+                        b.setAccessible(true);
+                        i.setAccessible(true);
+                        b.invoke(main.invoke(null), block, names[k], free);
+                        i.invoke(main.invoke(null), item, names[k], free);
+                        int paid = 0;
+                        for (var e : draft.space()
+                            .counts()
+                            .entrySet()) {
+                            var entry = draft.placementShape(
+                                e.getKey(),
+                                draft.space()
+                                    .wrapper(e.getKey()));
+                            if (!names[k].equals(entry.block)) continue;
+                            check(
+                                entry.block() == block && Item.getItemFromBlock(block) == item,
+                                "real registry binding");
+                            var effective = draft.executionCell(
+                                e.getKey(),
+                                draft.space()
+                                    .wrapper(e.getKey()));
+                            check(
+                                effective.tileNbt.isEmpty() && effective.itemNbt.isEmpty() && effective.facing == -1,
+                                "Ztones descriptor has no ignored state");
+                            var row = cell(effective.block, effective.item);
+                            row.addProperty("damage", effective.damage);
+                            row.addProperty("metadata", effective.metadata);
+                            TestWorld world = TestWorld.create(unsafe());
+                            player.worldObj = world;
+                            HologramWorkspace.publishActionEndpoint(player, false);
+                            player.inventory.mainInventory[1] = new ItemStack(item, 2, effective.damage);
+                            var result = place(connected, player, row);
+                            check(
+                                result.phase == HologramNativeLocalConstruction.Phase.COMPLETE && result.placed == 1
+                                    && world.getBlock(X, Y, Z) == block
+                                    && world.getBlockMetadata(X, Y, Z) == effective.metadata
+                                    && stock(player, item) == 1,
+                                "original registered block placed and paid: " + names[k]
+                                    + " metadata "
+                                    + effective.metadata
+                                    + " "
+                                    + describe(result));
+                            paid += e.getValue();
+                            variants++;
                         }
-                        check(paid==(k==0?112043:k==1?6190:2147),"actual mixed source descriptor total "+names[k]+": "+paid);
-                        covered+=paid;
+                        check(
+                            paid == (k == 0 ? 112043 : k == 1 ? 6190 : 2147),
+                            "actual mixed source descriptor total " + names[k] + ": " + paid);
+                        covered += paid;
                     }
-                    check(variants==(extra?4:2),"sample every represented literal metadata");
-                    System.out.println("GTMB_MIXED_ZTONES 123369 original cells decoded; "+covered+" represented by "+variants+" actual source variants, tested one write and subtype debit for each; not full mixed-world placement");
+                    check(variants == (extra ? 4 : 2), "sample every represented literal metadata");
+                    System.out.println(
+                        "GTMB_MIXED_ZTONES 123369 original cells decoded; " + covered
+                            + " represented by "
+                            + variants
+                            + " actual source variants, tested one write and subtype debit for each; not full mixed-world placement");
                 });
             }
-        }finally{Files.deleteIfExists(converted);}
+        } finally {
+            Files.deleteIfExists(converted);
+        }
     }
 
     private static void wireless(boolean allowed) throws Exception {
@@ -199,14 +277,20 @@ final class HologramSavedPlacementAdapterRegression {
                 HologramMaterials.write(player.getHeldItem(), sources);
                 connected.arm();
                 var result = place(connected, player, cell("minecraft:stone", "minecraft:stone"));
-                check(result.phase == (allowed ? HologramNativeLocalConstruction.Phase.COMPLETE
+                check(
+                    result.phase
+                        == (allowed ? HologramNativeLocalConstruction.Phase.COMPLETE
                             : HologramNativeLocalConstruction.Phase.FAILED)
-                    && result.placed == (allowed ? 1 : 0)
-                    && me.stock == (allowed ? 2 : 3) && me.modulates == (allowed ? 1 : 0)
-                    && connected.at(X, Y, Z, allowed ? Blocks.stone : Blocks.air)
-                    && !connected.pendingPayment(), "saved-native wireless terminal permission and actual ME MODULATE: "
-                        + describe(result) + " stock=" + me.stock + " modulates=" + me.modulates);
-                System.out.println("[GTMB-NATIVE-SAVED-ADAPTER] wireless " + (allowed ? "world+MODULATE" : "denied+no-debit") + " PASS");
+                        && result.placed == (allowed ? 1 : 0)
+                        && me.stock == (allowed ? 2 : 3)
+                        && me.modulates == (allowed ? 1 : 0)
+                        && connected.at(X, Y, Z, allowed ? Blocks.stone : Blocks.air)
+                        && !connected.pendingPayment(),
+                    "saved-native wireless terminal permission and actual ME MODULATE: " + describe(
+                        result) + " stock=" + me.stock + " modulates=" + me.modulates);
+                System.out.println(
+                    "[GTMB-NATIVE-SAVED-ADAPTER] wireless " + (allowed ? "world+MODULATE" : "denied+no-debit")
+                        + " PASS");
             }
         });
     }
@@ -228,25 +312,48 @@ final class HologramSavedPlacementAdapterRegression {
             header.addProperty("id", ID);
             header.addProperty("name", "Saved adapter fixture");
             byte[] bytes = NativeBlueprintMigration.author(header, new JsonObject(), 1, i -> cell, () -> true).bytes;
-            var stage = HologramNativeBlueprintStorage.prepareAuthoredSave(root, ID, bytes,
-                HologramBlueprintArtifact.hash(bytes), NativeBlueprintCodecRegression.png(), () -> true);
+            var stage = HologramNativeBlueprintStorage.prepareAuthoredSave(
+                root,
+                ID,
+                bytes,
+                HologramBlueprintArtifact.hash(bytes),
+                NativeBlueprintCodecRegression.png(),
+                () -> true);
             var receipt = HologramNativeBlueprintStorage.activate(root, stage, stage.revision, () -> true);
             try (var source = NativeBlueprintPairStore.open(root, ID)) {
                 var draft = new HologramNativeBlueprintDraft(new NativeBlueprintEdits(source));
                 if (expectMissingPreview) {
-                    var at = draft.space().atOrdinal(0);
-                    var resolved = draft.resolve(at.descriptor, draft.space().wrapper(at.descriptor));
-                    check(resolved.row.getBoolean("missingBlock") && !resolved.row.hasKey("previewTile")
-                        && !resolved.row.hasKey("previewItemTag"), "invalid payload displays as missing, not the current item");
+                    var at = draft.space()
+                        .atOrdinal(0);
+                    var resolved = draft.resolve(
+                        at.descriptor,
+                        draft.space()
+                            .wrapper(at.descriptor));
+                    check(
+                        resolved.row.getBoolean("missingBlock") && !resolved.row.hasKey("previewTile")
+                            && !resolved.row.hasKey("previewItemTag"),
+                        "invalid payload displays as missing, not the current item");
                 }
                 String toolId = new UUID(4, 389).toString();
-                if (!player.getHeldItem().hasTagCompound()) player.getHeldItem().setTagCompound(new NBTTagCompound());
-                player.getHeldItem().getTagCompound().setString(HologramSessionKeys.TOOL_ID, toolId);
+                if (!player.getHeldItem()
+                    .hasTagCompound())
+                    player.getHeldItem()
+                        .setTagCompound(new NBTTagCompound());
+                player.getHeldItem()
+                    .getTagCompound()
+                    .setString(HologramSessionKeys.TOOL_ID, toolId);
                 var attempt = new HologramNativeLocalConstruction.Attempt(1);
                 var plan = HologramNativeLocalConstruction.prepare(draft, receipt, () -> true);
-                HologramNativeLocalConstruction.submit(attempt, plan, () -> player, toolId, player.dimension,
-                    new int[] { X, Y, Z }, new int[0],
-                    HologramProjectedMainPolicy.settingsKey(HologramMaterials.read(player.getHeldItem())), false);
+                HologramNativeLocalConstruction.submit(
+                    attempt,
+                    plan,
+                    () -> player,
+                    toolId,
+                    player.dimension,
+                    new int[] { X, Y, Z },
+                    new int[0],
+                    HologramProjectedMainPolicy.settingsKey(HologramMaterials.read(player.getHeldItem())),
+                    false);
                 connected.stepNative();
                 return attempt.result();
             }
@@ -296,6 +403,7 @@ final class HologramSavedPlacementAdapterRegression {
     private static final class TestWorld extends HologramServiceEditRegression.ReadOnlyWorld {
 
         private static final class State {
+
             final Block block;
             final int metadata;
 
@@ -304,6 +412,7 @@ final class HologramSavedPlacementAdapterRegression {
                 this.metadata = metadata;
             }
         }
+
         private Map<String, State> placed;
         int vetoed;
 
@@ -347,10 +456,13 @@ final class HologramSavedPlacementAdapterRegression {
         }
 
         @Override
-        public boolean canPlaceEntityOnSide(Block block, int x, int y, int z, boolean replace,
-            int side, Entity entity, ItemStack stack) {
-            return block != null && block != Blocks.air && blockExists(x, y, z) && isAirBlock(x, y, z)
-                && getBlock(x, y - 1, z) == Blocks.stone && getTileEntity(x, y, z) == null;
+        public boolean canPlaceEntityOnSide(Block block, int x, int y, int z, boolean replace, int side, Entity entity,
+            ItemStack stack) {
+            return block != null && block != Blocks.air
+                && blockExists(x, y, z)
+                && isAirBlock(x, y, z)
+                && getBlock(x, y - 1, z) == Blocks.stone
+                && getTileEntity(x, y, z) == null;
         }
 
         @Override

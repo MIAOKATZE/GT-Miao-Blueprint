@@ -55,8 +55,11 @@ final class HologramCutTransformNativeSmoke {
         NBTTagCompound preview = action("preview", id);
         pose.write(preview);
         NBTTagCompound display = HologramCutService.execute(player, preview);
-        require(!display.getBoolean("success") && "preview_metadata_only".equals(display.getString("code"))
-            && !display.hasKey("preview") && !display.hasKey("entries"), "legacy wire pose preview is not provided");
+        require(
+            !display.getBoolean("success") && "preview_metadata_only".equals(display.getString("code"))
+                && !display.hasKey("preview")
+                && !display.hasKey("entries"),
+            "legacy wire pose preview is not provided");
         NBTTagCompound original = new NBTTagCompound();
         NBTTagList retained = before.getTagList("entries", 10);
         for (int i = 0; i < retained.tagCount(); i++) {

@@ -18,8 +18,8 @@ final class HologramInstalledControllerShape {
 
     private static final String TURBINE = "com.miaokatze.gtsr.common.machine.MTEMegaSteamTurbineArray";
     private static final int TURBINE_MAX_STACKS = 4;
-    private static final String TURBINE_LENGTH = "lenght";  // GTSR's native channel spelling.
-    private static final int STRUCTURE_INCOMPLETE = 64;     // GT's synchronized multiblock error bit.
+    private static final String TURBINE_LENGTH = "lenght"; // GTSR's native channel spelling.
+    private static final int STRUCTURE_INCOMPLETE = 64; // GT's synchronized multiblock error bit.
 
     private final IStructureElement<?>[] declaration;
     private final HologramStructureCursor cursor;
@@ -54,13 +54,16 @@ final class HologramInstalledControllerShape {
 
     static int installedGroups(int nativeState, int errorDisplay) {
         int groups = 1 + ((nativeState & 0x70) >>> 4);
-        return (errorDisplay & STRUCTURE_INCOMPLETE) == 0
-            && (nativeState & 15) > 0 && groups <= TURBINE_MAX_STACKS + 1 ? groups : 0;
+        return (errorDisplay & STRUCTURE_INCOMPLETE) == 0 && (nativeState & 15) > 0 && groups <= TURBINE_MAX_STACKS + 1
+            ? groups
+            : 0;
     }
 
     private static int installedGroups(Object context) {
-        if (!(context instanceof MTEEnhancedMultiBlockBase<?> machine)
-            || !TURBINE.equals(context.getClass().getName())) return 0;
+        if (!(context instanceof MTEEnhancedMultiBlockBase<?>machine) || !TURBINE.equals(
+            context.getClass()
+                .getName()))
+            return 0;
         // GTSR's onValueUpdate synchronizes casing and axial stack count, not the tool's selected length.
         return installedGroups(machine.getUpdateData() & 0xff, machine.getErrorDisplayID());
     }
@@ -69,7 +72,9 @@ final class HologramInstalledControllerShape {
         return installedGroups(context) == groups;
     }
 
-    int groups() { return groups; }
+    int groups() {
+        return groups;
+    }
 
     boolean hasNext() {
         return cursor.done() < cursor.total();

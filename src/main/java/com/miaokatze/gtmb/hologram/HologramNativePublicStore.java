@@ -41,7 +41,8 @@ final class HologramNativePublicStore {
 
     void initialize() throws IOException {
         Files.createDirectories(directory);
-        HologramNativePublicArtifact.need(Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS),
+        HologramNativePublicArtifact.need(
+            Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS),
             "Public native repository is not a real directory");
         try (var pending = Files.newDirectoryStream(directory, "incoming-*.tmp")) {
             for (Path path : pending) Files.deleteIfExists(path);
@@ -50,13 +51,20 @@ final class HologramNativePublicStore {
 
     Slot prepare(String id, UUID owner, String uploader, long revision, byte[] artifact) throws IOException {
         slotPath(id);
-        HologramNativePublicArtifact.need(owner != null && uploader != null && uploader.length() <= 64
-            && revision > 0 && revision < Long.MAX_VALUE, "Invalid native public owner or version");
+        HologramNativePublicArtifact.need(
+            owner != null && uploader != null && uploader.length() <= 64 && revision > 0 && revision < Long.MAX_VALUE,
+            "Invalid native public owner or version");
         var pair = HologramNativePublicArtifact.decode(artifact);
         Path temporary = Files.createTempFile(directory, "incoming-audit-", ".tmp");
         try {
             var label = HologramNativePublicArtifact.audit(pair, temporary);
-            return new Slot(id, owner, uploader, revision, HologramBlueprintArtifact.hash(artifact), label,
+            return new Slot(
+                id,
+                owner,
+                uploader,
+                revision,
+                HologramBlueprintArtifact.hash(artifact),
+                label,
                 artifact.length);
         } finally {
             Files.deleteIfExists(temporary);
@@ -91,8 +99,8 @@ final class HologramNativePublicStore {
             }
             current.check();
             if (prior == null) {
-                HologramNativePublicArtifact.need(!Files.exists(target, LinkOption.NOFOLLOW_LINKS),
-                    "Public slot was already occupied");
+                HologramNativePublicArtifact
+                    .need(!Files.exists(target, LinkOption.NOFOLLOW_LINKS), "Public slot was already occupied");
             } else {
                 HologramNativePublicArtifact.need(prior.equals(load(target)), "Public revision changed on disk");
             }
@@ -110,7 +118,10 @@ final class HologramNativePublicStore {
         }
     }
 
-    interface Check { void check() throws IOException; }
+    interface Check {
+
+        void check() throws IOException;
+    }
 
     void delete(Slot expected) throws IOException {
         Path path = slotPath(expected.id);
@@ -129,8 +140,10 @@ final class HologramNativePublicStore {
     }
 
     private Slot read(Path path, Slot expected, byte[][] retained) throws IOException {
-        HologramNativePublicArtifact.need(Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)
-            && Files.size(path) <= HologramLibraryProtocol.MAX_BYTES + 4096L, "Public native disk budget");
+        HologramNativePublicArtifact.need(
+            Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)
+                && Files.size(path) <= HologramLibraryProtocol.MAX_BYTES + 4096L,
+            "Public native disk budget");
         MessageDigest recordDigest = HologramLibraryProtocol.digest();
         try (DataInputStream in = new DataInputStream(
             new DigestInputStream(Files.newInputStream(path, LinkOption.NOFOLLOW_LINKS), recordDigest))) {
@@ -142,20 +155,40 @@ final class HologramNativePublicStore {
             String digest = in.readUTF();
             String name = in.readUTF(), author = in.readUTF(), version = in.readUTF();
             int cells = in.readInt(), structures = in.readInt(), size = in.readInt();
-            HologramNativePublicArtifact.need(slotPath(id).equals(path) && uploader.length() <= 64
-                && revision > 0 && revision < Long.MAX_VALUE && digest.matches("[a-f0-9]{64}")
-                && name.length() <= 128 && name.codePoints().anyMatch(cp -> !Character.isWhitespace(cp)) && author.length() <= 64 && version.length() <= 64
-                && cells >= 0 && cells <= 4_000_000 && structures >= 0 && size > 0
-                && size <= HologramLibraryProtocol.MAX_BYTES, "Invalid public native record");
-            Slot slot = new Slot(id, owner, uploader, revision, digest,
-                new HologramNativePublicArtifact.Description(name, author, version, cells, structures), size);
-            HologramNativePublicArtifact.need(expected == null || expected.equals(slot), "Public revision changed on disk");
+            HologramNativePublicArtifact.need(
+                slotPath(id).equals(path) && uploader.length() <= 64
+                    && revision > 0
+                    && revision < Long.MAX_VALUE
+                    && digest.matches("[a-f0-9]{64}")
+                    && name.length() <= 128
+                    && name.codePoints()
+                        .anyMatch(cp -> !Character.isWhitespace(cp))
+                    && author.length() <= 64
+                    && version.length() <= 64
+                    && cells >= 0
+                    && cells <= 4_000_000
+                    && structures >= 0
+                    && size > 0
+                    && size <= HologramLibraryProtocol.MAX_BYTES,
+                "Invalid public native record");
+            Slot slot = new Slot(
+                id,
+                owner,
+                uploader,
+                revision,
+                digest,
+                new HologramNativePublicArtifact.Description(name, author, version, cells, structures),
+                size);
+            HologramNativePublicArtifact
+                .need(expected == null || expected.equals(slot), "Public revision changed on disk");
             byte[] body = new byte[size];
             in.readFully(body);
             byte[] calculated = recordDigest.digest(), storedSeal = new byte[calculated.length];
             in.readFully(storedSeal);
-            HologramNativePublicArtifact.need(in.read() == -1 && MessageDigest.isEqual(calculated, storedSeal)
-                && digest.equals(HologramBlueprintArtifact.hash(body)), "Public native record content changed");
+            HologramNativePublicArtifact.need(
+                in.read() == -1 && MessageDigest.isEqual(calculated, storedSeal)
+                    && digest.equals(HologramBlueprintArtifact.hash(body)),
+                "Public native record content changed");
             var pair = HologramNativePublicArtifact.decode(body);
             com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintPng.verify(pair.cover(), pair.revision());
             if (retained != null) retained[0] = body;

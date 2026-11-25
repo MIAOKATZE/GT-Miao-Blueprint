@@ -207,9 +207,16 @@ final class HologramEditorLibraryPane {
                 .childPadding(3)
                 .child(website)
                 .child(manage)
-                .child(localIcon(HologramEditorControlIds.LIBRARY + 8, "settings",
-                    () -> projector("library.upgrade"), ui.library::nativeCanUpgrade, ui.library::convertAllLocal,
-                    ui.library::nativeUpgradeHelp).name("library_upgrade_all").expanded().height(20)));
+                .child(
+                    localIcon(
+                        HologramEditorControlIds.LIBRARY + 8,
+                        "settings",
+                        () -> projector("library.upgrade"),
+                        ui.library::nativeCanUpgrade,
+                        ui.library::convertAllLocal,
+                        ui.library::nativeUpgradeHelp).name("library_upgrade_all")
+                            .expanded()
+                            .height(20)));
         ui.shell.registerTarget("library.website", website);
         ui.shell.registerTarget("library.manage", manage);
         page.child(
@@ -414,12 +421,9 @@ final class HologramEditorLibraryPane {
                 () -> projector("library.delete_help")).expanded()
                     .height(18));
         maintenance.child(
-            action(
-                226,
-                () -> projector("library.upgrade"),
-                ui.library::nativeCanUpgrade,
-                ui.library::nativeUpgradeHelp).expanded()
-                    .height(18));
+            action(226, () -> projector("library.upgrade"), ui.library::nativeCanUpgrade, ui.library::nativeUpgradeHelp)
+                .expanded()
+                .height(18));
         list.child(maintenance);
         list.child(
             action(
@@ -546,8 +550,10 @@ final class HologramEditorLibraryPane {
             int ribbon = voucher ? HologramVoucherRibbon.PIXELS : 0;
             int textWidth = Math.max(10, width - 10 - ribbon);
             IKey.str(rowTitle(slot, textWidth))
-                .color(available.getAsBoolean() && !ui.library.conversionRequired(row(slot))
-                    ? HologramEditorNativeTheme.TEXT : HologramEditorNativeTheme.MUTED)
+                .color(
+                    available.getAsBoolean() && !ui.library.conversionRequired(row(slot))
+                        ? HologramEditorNativeTheme.TEXT
+                        : HologramEditorNativeTheme.MUTED)
                 .shadow(false)
                 .alignment(Alignment.CenterLeft)
                 .draw(context, x + 5, y + 2, textWidth, 24, theme);
@@ -664,9 +670,10 @@ final class HologramEditorLibraryPane {
 
     private String rowTooltip(int slot) {
         NBTTagCompound row = row(slot);
-        return ui.library.libraryRowTitle(row)
-            + (!row.getString("nativeCounterpart").isEmpty() ? "\n" + projector("library.historical_native_help")
-                : ui.library.conversionRequired(row) ? "\n" + projector("library.convert_required") : "") + "\n"
+        return ui.library.libraryRowTitle(row) + (!row.getString("nativeCounterpart")
+            .isEmpty() ? "\n" + projector("library.historical_native_help")
+                : ui.library.conversionRequired(row) ? "\n" + projector("library.convert_required") : "")
+            + "\n"
             + projector("library.row_counts", row.getInteger("cells"), row.getInteger("structures"))
             + " · "
             + ui.library.blueprintSource(row)

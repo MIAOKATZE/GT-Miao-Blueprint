@@ -20,8 +20,9 @@ public final class HologramCutProtocol {
     private static final String PASSIVE_LIST = "cutMetadataOnly";
 
     private static boolean untargetedList(NBTTagCompound request) {
-        return "list".equals(request.getString("action")) && (!request.hasKey("id")
-            || request.hasKey("id", 8) && request.getString("id").isEmpty());
+        return "list".equals(request.getString("action"))
+            && (!request.hasKey("id") || request.hasKey("id", 8) && request.getString("id")
+                .isEmpty());
     }
 
     /** A legacy exact-key parser rejects this before its old LIST can run storage recovery. */
@@ -37,7 +38,6 @@ public final class HologramCutProtocol {
         return PASSIVE_LIST.equals(key);
     }
 
-
     public static UUID boundsProof(NBTTagCompound message) {
         if (!message.hasKey(BOUNDS_PROTOCOL, 3) || message.getInteger(BOUNDS_PROTOCOL) != BOUNDS_VERSION
             || !message.hasKey(BOUNDS_TOKEN, 8)) return null;
@@ -45,7 +45,8 @@ public final class HologramCutProtocol {
         if (token.length() != 36) return null;
         try {
             UUID id = UUID.fromString(token);
-            return id.toString().equals(token) ? id : null;
+            return id.toString()
+                .equals(token) ? id : null;
         } catch (IllegalArgumentException invalid) {
             return null;
         }
@@ -59,6 +60,7 @@ public final class HologramCutProtocol {
     static boolean boundsKey(String key) {
         return BOUNDS_PROTOCOL.equals(key) || BOUNDS_TOKEN.equals(key);
     }
+
     public static final int MAX_CELLS = 262144;
     public static final int MAX_SIDE = 256;
     // Includes a bounded (128-box) constructive area snapshot, never client block data.

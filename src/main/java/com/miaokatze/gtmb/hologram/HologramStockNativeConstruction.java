@@ -24,8 +24,10 @@ import gregtech.api.metatileentity.BaseMetaTileEntity;
 import gregtech.api.metatileentity.implementations.MTEHatchCokeOven;
 import gregtech.common.tileentities.machines.multi.MTECokeOven;
 
-/** Server-owned fixed stock native driver. The authenticated entry must supply explicit prefix consent and the
- * exact saved hatch choice. This is not an implicit fallback for the old whole-structure confirmation. */
+/**
+ * Server-owned fixed stock native driver. The authenticated entry must supply explicit prefix consent and the
+ * exact saved hatch choice. This is not an implicit fallback for the old whole-structure confirmation.
+ */
 final class HologramStockNativeConstruction {
 
     @FunctionalInterface
@@ -41,7 +43,10 @@ final class HologramStockNativeConstruction {
     }
 
     enum State {
-        ACTIVE, COMPLETE, STOPPED, RECOVERY_PENDING
+        ACTIVE,
+        COMPLETE,
+        STOPPED,
+        RECOVERY_PENDING
     }
 
     /** One selected installed #237, not a block list or client-supplied material stack. */
@@ -93,17 +98,17 @@ final class HologramStockNativeConstruction {
         }
 
         @Override
-        public boolean blockNotLoaded(IStructureElement<Object> element, World world, int x, int y, int z, int a,
-            int b, int c) {
+        public boolean blockNotLoaded(IStructureElement<Object> element, World world, int x, int y, int z, int a, int b,
+            int c) {
             locate(x, y, z, false);
             return true;
         }
     };
 
-    private HologramStockNativeConstruction(HologramWorkspace.ActionEndpoint endpoint, HologramConstructionTaskGate gate,
-        HologramConstructionTaskGate.Lease lease, HologramSession session, HologramStockCokeOvenProfile profile,
-        ItemStack projector, ItemStack casing, BaseMetaTileEntity hatch, MTEHatchCokeOven hatchMachine,
-        HatchChoice choice) {
+    private HologramStockNativeConstruction(HologramWorkspace.ActionEndpoint endpoint,
+        HologramConstructionTaskGate gate, HologramConstructionTaskGate.Lease lease, HologramSession session,
+        HologramStockCokeOvenProfile profile, ItemStack projector, ItemStack casing, BaseMetaTileEntity hatch,
+        MTEHatchCokeOven hatchMachine, HatchChoice choice) {
         this.endpoint = endpoint;
         this.gate = gate;
         this.lease = lease;
@@ -131,28 +136,29 @@ final class HologramStockNativeConstruction {
         settings = session.materialSettings;
         originalInventory = session.player.inventory;
         originalSlots = originalInventory.mainInventory;
-        sourceKey=HologramProjectedMainPolicy.settingsKey(settings);
+        sourceKey = HologramProjectedMainPolicy.settingsKey(settings);
         priority = settings.priority;
         recoveryDestination = settings.recoveryDestination;
         epoch = session.editorWorkspaceEpoch;
         plan = session.planRevision;
         trigger = HologramSessionPolicy.trigger(session);
         cursor = new HologramStructureCursor(
-            profile.nativeElements(), HologramStockCokeOvenProfile.A, HologramStockCokeOvenProfile.B,
+            profile.nativeElements(),
+            HologramStockCokeOvenProfile.A,
+            HologramStockCokeOvenProfile.B,
             HologramStockCokeOvenProfile.C);
     }
 
     static HologramStockNativeConstruction begin(HologramWorkspace.ActionEndpoint endpoint, HologramSession session,
-        HologramConstructionTaskGate.Request request, String source, int confirmedMain,
-        Consent consent, HatchChoice choice) throws IOException {
-        if (consent != Consent.PLACE_SAFE_CELLS_WITH_AVAILABLE_STOCK)
-            throw refusal("没有当前原生逐格补建的明确部分施工确认。");
+        HologramConstructionTaskGate.Request request, String source, int confirmedMain, Consent consent,
+        HatchChoice choice) throws IOException {
+        if (consent != Consent.PLACE_SAFE_CELLS_WITH_AVAILABLE_STOCK) throw refusal("没有当前原生逐格补建的明确部分施工确认。");
         HologramConstructionTaskGate gate = HologramWorkspace.constructionGate(endpoint);
-        if (gate == null || session == null || endpoint.player != session.player || request == null
-            || request.kind != HologramConstructionTaskGate.Kind.INCREMENTAL_NATIVE)
-            throw refusal("没有当前原生逐格补建的明确确认。");
-        if (!HologramStockCokeOvenProfile.SOURCE_ID.equals(source))
-            throw refusal("当前控制器没有已审核的原生逐格补建配置。");
+        if (gate == null || session == null
+            || endpoint.player != session.player
+            || request == null
+            || request.kind != HologramConstructionTaskGate.Kind.INCREMENTAL_NATIVE) throw refusal("没有当前原生逐格补建的明确确认。");
+        if (!HologramStockCokeOvenProfile.SOURCE_ID.equals(source)) throw refusal("当前控制器没有已审核的原生逐格补建配置。");
         boolean busy = HologramConstructionAuthority.competingWork(endpoint.player);
         boolean recovery = HologramConstructionAuthority.hasKnownRecovery(endpoint.player);
         var admission = gate.acquire(endpoint.constructionScope, request, busy, recovery);
@@ -160,7 +166,13 @@ final class HologramStockNativeConstruction {
             throw refusal("本次原生施工未获得独占许可：" + admission.decision);
         boolean started = false;
         try {
-            var job = openOwned(endpoint, gate, admission.lease, session, confirmedMain, choice,
+            var job = openOwned(
+                endpoint,
+                gate,
+                admission.lease,
+                session,
+                confirmedMain,
+                choice,
                 HologramStockNativeEntry.Funding.EXPLICIT_AVAILABLE_STOCK);
             started = true;
             return job;
@@ -173,19 +185,26 @@ final class HologramStockNativeConstruction {
     static HologramStockNativeConstruction openOwned(HologramWorkspace.ActionEndpoint endpoint,
         HologramConstructionTaskGate gate, HologramConstructionTaskGate.Lease lease, HologramSession session,
         int confirmedMain, HatchChoice choice, HologramStockNativeEntry.Funding funding) throws IOException {
-        if (lease == null || session == null || funding == null || gate != HologramWorkspace.constructionGate(endpoint)
-            || lease.scope != endpoint.constructionScope || session.player != endpoint.player
+        if (lease == null || session == null
+            || funding == null
+            || gate != HologramWorkspace.constructionGate(endpoint)
+            || lease.scope != endpoint.constructionScope
+            || session.player != endpoint.player
             || lease.request.kind != HologramConstructionTaskGate.Kind.INCREMENTAL_NATIVE
             || gate.query(lease.scope, lease.request).phase != HologramConstructionTaskGate.Phase.ACTIVE)
             throw refusal("没有当前原生逐格补建许可。");
-        if (!ready(session) || session.main != confirmedMain || choice == null
-            || choice.id != HologramStockCokeOvenProfile.HATCH || choice.tier != HologramStockCokeOvenProfile.HATCH_TIER
-            || choice.facing < 0 || choice.facing >= 6)
-            throw refusal("当前工作台或施工设置不支持逐格补建；请确认原背包和已安装的 ULV 焦炉仓室。");
+        if (!ready(session) || session.main != confirmedMain
+            || choice == null
+            || choice.id != HologramStockCokeOvenProfile.HATCH
+            || choice.tier != HologramStockCokeOvenProfile.HATCH_TIER
+            || choice.facing < 0
+            || choice.facing >= 6) throw refusal("当前工作台或施工设置不支持逐格补建；请确认原背包和已安装的 ULV 焦炉仓室。");
         var profile = HologramStockCokeOvenProfile.inspectRegistered();
         var tool = HologramSessionPolicy.currentTool(session);
-        if (tool == null || tool.getTagCompound().hasKey(HologramSessionKeys.DRAFT)
-            || profile == null || !profile.acceptsSettings(confirmedMain, session.channels)
+        if (tool == null || tool.getTagCompound()
+            .hasKey(HologramSessionKeys.DRAFT)
+            || profile == null
+            || !profile.acceptsSettings(confirmedMain, session.channels)
             || !profile.acceptsController((BaseMetaTileEntity) session.target)
             || !profile.shellAt(session.machine.getExtendedFacing(), choice.dx, choice.dy, choice.dz))
             throw refusal("原生声明、投影仪设置或所选焦炉仓室不再适用。");
@@ -199,24 +218,37 @@ final class HologramStockNativeConstruction {
             throw refusal("未找到确切的已安装焦炉仓室或原生焦炉砖。");
         var installed = (BaseMetaTileEntity) candidate;
         var meta = installed.getMetaTileEntity();
-        if (meta == null || meta.getClass() != MTEHatchCokeOven.class)
-            throw refusal("所选位置不是已安装的焦炉仓室。");
-        var job = new HologramStockNativeConstruction(endpoint, gate, lease, session, profile, tool,
-            material, installed, (MTEHatchCokeOven) meta, choice);
-        if (!job.current(true))
-            throw refusal("所选焦炉仓室、朝向、结构声明或投影仪已更改。");
-        if (funding == HologramStockNativeEntry.Funding.REQUIRE_FULL_BOUND && !hasMaximumStock(session.player, session.slot, material,session.materialSettings))
+        if (meta == null || meta.getClass() != MTEHatchCokeOven.class) throw refusal("所选位置不是已安装的焦炉仓室。");
+        var job = new HologramStockNativeConstruction(
+            endpoint,
+            gate,
+            lease,
+            session,
+            profile,
+            tool,
+            material,
+            installed,
+            (MTEHatchCokeOven) meta,
+            choice);
+        if (!job.current(true)) throw refusal("所选焦炉仓室、朝向、结构声明或投影仪已更改。");
+        if (funding == HologramStockNativeEntry.Funding.REQUIRE_FULL_BOUND
+            && !hasMaximumStock(session.player, session.slot, material, session.materialSettings))
             throw refusal("所选材料来源须备齐 24 块焦炉砖；未开始施工。");
         return job;
     }
 
-    static boolean hasMaximumStock(net.minecraft.entity.player.EntityPlayerMP player,int slot,ItemStack casing,
+    static boolean hasMaximumStock(net.minecraft.entity.player.EntityPlayerMP player, int slot, ItemStack casing,
         HologramMaterials.Settings sources) {
-        if(!HologramProjectedMainPolicy.eligibleSelected(sources))return false;
-        if(!sources.containers && !sources.me)return hasMaximumStock(player,slot,casing);
-        if (player==null || player.inventory==null || player.inventory.currentItem!=slot || casing==null || casing.hasTagCompound())return false;
-        var inventory=player.inventory;
-        return new HologramMaterials.Context(player,sources,slot).count(casing,24)>=24 && player.inventory==inventory && inventory.currentItem==slot;
+        if (!HologramProjectedMainPolicy.eligibleSelected(sources)) return false;
+        if (!sources.containers && !sources.me) return hasMaximumStock(player, slot, casing);
+        if (player == null || player.inventory == null
+            || player.inventory.currentItem != slot
+            || casing == null
+            || casing.hasTagCompound()) return false;
+        var inventory = player.inventory;
+        return new HologramMaterials.Context(player, sources, slot).count(casing, 24) >= 24
+            && player.inventory == inventory
+            && inventory.currentItem == slot;
     }
 
     /** At most 25 shell rows, less the exact installed hatch proved by begin. No world or quote scan. */
@@ -228,7 +260,9 @@ final class HologramStockNativeConstruction {
         int need = 24;
         for (int slot = 0; slot < slots.length; slot++) {
             ItemStack stack = slots[slot];
-            if (slot == protectedSlot || stack == null || stack.stackSize <= 0 || stack.hasTagCompound()
+            if (slot == protectedSlot || stack == null
+                || stack.stackSize <= 0
+                || stack.hasTagCompound()
                 || !HologramValues.same(stack, casing)) continue;
             need -= Math.min(need, stack.stackSize);
             if (need == 0) return player.inventory == inventory && inventory.mainInventory == slots;
@@ -241,12 +275,28 @@ final class HologramStockNativeConstruction {
     }
 
     private static boolean ready(HologramSession s) {
-        return s.target != null && s.target.getClass() == BaseMetaTileEntity.class && s.machine != null
-            && s.machine.getClass() == MTECokeOven.class && s.mode == 0 && s.scope == 0 && !s.virtual && s.job == 0
-            && !s.cancelled && !s.hatchDowngrade && s.areaStructureId.isEmpty() && s.capture == null
-            && s.planTargets.isEmpty() && s.pins.isEmpty() && s.coordinatePins.isEmpty() && s.facingPins.isEmpty()
-            && s.manualPositions.isEmpty() && s.nativeOperationInputs == null && s.pendingAssetBudget.isEmpty()
-            && s.cellAssetBudgets.isEmpty() && !s.jobVoucherRequested && HologramProjectedMainPolicy.eligibleSelected(s.materialSettings) && !s.player.capabilities.isCreativeMode
+        return s.target != null && s.target.getClass() == BaseMetaTileEntity.class
+            && s.machine != null
+            && s.machine.getClass() == MTECokeOven.class
+            && s.mode == 0
+            && s.scope == 0
+            && !s.virtual
+            && s.job == 0
+            && !s.cancelled
+            && !s.hatchDowngrade
+            && s.areaStructureId.isEmpty()
+            && s.capture == null
+            && s.planTargets.isEmpty()
+            && s.pins.isEmpty()
+            && s.coordinatePins.isEmpty()
+            && s.facingPins.isEmpty()
+            && s.manualPositions.isEmpty()
+            && s.nativeOperationInputs == null
+            && s.pendingAssetBudget.isEmpty()
+            && s.cellAssetBudgets.isEmpty()
+            && !s.jobVoucherRequested
+            && HologramProjectedMainPolicy.eligibleSelected(s.materialSettings)
+            && !s.player.capabilities.isCreativeMode
             && HologramWorkspace.find(s.player.getUniqueID()) == s
             && !HologramConstructionAuthority.competingWork(s.player)
             && !StructureLibAPI.isInstrumentEnabled()
@@ -258,31 +308,59 @@ final class HologramStockNativeConstruction {
         var player = session.player;
         var inventory = player.inventory;
         return state == State.ACTIVE && HologramWorkspace.currentActionEndpoint(endpoint)
-            && HologramWorkspace.find(endpoint.actor) == session && !player.isDead && player.capabilities.allowEdit
+            && HologramWorkspace.find(endpoint.actor) == session
+            && !player.isDead
+            && player.capabilities.allowEdit
             && withinReach()
-            && !player.capabilities.isCreativeMode && session.editorWorkspaceEpoch == epoch && session.planRevision == plan
-            && session.capture == scratch && session.job == 0 && !session.cancelled && !session.virtual
-            && session.x == ax && session.y == ay && session.z == az && session.side == side
-            && session.mode == 0 && session.scope == 0
-            && session.target == controller && session.machine == machine && !machine.mMachine
+            && !player.capabilities.isCreativeMode
+            && session.editorWorkspaceEpoch == epoch
+            && session.planRevision == plan
+            && session.capture == scratch
+            && session.job == 0
+            && !session.cancelled
+            && !session.virtual
+            && session.x == ax
+            && session.y == ay
+            && session.z == az
+            && session.side == side
+            && session.mode == 0
+            && session.scope == 0
+            && session.target == controller
+            && session.machine == machine
+            && !machine.mMachine
             && stockLinksCurrent()
-            && session.main == main && session.mainExplicit == mainExplicit
-            && session.channels.hasNoTags() && session.noHatches == noHatches && !session.hatchDowngrade
-            && session.materialSettings == settings && sourceKey>=0 && sourceKey==HologramProjectedMainPolicy.settingsKey(settings)
-            && settings.priority == priority && settings.recoveryDestination == recoveryDestination
-            && inventory == originalInventory && inventory.mainInventory == originalSlots
-            && session.slot == inventory.currentItem && session.slot >= 0 && session.slot < originalSlots.length
+            && session.main == main
+            && session.mainExplicit == mainExplicit
+            && session.channels.hasNoTags()
+            && session.noHatches == noHatches
+            && !session.hatchDowngrade
+            && session.materialSettings == settings
+            && sourceKey >= 0
+            && sourceKey == HologramProjectedMainPolicy.settingsKey(settings)
+            && settings.priority == priority
+            && settings.recoveryDestination == recoveryDestination
+            && inventory == originalInventory
+            && inventory.mainInventory == originalSlots
+            && session.slot == inventory.currentItem
+            && session.slot >= 0
+            && session.slot < originalSlots.length
             && inventory.mainInventory[session.slot] == projector
             && ItemStack.areItemStacksEqual(pinnedTool, projector)
-            && session.coordinatePins.isEmpty() && session.facingPins.isEmpty() && session.manualPositions.isEmpty()
-            && session.nativeOperationInputs == null && session.pendingAssetBudget.isEmpty() && session.cellAssetBudgets.isEmpty()
-            && !session.jobVoucherRequested && !StructureLibAPI.isInstrumentEnabled()
+            && session.coordinatePins.isEmpty()
+            && session.facingPins.isEmpty()
+            && session.manualPositions.isEmpty()
+            && session.nativeOperationInputs == null
+            && session.pendingAssetBudget.isEmpty()
+            && session.cellAssetBudgets.isEmpty()
+            && !session.jobVoucherRequested
+            && !StructureLibAPI.isInstrumentEnabled()
             && profile.declarationCurrent();
     }
 
     private boolean current(boolean checkJournal) {
         if (!bound(null) || gate.query(lease.scope, lease.request).phase != HologramConstructionTaskGate.Phase.ACTIVE
-            || !ready(session) || !HologramSessionPolicy.valid(session)
+            || !ready(session)
+            || !HologramSessionPolicy.valid(session)
             || checkJournal && HologramConstructionAuthority.hasKnownRecovery(endpoint.player)) return false;
         if (!liveStockCurrent()) return false;
         return bound(null) && gate.query(lease.scope, lease.request).phase == HologramConstructionTaskGate.Phase.ACTIVE
@@ -299,26 +377,40 @@ final class HologramStockNativeConstruction {
 
     private boolean stockLinksCurrent() {
         // Exact stock classes: native getters here are read-only fields or cached meta validity checks.
-        return !controller.isInvalid() && !hatch.isInvalid() && controller.getWorldObj() == endpoint.world
-            && hatch.getWorldObj() == endpoint.world && controller.xCoord == ax && controller.yCoord == ay
-            && controller.zCoord == az && hatch.xCoord == hx && hatch.yCoord == hy && hatch.zCoord == hz
+        return !controller.isInvalid() && !hatch.isInvalid()
+            && controller.getWorldObj() == endpoint.world
+            && hatch.getWorldObj() == endpoint.world
+            && controller.xCoord == ax
+            && controller.yCoord == ay
+            && controller.zCoord == az
+            && hatch.xCoord == hx
+            && hatch.yCoord == hy
+            && hatch.zCoord == hz
             && controller.getMetaTileID() == HologramStockCokeOvenProfile.CONTROLLER
             && hatch.getMetaTileID() == HologramStockCokeOvenProfile.HATCH
-            && controller.getMetaTileEntity() == machine && machine.getBaseMetaTileEntity() == controller
-            && hatch.getMetaTileEntity() == hatchMachine && hatchMachine.getBaseMetaTileEntity() == hatch
-            && session.facing == facing.ordinal() && machine.getExtendedFacing() == facing
+            && controller.getMetaTileEntity() == machine
+            && machine.getBaseMetaTileEntity() == controller
+            && hatch.getMetaTileEntity() == hatchMachine
+            && hatchMachine.getBaseMetaTileEntity() == hatch
+            && session.facing == facing.ordinal()
+            && machine.getExtendedFacing() == facing
             && hatchMachine.mTier == HologramStockCokeOvenProfile.HATCH_TIER
-            && hatch.getFrontFacing() != null && hatch.getFrontFacing().ordinal() == hatchFacing;
+            && hatch.getFrontFacing() != null
+            && hatch.getFrontFacing()
+                .ordinal() == hatchFacing;
     }
 
-    /** Read the original physical cells, not only cached native objects. Forge can replace either base while
-     * the old tile remains valid in memory. A probe never loads a missing chunk, and touches only two positions. */
+    /**
+     * Read the original physical cells, not only cached native objects. Forge can replace either base while
+     * the old tile remains valid in memory. A probe never loads a missing chunk, and touches only two positions.
+     */
     private boolean liveStockCurrent() {
         World world = endpoint.world;
         return world.blockExists(ax, ay, az) && world.blockExists(hx, hy, hz)
             && world.getBlock(ax, ay, az) == GregTechAPI.sBlockMachines
             && world.getBlock(hx, hy, hz) == GregTechAPI.sBlockMachines
-            && world.getTileEntity(ax, ay, az) == controller && world.getTileEntity(hx, hy, hz) == hatch
+            && world.getTileEntity(ax, ay, az) == controller
+            && world.getTileEntity(hx, hy, hz) == hatch
             && stockLinksCurrent();
     }
 
@@ -340,9 +432,9 @@ final class HologramStockNativeConstruction {
                     int entry = cursor.done();
                     var element = profile.nativeElements()[entry];
                     position = false;
-                    if (!bound(null) || !cursor.consumePinned(
-                        endpoint.world, facing, ax, ay, az, receiver, entry, element) || !bound(null))
-                        return stop("原生结构声明已改变。");
+                    if (!bound(null)
+                        || !cursor.consumePinned(endpoint.world, facing, ax, ay, az, receiver, entry, element)
+                        || !bound(null)) return stop("原生结构声明已改变。");
                     if (!position) continue;
                     if (!loaded || !HologramWorldFlow.worldPosition(x, y, z, endpoint.world.getHeight()))
                         return stop("原生结构所需区块未加载。");
@@ -391,9 +483,13 @@ final class HologramStockNativeConstruction {
         }
         boolean selected = x == hx && y == hy && z == hz;
         var status = profile.classify(
-            activeElement, existing, world.getBlockMetadata(x, y, z), tile,
+            activeElement,
+            existing,
+            world.getBlockMetadata(x, y, z),
+            tile,
             selected ? HologramStockCokeOvenProfile.HATCH : -1,
-            selected ? HologramStockCokeOvenProfile.HATCH_TIER : -1, selected ? hatchFacing : -1);
+            selected ? HologramStockCokeOvenProfile.HATCH_TIER : -1,
+            selected ? hatchFacing : -1);
         if (status == HologramStockCokeOvenProfile.Shell.MATCHED_CASING
             || status == HologramStockCokeOvenProfile.Shell.MATCHED_HATCH) return advanceCell();
         if (status != HologramStockCokeOvenProfile.Shell.READY_CASING) {
@@ -434,14 +530,18 @@ final class HologramStockNativeConstruction {
             session.planTargets.add(casing);
             java.util.function.BooleanSupplier authority = () -> gate.transactionCurrent(permit) && bound(scratch)
                 && profile.nativeElements()[activeEntry] == activeElement
-                && session.pins.get(0) == casing && session.planTargets.size() == 1
-                && session.planTargets.get(0) == casing && gate.transactionCurrent(permit);
-            boolean wrote = HologramWorldTransactions.operateScoped(session, cell, 0, authority,
-                () -> liveStockCurrent() && authority.getAsBoolean());
+                && session.pins.get(0) == casing
+                && session.planTargets.size() == 1
+                && session.planTargets.get(0) == casing
+                && gate.transactionCurrent(permit);
+            boolean wrote = HologramWorldTransactions
+                .operateScoped(session, cell, 0, authority, () -> liveStockCurrent() && authority.getAsBoolean());
             if (session.job == 4 || HologramConstructionJournal.pending(endpoint.player)) return false;
             boolean committed = wrote && "placed".equals(cell.status);
-            settled = gate.settle(permit, committed ? HologramConstructionTaskGate.Settlement.COMMITTED
-                : HologramConstructionTaskGate.Settlement.ROLLED_BACK);
+            settled = gate.settle(
+                permit,
+                committed ? HologramConstructionTaskGate.Settlement.COMMITTED
+                    : HologramConstructionTaskGate.Settlement.ROLLED_BACK);
             if (!settled) return false;
             if (committed) {
                 placed++;
@@ -454,7 +554,8 @@ final class HologramStockNativeConstruction {
             if (session.capture == scratch) {
                 session.capture = null;
                 if (session.pins.get(0) == casing) session.pins.remove(0);
-                if (session.planTargets.size() == 1 && session.planTargets.get(0) == casing) session.planTargets.clear();
+                if (session.planTargets.size() == 1 && session.planTargets.get(0) == casing)
+                    session.planTargets.clear();
             }
             if (!settled) {
                 gate.settle(permit, HologramConstructionTaskGate.Settlement.RECOVERY_PENDING);
@@ -473,8 +574,7 @@ final class HologramStockNativeConstruction {
 
     private State finish() {
         if (!current(false)) return stop("原生补建的所有者、配置、仓室或现场变更。");
-        if (!gate.finish(lease, HologramConstructionTaskGate.End.COMPLETE))
-            return stop("施工许可已撤销，未确认完成。");
+        if (!gate.finish(lease, HologramConstructionTaskGate.End.COMPLETE)) return stop("施工许可已撤销，未确认完成。");
         state = State.COMPLETE;
         return state;
     }

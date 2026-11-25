@@ -50,6 +50,7 @@ public final class HologramSourceRegistryFixtureTransformer implements IClassTra
         }
         throw new AssertionError("Native source registry fixture could not isolate optional block definitions");
     }
+
     // AEStack's unrelated craft-pattern rendering icon reads the detached block/item definitions.
     private static byte[] withoutPatternIcon(byte[] bytes) {
         ClassNode type = new ClassNode();
@@ -58,10 +59,11 @@ public final class HologramSourceRegistryFixtureTransformer implements IClassTra
             if (!"<clinit>".equals(method.name)) continue;
             AbstractInsnNode api = null;
             for (AbstractInsnNode insn = method.instructions.getFirst(); insn != null; insn = insn.getNext()) {
-                if (insn instanceof org.objectweb.asm.tree.MethodInsnNode call
-                    && "appeng/api/AEApi".equals(call.owner) && "instance".equals(call.name)) api = insn;
+                if (insn instanceof org.objectweb.asm.tree.MethodInsnNode call && "appeng/api/AEApi".equals(call.owner)
+                    && "instance".equals(call.name)) api = insn;
                 if (!(insn instanceof FieldInsnNode field) || field.getOpcode() != Opcodes.PUTSTATIC
-                    || !"PATTERN".equals(field.name) || api == null) continue;
+                    || !"PATTERN".equals(field.name)
+                    || api == null) continue;
                 for (AbstractInsnNode cursor = api; cursor != insn;) {
                     AbstractInsnNode next = cursor.getNext();
                     method.instructions.remove(cursor);

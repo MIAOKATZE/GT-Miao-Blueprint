@@ -71,8 +71,10 @@ public final class HologramStockEbfProfileRegression {
 
     @FunctionalInterface
     interface ConstructionCheck {
-        void run(sun.misc.Unsafe unsafe, HologramStockEbfConstructionRegression.RawWorld world, BaseMetaTileEntity controller,
-            ExtendedFacing facing, List<Installed> installed) throws java.io.IOException, ReflectiveOperationException;
+
+        void run(sun.misc.Unsafe unsafe, HologramStockEbfConstructionRegression.RawWorld world,
+            BaseMetaTileEntity controller, ExtendedFacing facing, List<Installed> installed)
+            throws java.io.IOException, ReflectiveOperationException;
     }
 
     static void run() {
@@ -85,7 +87,10 @@ public final class HologramStockEbfProfileRegression {
         // Forge's effective side uses the actual owner-thread name, not the side of the bootstrap logger.
         thread.setName("Server thread");
         try {
-            SimpleAssert.eq(Side.SERVER, FMLCommonHandler.instance().getEffectiveSide(),
+            SimpleAssert.eq(
+                Side.SERVER,
+                FMLCommonHandler.instance()
+                    .getEffectiveSide(),
                 "standalone EBF is on Forge's effective server side before initializing GregTech");
             runOnServerThread(check);
         } finally {
@@ -121,7 +126,11 @@ public final class HologramStockEbfProfileRegression {
             var access = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
             access.setAccessible(true);
             var unsafe = (sun.misc.Unsafe) access.get(null);
-            GregTechAPI.sBlockCasings1 = registered(unsafe, savedCasing, BlockCasings1.class, "gtmb_test:ebf_real_casing");
+            GregTechAPI.sBlockCasings1 = registered(
+                unsafe,
+                savedCasing,
+                BlockCasings1.class,
+                "gtmb_test:ebf_real_casing");
             GregTechAPI.sBlockCasings5 = registered(unsafe, savedCoil, BlockCasings5.class, "gtmb_test:ebf_real_coil");
             if (savedMachines == null) GregTechAPI.sBlockMachines = Blocks.iron_block;
             var machine = new MTEElectricBlastFurnace("gtmb_stock_ebf_offline");
@@ -155,9 +164,12 @@ public final class HologramStockEbfProfileRegression {
                 return;
             }
             var profile = HologramStockEbfProfile.inspectRegistered();
-            SimpleAssert.that(profile != null && HologramStockEbfProfile.CONTROLLER == 1000,
+            SimpleAssert.that(
+                profile != null && HologramStockEbfProfile.CONTROLLER == 1000,
                 "actual stock EBF static declaration, not a synthetic shape");
-            SimpleAssert.eq(0, HologramStockEbfProfile.coilMetadata(1, new NBTTagCompound()),
+            SimpleAssert.eq(
+                0,
+                HologramStockEbfProfile.coilMetadata(1, new NBTTagCompound()),
                 "default master signal resolves stock Cupronickel metadata");
             var kanthal = new NBTTagCompound();
             kanthal.setInteger("coil", 2);
@@ -167,65 +179,86 @@ public final class HologramStockEbfProfileRegression {
             SimpleAssert.eq(9, HologramStockEbfProfile.coilMetadata(1, channels), "LuV HSSS is meta 9, not 5");
             var edited = (NBTTagCompound) channels.copy();
             edited.setInteger("gt_hatch", 3);
-            SimpleAssert.eq(-1, HologramStockEbfProfile.coilMetadata(1, edited), "never discard edited hatch selection");
+            SimpleAssert
+                .eq(-1, HologramStockEbfProfile.coilMetadata(1, edited), "never discard edited hatch selection");
 
             var firstCoil = at(facing, -1, -2, 0);
             world.blocks.put(firstCoil, new BlockState(GregTechAPI.sBlockCasings5, 9));
             long before = world.loadReads;
             var qualified = profile.qualify(world, controller, facing, 1, channels, selections);
-            SimpleAssert.that(qualified != null && qualified.coilMeta() == 9
-                && qualified.linksCurrent() && world.loadReads - before == 28,
+            SimpleAssert.that(
+                qualified != null && qualified.coilMeta() == 9
+                    && qualified.linksCurrent()
+                    && world.loadReads - before == 28,
                 "real rotated role pins plus 16 coil checks, no whole shell/world capture");
-            SimpleAssert.that(Block.getBlockFromItem(qualified.component(Part.TOP).getItem()) == GregTechAPI.sBlockCasings1
-                && qualified.component(Part.TOP).getItemDamage() == 11
-                && qualified.component(Part.COIL).getItem() == Item.getItemFromBlock(GregTechAPI.sBlockCasings5)
-                && qualified.component(Part.MUFFLER) == null && qualified.component(Part.AIR) == null,
+            SimpleAssert.that(
+                Block.getBlockFromItem(
+                    qualified.component(Part.TOP)
+                        .getItem())
+                    == GregTechAPI.sBlockCasings1
+                    && qualified.component(Part.TOP)
+                        .getItemDamage() == 11
+                    && qualified.component(Part.COIL)
+                        .getItem() == Item.getItemFromBlock(GregTechAPI.sBlockCasings5)
+                    && qualified.component(Part.MUFFLER) == null
+                    && qualified.component(Part.AIR) == null,
                 "qualified two-material proof contains no material for air or installed hatches");
             world.blocks.put(firstCoil, new BlockState(GregTechAPI.sBlockCasings5, 1));
-            SimpleAssert.that(profile.qualify(world, controller, facing, 1, channels, selections) == null,
+            SimpleAssert.that(
+                profile.qualify(world, controller, facing, 1, channels, selections) == null,
                 "an installed different coil tier makes qualification impossible before any mutation");
             world.blocks.put(firstCoil, new BlockState(GregTechAPI.sBlockCasings5, 9));
             world.missing = at(facing, 1, -1, 2);
-            SimpleAssert.that(profile.qualify(world, controller, facing, 1, channels, selections) == null,
+            SimpleAssert.that(
+                profile.qualify(world, controller, facing, 1, channels, selections) == null,
                 "an unloaded coil coordinate is refused without a chunk load");
             world.missing = null;
 
             var topOutputBus = hatch(unsafe, world, facing, MTEHatchOutputBus.class, 81, 1, 1, -3, 0);
             var invalidRole = new ArrayList<>(selections);
             invalidRole.set(2, topOutputBus);
-            SimpleAssert.that(profile.qualify(world, controller, facing, 1, channels, invalidRole) == null,
+            SimpleAssert.that(
+                profile.qualify(world, controller, facing, 1, channels, invalidRole) == null,
                 "a real stock output bus at the top cannot satisfy the top fluid-output chain");
             var duplicate = new ArrayList<>(selections);
             duplicate.set(3, selections.get(0));
-            SimpleAssert.that(profile.qualify(world, controller, facing, 1, channels, duplicate) == null,
+            SimpleAssert.that(
+                profile.qualify(world, controller, facing, 1, channels, duplicate) == null,
                 "duplicate coordinates/roles cannot fund a missing maintenance position");
             var wronglyFaced = new ArrayList<>(selections);
             var muffler = selections.get(4);
-            wronglyFaced.set(4, new Installed(muffler.a(), muffler.b(), muffler.c(), muffler.id(),
-                ForgeDirection.DOWN.ordinal()));
-            SimpleAssert.that(profile.qualify(world, controller, facing, 1, channels, wronglyFaced) == null,
+            wronglyFaced.set(
+                4,
+                new Installed(muffler.a(), muffler.b(), muffler.c(), muffler.id(), ForgeDirection.DOWN.ordinal()));
+            SimpleAssert.that(
+                profile.qualify(world, controller, facing, 1, channels, wronglyFaced) == null,
                 "exact installed muffler pose is retained, not overwritten");
 
             var existing = at(facing, muffler.a(), muffler.b(), muffler.c());
             var originalTile = world.tiles.remove(existing);
-            SimpleAssert.that(qualified.linksCurrent() && !qualified.physicalCurrent(),
+            SimpleAssert.that(
+                qualified.linksCurrent() && !qualified.physicalCurrent(),
                 "detached but still-valid original hatch cannot satisfy live physical revalidation");
             world.tiles.put(existing, originalTile);
             world.onTileReadAt = existing;
             world.onTileRead = () -> world.blocks.put(firstCoil, new BlockState(GregTechAPI.sBlockCasings5, 1));
-            SimpleAssert.that(qualified.linksCurrent() && !qualified.physicalCurrent() && world.onTileRead == null,
+            SimpleAssert.that(
+                qualified.linksCurrent() && !qualified.physicalCurrent() && world.onTileRead == null,
                 "post-callback revalidation rejects changed coil metadata before another permit could commit");
             world.blocks.put(firstCoil, new BlockState(GregTechAPI.sBlockCasings5, 9));
             world.onTileReadAt = existing;
             world.onTileRead = () -> world.blocks.put(firstCoil, new BlockState(GregTechAPI.sBlockCasings5, 1));
-            SimpleAssert.that(profile.qualify(world, controller, facing, 1, channels, selections) == null
-                && world.onTileRead == null, "initial qualification also rejects the coil altered from a protected read");
+            SimpleAssert.that(
+                profile.qualify(world, controller, facing, 1, channels, selections) == null && world.onTileRead == null,
+                "initial qualification also rejects the coil altered from a protected read");
             world.blocks.put(firstCoil, new BlockState(GregTechAPI.sBlockCasings5, 9));
-            var elements = machine.getStructureDefinition().getStructureFor("main");
+            var elements = machine.getStructureDefinition()
+                .getStructureFor("main");
             var originalElement = elements[0];
             elements[0] = StructureUtility.isAir();
             try {
-                SimpleAssert.that(!qualified.linksCurrent(), "declared backing array swap invalidates the qualified proof");
+                SimpleAssert
+                    .that(!qualified.linksCurrent(), "declared backing array swap invalidates the qualified proof");
             } finally {
                 elements[0] = originalElement;
             }
@@ -239,21 +272,27 @@ public final class HologramStockEbfProfileRegression {
             coil.stackSize = HologramStockEbfProfile.COIL_BOUND;
             inventory.mainInventory[1] = casing;
             inventory.mainInventory[2] = coil;
-            SimpleAssert.that(qualified.physicalCurrent() && qualified.fullyFunded(inventory, 0, settings)
-                && casing.stackSize + coil.stackSize == 28, "both exact stock identities fund at most 28 shell writes");
+            SimpleAssert.that(
+                qualified.physicalCurrent() && qualified.fullyFunded(inventory, 0, settings)
+                    && casing.stackSize + coil.stackSize == 28,
+                "both exact stock identities fund at most 28 shell writes");
             settings.priority = 1;
-            SimpleAssert.that(!qualified.fullyFunded(inventory, 0, settings), "never substitute main for configured priority");
+            SimpleAssert
+                .that(!qualified.fullyFunded(inventory, 0, settings), "never substitute main for configured priority");
             settings.priority = 0;
             coil.setItemDamage(1);
-            SimpleAssert.that(!qualified.fullyFunded(inventory, 0, settings), "wrong coil metadata cannot fund selected tier");
+            SimpleAssert
+                .that(!qualified.fullyFunded(inventory, 0, settings), "wrong coil metadata cannot fund selected tier");
             coil.setItemDamage(9);
             coil.setTagCompound(new NBTTagCompound());
             SimpleAssert.that(!qualified.fullyFunded(inventory, 0, settings), "tagged stock is not interchangeable");
             coil.setTagCompound(null);
             inventory.mainInventory[0] = coil;
             inventory.mainInventory[2] = null;
-            SimpleAssert.that(!qualified.fullyFunded(inventory, 0, settings)
-                && casing.stackSize == 12 && coil.stackSize == 16 && world.permissionReads == 0,
+            SimpleAssert.that(
+                !qualified.fullyFunded(inventory, 0, settings) && casing.stackSize == 12
+                    && coil.stackSize == 16
+                    && world.permissionReads == 0,
                 "never count the protected slot, debit, call placement permissions, or write world during qualification");
         } catch (ReflectiveOperationException | java.io.IOException failure) {
             throw new AssertionError("actual EBF offline profile fixture", failure);
@@ -268,9 +307,11 @@ public final class HologramStockEbfProfileRegression {
 
     private static Block registered(sun.misc.Unsafe unsafe, Block prior, Class<? extends Block> type, String name)
         throws ReflectiveOperationException {
-        if (prior != null && prior.getClass() == type && Item.getItemFromBlock(prior) instanceof ItemCasings) return prior;
+        if (prior != null && prior.getClass() == type && Item.getItemFromBlock(prior) instanceof ItemCasings)
+            return prior;
         Block held = (Block) Block.blockRegistry.getObject(name);
-        if (held != null && held.getClass() == type && Item.itemRegistry.getObject(name) instanceof ItemCasings) return held;
+        if (held != null && held.getClass() == type && Item.itemRegistry.getObject(name) instanceof ItemCasings)
+            return held;
         var block = (Block) unsafe.allocateInstance(type);
         var delegate = Block.class.getDeclaredField("delegate");
         delegate.setAccessible(true);
@@ -278,13 +319,15 @@ public final class HologramStockEbfProfileRegression {
         block.stepSound = Blocks.iron_block.stepSound;
         int id = 3775;
         while (id >= 3728 && (Block.getBlockById(id) != Blocks.air || Item.getItemById(id) != null)) id--;
-        SimpleAssert.that(id >= 3728 && (held == null || held == Blocks.air) && Item.itemRegistry.getObject(name) == null,
+        SimpleAssert.that(
+            id >= 3728 && (held == null || held == Blocks.air) && Item.itemRegistry.getObject(name) == null,
             "unused paired exact EBF fixture id and name");
         Item item = new ItemCasings(block);
         Block.blockRegistry.addObject(id, name, block);
         Item.itemRegistry.addObject(id, name, item);
-        SimpleAssert.that(Block.getBlockById(id) == block && Item.getItemById(id) == item
-            && Item.getItemFromBlock(block) == item, "native EBF fixture retained actual registered ItemCasings identity");
+        SimpleAssert.that(
+            Block.getBlockById(id) == block && Item.getItemById(id) == item && Item.getItemFromBlock(block) == item,
+            "native EBF fixture retained actual registered ItemCasings identity");
         return block;
     }
 

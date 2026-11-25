@@ -126,7 +126,8 @@ final class HologramMaterialReview {
             tagged = item != null && item.hasTagCompound() || fluid != null && fluid.tag != null;
             String label = data.getString("label");
             name = item != null ? HologramMaterialRowPresentation.itemName(item, data.getString("itemRegistry"))
-                : fluid != null ? fluid.getLocalizedName() : label.isEmpty() || "item".equals(data.getString("kind")) ? "无法解析的材料" : label;
+                : fluid != null ? fluid.getLocalizedName()
+                    : label.isEmpty() || "item".equals(data.getString("kind")) ? "无法解析的材料" : label;
         }
 
         String identity() {

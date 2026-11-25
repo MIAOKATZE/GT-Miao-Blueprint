@@ -1147,13 +1147,21 @@ public final class HologramMaterials {
 
         /** Identity-only scope fence. Provider access still authenticates on each native extraction. */
         boolean scopedSelected(EntityPlayerMP actor, Settings exactSettings, int slot) {
-            return player == actor && actor.worldObj == recoveryWorld && settings == exactSettings && protectedSlot == slot;
+            return player == actor && actor.worldObj == recoveryWorld
+                && settings == exactSettings
+                && protectedSlot == slot;
         }
 
         boolean scopedMain(EntityPlayerMP actor, Settings exactSettings, int slot) {
-            return actor == player && actor.worldObj == recoveryWorld && exactSettings == settings
-                && slot == protectedSlot && settings.main && !settings.containers && !settings.me
-                && containers.isEmpty() && terminal == null && terminalStack == null;
+            return actor == player && actor.worldObj == recoveryWorld
+                && exactSettings == settings
+                && slot == protectedSlot
+                && settings.main
+                && !settings.containers
+                && !settings.me
+                && containers.isEmpty()
+                && terminal == null
+                && terminalStack == null;
         }
 
         /** Must follow the service's main inventory snapshot restore, before returning fallback materials. */
@@ -1428,7 +1436,9 @@ public final class HologramMaterials {
             if (actor.inventory != inventory || inventory.mainInventory != slots) return null;
             for (int i = 0; i < slots.length; i++) {
                 ItemStack item = slots[i];
-                if (i == protectedSlot || item == null || item.stackSize <= 0 || item.hasTagCompound()
+                if (i == protectedSlot || item == null
+                    || item.stackSize <= 0
+                    || item.hasTagCompound()
                     || !HologramValues.same(item, wanted)) continue;
                 ScopedMainClaim exact = new ScopedMainClaim(inventory, slots, i, item);
                 if (HologramValues.same(exact.before, wanted) && exact.matches(actor)) return exact;
@@ -1437,8 +1447,11 @@ public final class HologramMaterials {
         }
 
         private boolean sameSlot(EntityPlayerMP actor) {
-            return actor.inventory == inventory && inventory.mainInventory == slots && slots[index] == live
-                && live.stackSize == count && count > 0 && !live.hasTagCompound();
+            return actor.inventory == inventory && inventory.mainInventory == slots
+                && slots[index] == live
+                && live.stackSize == count
+                && count > 0
+                && !live.hasTagCompound();
         }
 
         boolean matches(EntityPlayerMP actor) {
@@ -1486,7 +1499,10 @@ public final class HologramMaterials {
 
         void scopedJournal(NBTTagCompound value) {
             journal = value;
-            journal.setTag("heldInventory", journal.getTagList("beforeInventory", 10).copy());
+            journal.setTag(
+                "heldInventory",
+                journal.getTagList("beforeInventory", 10)
+                    .copy());
         }
 
         void beforeScopedWorldMutation() {
@@ -1595,8 +1611,9 @@ public final class HologramMaterials {
             ledger.setInteger("terminalSlot", terminalSlot);
             if (terminalState != null) ledger.setTag("terminalState", terminalState.writeToNBT(new NBTTagCompound()));
             journal.setTag("payment", ledger);
-            journal
-                .setTag("heldInventory", HologramConstructionJournal.inventory(context.player.inventory.mainInventory, journal));
+            journal.setTag(
+                "heldInventory",
+                HologramConstructionJournal.inventory(context.player.inventory.mainInventory, journal));
         }
 
         NBTTagCompound journalReceipt() {
@@ -1810,11 +1827,19 @@ public final class HologramMaterials {
          * to refund; close only this undurable journal, optionally charging the already validated original slot.
          */
         boolean finishScopedPlain(ScopedMainClaim claim) {
-            if (journal == null || closed || uncertain() || journal.getBoolean("durable")
-                || !containerItems.isEmpty() || !containerStates.isEmpty()
-                || !meItems.isEmpty() || !meFluids.isEmpty() || !meEssentia.isEmpty()
-                || !cachedEnergyReceipts.isEmpty() || energyTaken.signum() != 0 || terminalState != null
-                || terminalSupplies[0] != 0 || terminalSupplies[1] != 0) return false;
+            if (journal == null || closed
+                || uncertain()
+                || journal.getBoolean("durable")
+                || !containerItems.isEmpty()
+                || !containerStates.isEmpty()
+                || !meItems.isEmpty()
+                || !meFluids.isEmpty()
+                || !meEssentia.isEmpty()
+                || !cachedEnergyReceipts.isEmpty()
+                || energyTaken.signum() != 0
+                || terminalState != null
+                || terminalSupplies[0] != 0
+                || terminalSupplies[1] != 0) return false;
             NBTTagCompound owner = HologramConstructionJournal.owner(context.player);
             if (owner.getTag(HologramConstructionJournal.KEY) != journal
                 || claim != null && !claim.debit(context.player)) return false;

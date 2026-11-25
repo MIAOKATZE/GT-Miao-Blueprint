@@ -48,11 +48,12 @@ final class HologramWorldPlacementWorkflow {
         HologramSnapshots.send(s);
     }
 
-    static void quickPlaceLastBlueprint(EntityPlayerMP player,NBTTagCompound obsolete){
-        var held=player.getHeldItem();
-        String remembered=held!=null&&held.hasTagCompound()?held.getTagCompound().getString(HologramSessionKeys.SELECTED_PRESET):"";
-        if(HologramLibraryFacade.enabled()&&(!obsolete.getString("publicPresetId").isEmpty()
-            ||HologramPresetWorkflow.publicLibraryId(remembered))){
+    static void quickPlaceLastBlueprint(EntityPlayerMP player, NBTTagCompound obsolete) {
+        var held = player.getHeldItem();
+        String remembered = held != null && held.hasTagCompound() ? held.getTagCompound()
+            .getString(HologramSessionKeys.SELECTED_PRESET) : "";
+        if (HologramLibraryFacade.enabled() && (!obsolete.getString("publicPresetId")
+            .isEmpty() || HologramPresetWorkflow.publicLibraryId(remembered))) {
             HologramPresetWorkflow.refusePublicHydration(player);
             return;
         }

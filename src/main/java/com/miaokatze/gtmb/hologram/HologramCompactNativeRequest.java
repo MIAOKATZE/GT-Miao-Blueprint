@@ -55,7 +55,8 @@ public final class HologramCompactNativeRequest {
     private HologramCompactNativeRequest() {}
 
     static boolean needsHatchPresetReview(NBTTagCompound config) {
-        return !config.getBoolean("noHatches") && config.getCompoundTag("channels").hasKey("gt_hatch", 3);
+        return !config.getBoolean("noHatches") && config.getCompoundTag("channels")
+            .hasKey("gt_hatch", 3);
     }
 
     public static boolean enabled() {
@@ -67,8 +68,8 @@ public final class HologramCompactNativeRequest {
         return encode(id, controller, side, slot, state, confirmed, unchangedCells, false);
     }
 
-    public static NBTTagCompound encodeOrdinary(UUID id, TileEntity controller, int side, int slot, NBTTagCompound state,
-        NBTTagCompound confirmed, boolean unchangedCells) throws IOException {
+    public static NBTTagCompound encodeOrdinary(UUID id, TileEntity controller, int side, int slot,
+        NBTTagCompound state, NBTTagCompound confirmed, boolean unchangedCells) throws IOException {
         return encode(id, controller, side, slot, state, confirmed, unchangedCells, true);
     }
 
@@ -82,8 +83,7 @@ public final class HologramCompactNativeRequest {
             || !confirmed.getString("structureId")
                 .isEmpty())
             throw new IOException("紧凑原生放置暂不支持局部范围、手动仓室位置或仓室预设。");
-        if (ordinary && needsHatchPresetReview(confirmed))
-            throw new IOException(HATCH_PRESET_REVIEW_REQUIRED);
+        if (ordinary && needsHatchPresetReview(confirmed)) throw new IOException(HATCH_PRESET_REVIEW_REQUIRED);
         if (!ordinary && (!confirmed.getBoolean("materialMain") || confirmed.getBoolean("materialContainers")
             || confirmed.getBoolean("materialMe"))) throw new IOException("紧凑原生放置暂仅支持已明确选择的玩家背包材料。");
         NBTTagCompound request = new NBTTagCompound();
@@ -126,8 +126,10 @@ public final class HologramCompactNativeRequest {
             if (!request.hasKey(key, 1) || request.getByte(key) < 0 || request.getByte(key) > 1) return false;
         }
         return (ordinary ? HologramLocalControllerCapture.validSettings(request)
-            : request.hasKey(FLAG, 1) && request.getByte(FLAG) == 1 && request.getBoolean("materialMain")
-                && !request.getBoolean("materialContainers") && !request.getBoolean("materialMe"))
+            : request.hasKey(FLAG, 1) && request.getByte(FLAG) == 1
+                && request.getBoolean("materialMain")
+                && !request.getBoolean("materialContainers")
+                && !request.getBoolean("materialMe"))
             && request.getInteger("side") >= 0
             && request.getInteger("side") < 6
             && request.getInteger("slot") >= 0

@@ -2,30 +2,40 @@
 // Additional terms: see AGPL-ADDITIONAL-TERMS.md in the project root.
 package com.miaokatze.gtmb.client.hologram;
 
-import java.util.LinkedHashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.Map;
+
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
+
 import com.miaokatze.gtmb.hologram.HologramDeclaredNativeSelection;
 import com.miaokatze.gtmb.hologram.HologramMaterialQuote;
+
 import gregtech.api.metatileentity.implementations.MTEHatch;
 import gregtech.common.blocks.ItemMachines;
 
-/** A swap/remove preview belongs only to the explicit selection, never to the declaration-wide material index.
- * Server ownership, admissibility, funds and actual mutation remain authoritative. */
+/**
+ * A swap/remove preview belongs only to the explicit selection, never to the declaration-wide material index.
+ * Server ownership, admissibility, funds and actual mutation remain authoritative.
+ */
 final class HologramLocalHatchDelta {
+
     final NBTTagCompound theory = new NBTTagCompound();
     final boolean removal;
     String blocker = "";
     int exchanges, turns, unchanged, removals;
 
     private static final class Group {
+
         final ItemStack target;
         final Map<Integer, Integer> originals = new LinkedHashMap<>();
         int needed, rotations;
-        Group(ItemStack target) { this.target = target; }
+
+        Group(ItemStack target) {
+            this.target = target;
+        }
     }
 
     HologramLocalHatchDelta(HologramState source, NBTTagCompound settings) {
@@ -45,15 +55,22 @@ final class HologramLocalHatchDelta {
         var groups = new LinkedHashMap<Integer, Group>();
         for (int index : selected) {
             if (index < 0 || index >= source.cells.size() || !seen.add(index)) {
-                blocker = "所选位置无效，请重新选择。"; return;
+                blocker = "所选位置无效，请重新选择。";
+                return;
             }
             var cell = source.cells.get(index);
             var old = cell.actualStack;
-            if (cell.anchor || cell.excluded || !cell.inScope || !cell.hasDisplayTag(true, "siteHatchTier", 3)
-                || old == null || !(old.getItem() instanceof ItemMachines) || old.hasTagCompound()
-                || cell.actualFacing < 0 || cell.actualFacing > 5
+            if (cell.anchor || cell.excluded
+                || !cell.inScope
+                || !cell.hasDisplayTag(true, "siteHatchTier", 3)
+                || old == null
+                || !(old.getItem() instanceof ItemMachines)
+                || old.hasTagCompound()
+                || cell.actualFacing < 0
+                || cell.actualFacing > 5
                 || !(ItemMachines.getMetaTileEntity(old) instanceof MTEHatch before)) {
-                blocker = "所选位置未确认是现场仓室。"; return;
+                blocker = "所选位置未确认是现场仓室。";
+                return;
             }
             if (removal) {
                 Group group = groups.computeIfAbsent(old.getItemDamage(), k -> new Group(old));
@@ -63,29 +80,49 @@ final class HologramLocalHatchDelta {
             }
             var target = cell.targetStack;
             if (!"manual".equals(cell.pinScope) && cell.hatchFacing < 0) {
-                blocker = "请为每个所选仓室指定替换类型或朝向。"; return;
+                blocker = "请为每个所选仓室指定替换类型或朝向。";
+                return;
             }
-            if (target == null || target.getItem() != old.getItem() || target.hasTagCompound()
-                || !(ItemMachines.getMetaTileEntity(target) instanceof MTEHatch after) || before.getClass() != after.getClass()) {
-                blocker = "所选换装不是可核对的同类仓室。"; return;
+            if (target == null || target.getItem() != old.getItem()
+                || target.hasTagCompound()
+                || !(ItemMachines.getMetaTileEntity(target) instanceof MTEHatch after)
+                || before.getClass() != after.getClass()) {
+                blocker = "所选换装不是可核对的同类仓室。";
+                return;
             }
             boolean same = target.getItemDamage() == old.getItemDamage();
-            if (same && (cell.hatchFacing < 0 || cell.hatchFacing == cell.actualFacing)) { unchanged++; continue; }
+            if (same && (cell.hatchFacing < 0 || cell.hatchFacing == cell.actualFacing)) {
+                unchanged++;
+                continue;
+            }
             Group group = groups.computeIfAbsent(target.getItemDamage(), k -> new Group(target));
             group.originals.merge(old.getItemDamage(), 1, Integer::sum);
-            if (same) { group.rotations++; turns++; }
-            else { group.needed++; exchanges++; }
+            if (same) {
+                group.rotations++;
+                turns++;
+            } else {
+                group.needed++;
+                exchanges++;
+            }
         }
-        if (!removal && exchanges + turns == 0) { blocker = "所选仓室和朝向没有变化。"; return; }
+        if (!removal && exchanges + turns == 0) {
+            blocker = "所选仓室和朝向没有变化。";
+            return;
+        }
         for (Group group : groups.values()) {
             var row = HologramMaterialQuote.itemRow(group.target, group.needed, 0);
             String registry = row.getString("itemRegistry");
             var note = new StringBuilder(removal ? "回收：" : "原件：");
             group.originals.forEach((id, number) -> {
                 var item = new ItemStack(group.target.getItem(), 1, id);
-                note.append(HologramMaterialRowPresentation.itemName(item, registry)).append(" ×").append(number).append("；");
+                note.append(HologramMaterialRowPresentation.itemName(item, registry))
+                    .append(" ×")
+                    .append(number)
+                    .append("；");
             });
-            if (group.rotations > 0) note.append("仅转向 ").append(group.rotations).append("，不扣料");
+            if (group.rotations > 0) note.append("仅转向 ")
+                .append(group.rotations)
+                .append("，不扣料");
             row.setString("hatchChange", note.toString());
             rows.appendTag(row);
         }

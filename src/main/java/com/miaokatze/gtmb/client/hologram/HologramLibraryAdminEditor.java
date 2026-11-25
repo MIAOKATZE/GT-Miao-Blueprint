@@ -36,7 +36,7 @@ final class HologramLibraryAdminEditor {
         this.ui = ui;
         upload = field(146, 59, 88, 7);
         download = field(361, 59, 88, 7);
-        privateSlots=field(582,59,48,2);
+        privateSlots = field(582, 59, 48, 2);
         name = field(320, 103, 310, 32);
         quota = field(518, 156, 112, 4);
         member = field(250, 190, 380, 36);
@@ -57,7 +57,9 @@ final class HologramLibraryAdminEditor {
         revision = config.getLong("configRevision");
         upload.setText(String.valueOf(config.getInteger("uploadKiB")));
         download.setText(String.valueOf(config.getInteger("downloadKiB")));
-        privateSlots.setText(String.valueOf(config.hasKey("privateNativeCacheSlots",3)?config.getInteger("privateNativeCacheSlots"):5));
+        privateSlots.setText(
+            String.valueOf(
+                config.hasKey("privateNativeCacheSlots", 3) ? config.getInteger("privateNativeCacheSlots") : 5));
         groups.clear();
         NBTTagList list = config.hasKey("permissionGroups", 9) ? config.getTagList("permissionGroups", 10)
             : HologramLibraryPermissions.defaults(Math.max(1, config.getInteger("maxUploads")))
@@ -194,10 +196,15 @@ final class HologramLibraryAdminEditor {
                     int up = Integer.parseInt(upload.getText()), down = Integer.parseInt(download.getText());
                     if (up < 1 || up > 1024 || down < 1 || down > 1024)
                         throw new IOException(projector("admin.bandwidth_error"));
-                    int privateCount=Integer.parseInt(privateSlots.getText());
-                    if(privateCount<1||privateCount>32)throw new IOException("私有施工缓存数量必须为 1..32");
-                    HologramLibraryClient.INSTANCE
-                        .saveConfig(up, down, permissions.effective(null).quota, revision, permissions.tag(),privateCount);
+                    int privateCount = Integer.parseInt(privateSlots.getText());
+                    if (privateCount < 1 || privateCount > 32) throw new IOException("私有施工缓存数量必须为 1..32");
+                    HologramLibraryClient.INSTANCE.saveConfig(
+                        up,
+                        down,
+                        permissions.effective(null).quota,
+                        revision,
+                        permissions.tag(),
+                        privateCount);
                     saving = HologramLibraryClient.INSTANCE.configSavePending();
                     notice = projector("admin.awaiting_server");
                     break;
@@ -212,7 +219,8 @@ final class HologramLibraryAdminEditor {
 
     void tick() {
         upload.setEnabled(!saving);
-        download.setEnabled(!saving);privateSlots.setEnabled(!saving);
+        download.setEnabled(!saving);
+        privateSlots.setEnabled(!saving);
         name.setEnabled(!saving);
         quota.setEnabled(!saving);
         member.setEnabled(!saving);
@@ -248,7 +256,7 @@ final class HologramLibraryAdminEditor {
                 .height(18));
         form.child(nativeField(projector("admin.upload"), upload));
         form.child(nativeField(projector("admin.download"), download));
-        form.child(nativeField("每人私有施工缓存份数",privateSlots));
+        form.child(nativeField("每人私有施工缓存份数", privateSlots));
         form.child(
             HologramEditorNativeTheme.label(() -> projector("admin.group_scope"))
                 .widthRel(1f)
@@ -431,11 +439,14 @@ final class HologramLibraryAdminEditor {
         ui.canvas.text("全服上传 KiB/s", 45, 64, 100, HologramEditorTheme.TEXT);
         ui.canvas.text("全服下载 KiB/s", 250, 64, 110, HologramEditorTheme.TEXT);
         upload.drawTextBox();
-        download.drawTextBox();ui.canvas.text("私有缓存份数",462,64,114,HologramEditorTheme.TEXT);privateSlots.drawTextBox();
+        download.drawTextBox();
+        ui.canvas.text("私有缓存份数", 462, 64, 114, HologramEditorTheme.TEXT);
+        privateSlots.drawTextBox();
         ui.canvas.text("总带宽由全服共享；权限组不授予管理或删除他人蓝图的权限", 45, 84, 585, HologramEditorTheme.MUTED);
         boolean idle = !saving;
         upload.setEnabled(idle);
-        download.setEnabled(idle);privateSlots.setEnabled(idle);
+        download.setEnabled(idle);
+        privateSlots.setEnabled(idle);
         name.setEnabled(idle);
         quota.setEnabled(idle);
         member.setEnabled(idle);
@@ -519,10 +530,8 @@ final class HologramLibraryAdminEditor {
     }
 
     boolean focused() {
-        return upload.isFocused() || download.isFocused() || privateSlots.isFocused()
-            || name.isFocused()
-            || quota.isFocused()
-            || member.isFocused();
+        return upload.isFocused() || download
+            .isFocused() || privateSlots.isFocused() || name.isFocused() || quota.isFocused() || member.isFocused();
     }
 
     NBTTagCompound state() {
@@ -530,7 +539,8 @@ final class HologramLibraryAdminEditor {
         tag.setTag("permissionGroups", tags());
         tag.setLong("configRevision", revision);
         tag.setString("uploadText", upload.getText());
-        tag.setString("downloadText", download.getText());tag.setString("privateSlotsText",privateSlots.getText());
+        tag.setString("downloadText", download.getText());
+        tag.setString("privateSlotsText", privateSlots.getText());
         tag.setString("nameText", name.getText());
         tag.setString("quotaText", quota.getText());
         tag.setString("memberText", member.getText());
@@ -549,7 +559,8 @@ final class HologramLibraryAdminEditor {
         groupPage = Math.max(0, Math.min((groups.size() - 1) / 6, tag.getInteger("groupPage")));
         memberPage = Math.max(0, tag.getInteger("memberPage"));
         upload.setText(tag.getString("uploadText"));
-        download.setText(tag.getString("downloadText"));if(tag.hasKey("privateSlotsText",8))privateSlots.setText(tag.getString("privateSlotsText"));
+        download.setText(tag.getString("downloadText"));
+        if (tag.hasKey("privateSlotsText", 8)) privateSlots.setText(tag.getString("privateSlotsText"));
         name.setText(tag.getString("nameText"));
         quota.setText(tag.getString("quotaText"));
         member.setText(tag.getString("memberText"));

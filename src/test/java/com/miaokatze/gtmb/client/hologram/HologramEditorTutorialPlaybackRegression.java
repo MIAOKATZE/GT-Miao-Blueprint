@@ -44,9 +44,9 @@ public final class HologramEditorTutorialPlaybackRegression {
         NBTTagCompound state = new NBTTagCompound();
         state.setBoolean("target", true);
         state.setString("editorWorkspace", "projection");
-        sandbox.session.initializeIsolated(new HologramState(state), (operation, request) -> {
-            throw new AssertionError("opening a lesson must not submit CUT requests");
-        });
+        sandbox.session.initializeIsolated(
+            new HologramState(state),
+            (operation, request) -> { throw new AssertionError("opening a lesson must not submit CUT requests"); });
         SimpleAssert.that(sandbox.workspaces.hasProjectionContent(), "physical samples have a controller target");
         HologramEditorCutWorkspace lesson = new HologramEditorCutWorkspace(sandbox);
         sandbox.workspaces.activateCutLesson(lesson);

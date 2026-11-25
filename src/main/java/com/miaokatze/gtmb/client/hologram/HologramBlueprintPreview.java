@@ -11,11 +11,9 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
-import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -33,7 +31,6 @@ import net.minecraft.client.renderer.Tessellator;
 import net.minecraft.init.Blocks;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
-import net.minecraft.nbt.NBTBase;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
@@ -60,7 +57,6 @@ import cpw.mods.fml.common.FMLCommonHandler;
 import cpw.mods.fml.common.eventhandler.EventPriority;
 import cpw.mods.fml.common.eventhandler.SubscribeEvent;
 import cpw.mods.fml.common.gameevent.TickEvent;
-import cpw.mods.fml.relauncher.ReflectionHelper;
 
 /** Detached native model capture. JSON/NBT decoding and PNG encoding belong to the library IO worker. */
 public final class HologramBlueprintPreview {
@@ -113,13 +109,17 @@ public final class HologramBlueprintPreview {
     static DisplayInput displayInput(byte[] bytes, java.util.function.BiConsumer<Integer, Integer> progress,
         boolean savedPrivateSource, boolean indexedPrivate) throws IOException {
         try {
-            var view=savedPrivateSource?HologramBlueprintCompactCodec.localDisplayGeometry(bytes,indexedPrivate)
-                :HologramBlueprintCompactCodec.displayGeometry(bytes);
+            var view = savedPrivateSource ? HologramBlueprintCompactCodec.localDisplayGeometry(bytes, indexedPrivate)
+                : HologramBlueprintCompactCodec.displayGeometry(bytes);
             if (!view.compact()) {
                 HologramSavedMaterialSource.Tally tally = savedPrivateSource
-                    ? new HologramSavedMaterialSource.Tally(view.blueprint, view.cells()) : null;
-                NBTTagCompound display = expandedDisplay(view.blueprint, view.blueprint.getAsJsonArray("cells"),
-                    progress, tally);
+                    ? new HologramSavedMaterialSource.Tally(view.blueprint, view.cells())
+                    : null;
+                NBTTagCompound display = expandedDisplay(
+                    view.blueprint,
+                    view.blueprint.getAsJsonArray("cells"),
+                    progress,
+                    tally);
                 return new DisplayInput(display, null, tally == null ? null : tally.snapshot());
             }
             CompactCells cells = new CompactCells(view.cells(), view.materials());
@@ -153,10 +153,7 @@ public final class HologramBlueprintPreview {
             }
             if (cells.size() == 0) throw new IOException("Blueprint preview has no buildable cells");
             if (progress != null) progress.accept(view.cells(), view.cells());
-            return new DisplayInput(
-                displayMetadata(view.blueprint),
-                cells,
-                tally == null ? null : tally.snapshot());
+            return new DisplayInput(displayMetadata(view.blueprint), cells, tally == null ? null : tally.snapshot());
         } catch (RuntimeException invalid) {
             throw new IOException("Invalid blueprint preview JSON", invalid);
         }
@@ -168,28 +165,32 @@ public final class HologramBlueprintPreview {
         CompactCells cells = new CompactCells(total, Math.min(total, 64));
         Map<DisplayMaterial, Integer> index = new HashMap<>();
         Payloads payloads = new Payloads();
-        HologramSavedMaterialSource.Tally tally = new HologramSavedMaterialSource.Tally(total,
-            draft.materialSummarySchemaKnown(), draft.materialSummaryNeedsReview());
+        HologramSavedMaterialSource.Tally tally = new HologramSavedMaterialSource.Tally(
+            total,
+            draft.materialSummarySchemaKnown(),
+            draft.materialSummaryNeedsReview());
         if (progress != null) progress.accept(0, total);
-        draft.visitDisplayCells((x, y, z, block, metadata, item, damage, facing, tileNbt, itemNbt, count, controller) -> {
-            DisplayMaterial material = new DisplayMaterial(block, metadata, item, damage, facing, tileNbt, itemNbt);
-            Integer position = index.get(material);
-            if (position == null) {
-                position = index.size();
-                cells.putMaterial(position, displayMaterial(material, payloads));
-                index.put(material, position);
-            } else {
-                payloads.account(payloads.expanded.getOrDefault(tileNbt, 0));
-                payloads.account(payloads.expanded.getOrDefault(itemNbt, 0));
-            }
-            cells.add(
-                checkedCoordinate(x, 60000000L),
-                checkedCoordinate(y, 256L),
-                checkedCoordinate(z, 60000000L),
-                position);
-            tally.includeFrozen(block, metadata, item, damage, facing, count, controller, tileNbt, itemNbt);
-            if (progress != null && (cells.size() & 255) == 0) progress.accept(cells.size(), total);
-        }, current);
+        draft.visitDisplayCells(
+            (x, y, z, block, metadata, item, damage, facing, tileNbt, itemNbt, count, controller) -> {
+                DisplayMaterial material = new DisplayMaterial(block, metadata, item, damage, facing, tileNbt, itemNbt);
+                Integer position = index.get(material);
+                if (position == null) {
+                    position = index.size();
+                    cells.putMaterial(position, displayMaterial(material, payloads));
+                    index.put(material, position);
+                } else {
+                    payloads.account(payloads.expanded.getOrDefault(tileNbt, 0));
+                    payloads.account(payloads.expanded.getOrDefault(itemNbt, 0));
+                }
+                cells.add(
+                    checkedCoordinate(x, 60000000L),
+                    checkedCoordinate(y, 256L),
+                    checkedCoordinate(z, 60000000L),
+                    position);
+                tally.includeFrozen(block, metadata, item, damage, facing, count, controller, tileNbt, itemNbt);
+                if (progress != null && (cells.size() & 255) == 0) progress.accept(cells.size(), total);
+            },
+            current);
         if (cells.size() == 0) throw new IOException("Blueprint preview has no buildable cells");
         if (progress != null) progress.accept(total, total);
         return new DisplayInput(displayMetadata(draft), cells, tally.snapshot());
@@ -221,7 +222,7 @@ public final class HologramBlueprintPreview {
         final HologramSavedMaterialSource savedMaterials;
 
         DisplayInput(NBTTagCompound snapshot, CompactCells cells) {
-            this(snapshot,cells,null);
+            this(snapshot, cells, null);
         }
 
         DisplayInput(NBTTagCompound snapshot, CompactCells cells, HologramSavedMaterialSource savedMaterials) {
@@ -487,10 +488,11 @@ public final class HologramBlueprintPreview {
         return queue(new Request(exactSnapshot, hash, yaw, pitch, current, done, failure, trace));
     }
 
-    static Request captureNative(HologramState view,double yaw,double pitch,BooleanSupplier current,
-        Consumer<BufferedImage> done,Consumer<Throwable> failure){
-        if(view.nativeViewport==null)throw new IllegalArgumentException("Native render revision required");
-        Request request=new Request(view.data,"",yaw,pitch,current,done,failure);request.nativeView=view;
+    static Request captureNative(HologramState view, double yaw, double pitch, BooleanSupplier current,
+        Consumer<BufferedImage> done, Consumer<Throwable> failure) {
+        if (view.nativeViewport == null) throw new IllegalArgumentException("Native render revision required");
+        Request request = new Request(view.data, "", yaw, pitch, current, done, failure);
+        request.nativeView = view;
         return queue(request);
     }
 
@@ -665,7 +667,7 @@ public final class HologramBlueprintPreview {
             && !request.sourceJsonSha256.isEmpty();
         if (witness) request.preexistingErrorCount = clearPreexistingErrors();
         if (!OpenGlHelper.isFramebufferEnabled()) throw new IOException("Native framebuffer previews are unavailable");
-        HologramState state = request.nativeView!=null?request.nativeView:completeSnapshot(request.snapshot);
+        HologramState state = request.nativeView != null ? request.nativeView : completeSnapshot(request.snapshot);
         mark(request.saveTrace, Stage.RENDER_STATE_READY);
         MiaoVisonLiteRenderer viewport = new MiaoVisonLiteRenderer(
             new HologramPreviewAssets(),

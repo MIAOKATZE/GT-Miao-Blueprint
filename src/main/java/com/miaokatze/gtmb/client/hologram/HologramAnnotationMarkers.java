@@ -27,7 +27,8 @@ final class HologramAnnotationMarkers {
         Map<String, Set<String>> networkPrompts = new LinkedHashMap<>();
         Map<String, List<Integer>> networkCells = new LinkedHashMap<>();
         String activeStructure = state.data.getString("activeStructure");
-        for (HologramState.Cell cell : state.nativeViewport==null ? state.cells : state.nativeViewport.annotationCells()) {
+        for (HologramState.Cell cell : state.nativeViewport == null ? state.cells
+            : state.nativeViewport.annotationCells()) {
             if (state.data.getBoolean("virtual") && cell.quantumNetworkHint()) {
                 // Bounds follow this snapshot's transformed cells, restricted to the current editing structure.
                 if (!activeStructure.isEmpty() && !cell.belongsToStructure(activeStructure)) continue;

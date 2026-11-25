@@ -188,13 +188,17 @@ public final class HologramLocalPreviewRegression {
         var area = new com.miaokatze.miaokatzecore.api.camera.ViewportCoordinates(11, 23, 240, 170);
         var resized = new com.miaokatze.miaokatzecore.api.camera.ViewportCoordinates(11, 24, 240, 170);
         var view = new HologramOpeningPreview(prefix, Math.PI / 4);
-        SimpleAssert.that(!view.navigable(prefix, area, 7) && !view.press(20, 40, 0),
+        SimpleAssert.that(
+            !view.navigable(prefix, area, 7) && !view.press(20, 40, 0),
             "a decoded prefix is not a drawn camera frame");
         view.observe(full, area, 7, 8, 114);
-        SimpleAssert.that(!view.navigable(prefix, area, 7), "an installed or retired frame cannot certify another prefix");
+        SimpleAssert
+            .that(!view.navigable(prefix, area, 7), "an installed or retired frame cannot certify another prefix");
         view.observe(prefix, area, 7, 8, 114);
-        SimpleAssert.that(view.navigable(prefix, area, 7) && !view.navigable(full, area, 7)
-            && !view.navigable(prefix, resized, 7) && !view.navigable(prefix, area, 8),
+        SimpleAssert.that(
+            view.navigable(prefix, area, 7) && !view.navigable(full, area, 7)
+                && !view.navigable(prefix, resized, 7)
+                && !view.navigable(prefix, area, 8),
             "opening navigation requires the actual source, GUI rectangle and resource generation");
         view.observe(null, area, 7, 0, 0);
         SimpleAssert.that(view.navigable(null, area, 7), "another draw of the same prefix may still be in progress");
@@ -206,21 +210,35 @@ public final class HologramLocalPreviewRegression {
         view.drag(22, 40, 0);
         view.drag(26, 42, 0);
         view.release(28, 43, 0);
-        SimpleAssert.that(view.pose().yaw() < start.yaw() && view.pose().pitch() > start.pitch(),
+        SimpleAssert.that(
+            view.pose()
+                .yaw() < start.yaw()
+                && view.pose()
+                    .pitch() > start.pitch(),
             "successive input coordinates rotate without waiting for another draw");
         SimpleAssert.that(view.press(20, 40, 2), "a rendered prefix starts a middle drag");
         view.release(22, 49, 2);
-        SimpleAssert.that(view.pose().y() != 0, "middle drag pans in the same presented coordinate frame");
+        SimpleAssert.that(
+            view.pose()
+                .y() != 0,
+            "middle drag pans in the same presented coordinate frame");
         view.scroll(1);
         view.fixed(0, Math.PI / 2);
         view.move(.025, 1, 1);
-        SimpleAssert.that(view.pose().zoom() > 1 && view.pose().pitch() == Math.PI / 2,
+        SimpleAssert.that(
+            view.pose()
+                .zoom() > 1
+                && view.pose()
+                    .pitch() == Math.PI / 2,
             "wheel and camera commands change only the independent opening pose");
-        SimpleAssert.eq(view.pose(), view.forInstalled(full), "whole-source fit and all six pose fields survive install");
+        SimpleAssert
+            .eq(view.pose(), view.forInstalled(full), "whole-source fit and all six pose fields survive install");
         SimpleAssert.eq(null, view.forInstalled(prefix), "a partial state never becomes the installed owner");
         NBTTagCompound shifted = new NBTTagCompound();
         shifted.setInteger("x", 42);
-        SimpleAssert.eq(null, view.forInstalled(full.withMetadata(shifted)),
+        SimpleAssert.eq(
+            null,
+            view.forInstalled(full.withMetadata(shifted)),
             "another anchor cannot adopt the old coordinate frame");
         SimpleAssert.that(view.press(20, 40, 0), "a gesture may be in flight when install wins");
         var installed = view.forInstalled(full);
@@ -774,14 +792,20 @@ public final class HologramLocalPreviewRegression {
         byte[] expanded = ("{\"blueprint\":{\"schema\":2,\"cells\":[{\"block\":\"detached:display\","
             + "\"item\":\"detached:display\"}]}}").getBytes(StandardCharsets.UTF_8);
         var expandedMaterials = HologramBlueprintPreview.displayInput(expanded, null, true).savedMaterials;
-        SimpleAssert.that(expandedMaterials != null && expandedMaterials.variants().size() == 1
-            && expandedMaterials.variants().get(0).cells() == 1,
+        SimpleAssert.that(
+            expandedMaterials != null && expandedMaterials.variants()
+                .size() == 1
+                && expandedMaterials.variants()
+                    .get(0)
+                    .cells() == 1,
             "expanded private source folds material facts into its existing display decode pass");
         var draft = HologramLocalBlueprintDocument.open(expanded, "")
             .freeze();
         var draftMaterials = HologramBlueprintPreview.displayInput(draft, () -> true, null).savedMaterials;
-        SimpleAssert.that(draftMaterials != null && draftMaterials.variants().equals(expandedMaterials.variants())
-            && draftMaterials.retentionNeedsReview() == expandedMaterials.retentionNeedsReview(),
+        SimpleAssert.that(
+            draftMaterials != null && draftMaterials.variants()
+                .equals(expandedMaterials.variants())
+                && draftMaterials.retentionNeedsReview() == expandedMaterials.retentionNeedsReview(),
             "frozen editor source carries the same detached description without rereading or scanning it at open");
 
         java.nio.file.Path file = java.nio.file.Files.createTempFile("gtmb-private-material-fixture-", ".json");
@@ -976,8 +1000,6 @@ public final class HologramLocalPreviewRegression {
             compact == HologramLibraryClient.uploadJson(compact, () -> true),
             "already compact sources are reused without another compression pass");
     }
-
-
 
     private static void expectFailure(String json) throws Exception {
         try {

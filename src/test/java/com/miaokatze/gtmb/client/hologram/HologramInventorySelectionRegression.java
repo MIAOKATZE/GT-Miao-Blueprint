@@ -173,10 +173,12 @@ public final class HologramInventorySelectionRegression {
             ui.preview.inventory(true);
             java.util.concurrent.atomic.AtomicInteger queuedNative = new java.util.concurrent.atomic.AtomicInteger();
             screen.deferNativeCommand(queuedNative::incrementAndGet);
-            SimpleAssert.that(screen.muiKeyBefore('\0', Keyboard.KEY_ESCAPE) && ui.preview.inventory()
-                && queuedNative.get() == 0, "physical Escape accepts dismissal without acting during MUI input");
+            SimpleAssert.that(
+                screen.muiKeyBefore('\0', Keyboard.KEY_ESCAPE) && ui.preview.inventory() && queuedNative.get() == 0,
+                "physical Escape accepts dismissal without acting during MUI input");
             deferred.run(true);
-            SimpleAssert.that(!ui.preview.inventory() && queuedNative.get() == 0 && minecraft.currentScreen == screen,
+            SimpleAssert.that(
+                !ui.preview.inventory() && queuedNative.get() == 0 && minecraft.currentScreen == screen,
                 "physical Escape wins over an unexecuted native button and closes only the current owned layer");
             ui.preview.inventory(true);
             ui.router.activate(64);

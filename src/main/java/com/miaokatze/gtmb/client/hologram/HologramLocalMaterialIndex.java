@@ -38,6 +38,7 @@ final class HologramLocalMaterialIndex {
     private record Key(Block block, int metadata, Item item, int damage, NBTTagCompound tag, boolean unresolved) {}
 
     private static final class Unit {
+
         final HologramStaticMaterials.Contribution resolved;
 
         Unit(Key key) {
@@ -62,11 +63,14 @@ final class HologramLocalMaterialIndex {
     }
 
     private static final class Group {
+
         final Map<Unit, Integer> counts;
         int targets;
         private Result result;
 
-        Group() { counts = new LinkedHashMap<>(); }
+        Group() {
+            counts = new LinkedHashMap<>();
+        }
 
         Group(Group original) {
             counts = new LinkedHashMap<>(original.counts);
@@ -103,15 +107,19 @@ final class HologramLocalMaterialIndex {
     private HologramLocalMaterialIndex(Builder builder) {
         nativeGeneration = builder.nativeGeneration;
         resourceGeneration = builder.resourceGeneration;
-        x = builder.x; y = builder.y; z = builder.z;
+        x = builder.x;
+        y = builder.y;
+        z = builder.z;
         units = builder.units;
         all = builder.all;
         layers = builder.layers;
         families = builder.families;
         // Publish the full resolved total together with its source, before a material pane can open.
         all.result();
-        layers.values().forEach(Group::result);
-        families.values().forEach(Group::result);
+        layers.values()
+            .forEach(Group::result);
+        families.values()
+            .forEach(Group::result);
     }
 
     boolean current() {
@@ -136,6 +144,7 @@ final class HologramLocalMaterialIndex {
 
     /** Selection edits merge already-priced facts in their existing mutation pass, never at pane open. */
     final class Selection {
+
         private Group chosen = new Group();
 
         void change(HologramState.Cell cell, int delta) {
@@ -145,11 +154,18 @@ final class HologramLocalMaterialIndex {
             chosen.add(unit, delta);
         }
 
-        void clear() { chosen = new Group(); }
-        Result result() { return chosen.result(); }
+        void clear() {
+            chosen = new Group();
+        }
+
+        Result result() {
+            return chosen.result();
+        }
     }
 
-    private static Result result(Group group) { return group == null ? new Group().result() : group.result(); }
+    private static Result result(Group group) {
+        return group == null ? new Group().result() : group.result();
+    }
 
     HologramLocalMaterialIndex edited(List<HologramState.Cell> previous, List<HologramState.Cell> current,
         int[] changedIndices) {
@@ -161,18 +177,25 @@ final class HologramLocalMaterialIndex {
 
     private static Key key(HologramState.Cell cell) {
         ItemStack target = cell.targetStack;
-        return new Key(cell.block(false), cell.wantMeta, target == null ? null : target.getItem(),
-            target == null ? 0 : target.getItemDamage(), target == null ? null : target.getTagCompound(),
+        return new Key(
+            cell.block(false),
+            cell.wantMeta,
+            target == null ? null : target.getItem(),
+            target == null ? 0 : target.getItemDamage(),
+            target == null ? null : target.getTagCompound(),
             target == null || cell.missingBlock || cell.iconOnly);
     }
 
     private static boolean included(HologramState.Cell cell, int x, int y, int z) {
-        return !cell.excluded && cell.inScope && !cell.anchor && !"minecraft:air".equals(cell.wantId)
+        return !cell.excluded && cell.inScope
+            && !cell.anchor
+            && !"minecraft:air".equals(cell.wantId)
             && !(cell.x == x && cell.y == y && cell.z == z)
             && !HologramControllerMaterialCounts.sourceWater(cell.capturedNativeTarget(), x, y, z);
     }
 
     static final class Builder {
+
         private final int x, y, z;
         private final long nativeGeneration, resourceGeneration;
         private final Map<Key, Unit> units;
@@ -186,7 +209,9 @@ final class HologramLocalMaterialIndex {
         Builder(NBTTagCompound metadata) {
             nativeGeneration = HologramStaticMaterials.nativeGeneration();
             resourceGeneration = ResourceContainers.generation();
-            x = metadata.getInteger("x"); y = metadata.getInteger("y"); z = metadata.getInteger("z");
+            x = metadata.getInteger("x");
+            y = metadata.getInteger("y");
+            z = metadata.getInteger("z");
             units = new HashMap<>();
             all = new Group();
             layers = new HashMap<>();
@@ -196,14 +221,18 @@ final class HologramLocalMaterialIndex {
         private Builder(HologramLocalMaterialIndex original) {
             nativeGeneration = original.nativeGeneration;
             resourceGeneration = original.resourceGeneration;
-            x = original.x; y = original.y; z = original.z;
+            x = original.x;
+            y = original.y;
+            z = original.z;
             units = new HashMap<>(original.units);
             all = new Group(original.all);
             layers = new HashMap<>(original.layers);
             families = new HashMap<>(original.families);
         }
 
-        void add(HologramState.Cell cell) { add(cell, 1); }
+        void add(HologramState.Cell cell) {
+            add(cell, 1);
+        }
 
         private void add(HologramState.Cell cell, int delta) {
             if (sealed) throw new IllegalStateException("Material index already published");
@@ -220,13 +249,15 @@ final class HologramLocalMaterialIndex {
                 Group previous = layers.get(cell.dy);
                 layers.put(cell.dy, previous == null ? new Group() : new Group(previous));
             }
-            layers.get(cell.dy).add(unit, delta);
+            layers.get(cell.dy)
+                .add(unit, delta);
             if (!cell.family.isEmpty()) {
                 if (ownFamilies.add(cell.family)) {
                     Group previous = families.get(cell.family);
                     families.put(cell.family, previous == null ? new Group() : new Group(previous));
                 }
-                families.get(cell.family).add(unit, delta);
+                families.get(cell.family)
+                    .add(unit, delta);
             }
         }
 
@@ -234,9 +265,12 @@ final class HologramLocalMaterialIndex {
             if (sealed) throw new IllegalStateException("Material index already published");
             sealed = true;
             // Point edits do not retain resources that have disappeared from the current source.
-            units.values().removeIf(unit -> !all.counts.containsKey(unit));
-            layers.values().removeIf(group -> group.targets == 0);
-            families.values().removeIf(group -> group.targets == 0);
+            units.values()
+                .removeIf(unit -> !all.counts.containsKey(unit));
+            layers.values()
+                .removeIf(group -> group.targets == 0);
+            families.values()
+                .removeIf(group -> group.targets == 0);
             return new HologramLocalMaterialIndex(this);
         }
     }

@@ -26,15 +26,15 @@ public final class HologramPreviewPose {
 
     public int[] apply(int x, int y, int z) {
         int[] result = new int[3];
-        apply(x,y,z,result);
+        apply(x, y, z, result);
         return result;
     }
 
     /** Non-allocating application for an owner-thread construction cursor. */
-    void apply(int x,int y,int z,int[] out) {
-        out[0]=matrix[0]*x+matrix[1]*y+matrix[2]*z;
-        out[1]=matrix[3]*x+matrix[4]*y+matrix[5]*z;
-        out[2]=matrix[6]*x+matrix[7]*y+matrix[8]*z;
+    void apply(int x, int y, int z, int[] out) {
+        out[0] = matrix[0] * x + matrix[1] * y + matrix[2] * z;
+        out[1] = matrix[3] * x + matrix[4] * y + matrix[5] * z;
+        out[2] = matrix[6] * x + matrix[7] * y + matrix[8] * z;
     }
 
     public double[] inverse(double x, double y, double z) {

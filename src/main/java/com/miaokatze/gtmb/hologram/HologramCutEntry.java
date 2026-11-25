@@ -163,9 +163,13 @@ final class HologramCutEntry {
         NBTTagCompound result = new NBTTagCompound();
         for (Object value : entry.func_150296_c()) {
             String key = String.valueOf(value);
-            if (!"cells".equals(key)) result.setTag(key, entry.getTag(key).copy());
+            if (!"cells".equals(key)) result.setTag(
+                key,
+                entry.getTag(key)
+                    .copy());
         }
-        if (result.getString("name").isEmpty()) result.setString("name", "剪切 #" + entry.getLong("sequence"));
+        if (result.getString("name")
+            .isEmpty()) result.setString("name", "剪切 #" + entry.getLong("sequence"));
         return result;
     }
 
@@ -183,8 +187,8 @@ final class HologramCutEntry {
             name = "";
         }
         result.setString("name", name.isEmpty() ? "剪切 #" + sequence : name);
-        for (String key : new String[] { "x", "y", "z", "dimension", "sizeX", "sizeY", "sizeZ",
-            "blocks", "selectedCells" }) {
+        for (String key : new String[] { "x", "y", "z", "dimension", "sizeX", "sizeY", "sizeZ", "blocks",
+            "selectedCells" }) {
             if (entry.hasKey(key, 3)) result.setInteger(key, entry.getInteger(key));
         }
         return result;
@@ -193,7 +197,9 @@ final class HologramCutEntry {
     static boolean canonicalId(String id) {
         if (id == null || id.length() != 36) return false;
         try {
-            return UUID.fromString(id).toString().equals(id);
+            return UUID.fromString(id)
+                .toString()
+                .equals(id);
         } catch (IllegalArgumentException invalid) {
             return false;
         }

@@ -37,7 +37,10 @@ final class HologramOpeningPreview {
     }
 
     void observe(HologramState drawn, ViewportCoordinates area, long resources, double gridScale, double extent) {
-        if (drawn != state || area == null || gridScale <= 0 || !Double.isFinite(gridScale) || extent <= 0
+        if (drawn != state || area == null
+            || gridScale <= 0
+            || !Double.isFinite(gridScale)
+            || extent <= 0
             || !Double.isFinite(extent)) return;
         if (presented != null && !navigable(drawn, area, resources)) cancelDrag();
         showedPrefix = true;
@@ -67,8 +70,10 @@ final class HologramOpeningPreview {
     Pose forInstalled(HologramState installed) {
         if (!showedPrefix || installed.data.getBoolean("displayPartial")
             || !state.session.equals(installed.session)
-            || !state.data.getString("generation").equals(installed.data.getString("generation"))
-            || !state.data.getString("libraryLocalId").equals(installed.data.getString("libraryLocalId"))
+            || !state.data.getString("generation")
+                .equals(installed.data.getString("generation"))
+            || !state.data.getString("libraryLocalId")
+                .equals(installed.data.getString("libraryLocalId"))
             || state.data.getLong("planRevision") != installed.data.getLong("planRevision")
             || state.minY != installed.minY
             || state.maxY != installed.maxY

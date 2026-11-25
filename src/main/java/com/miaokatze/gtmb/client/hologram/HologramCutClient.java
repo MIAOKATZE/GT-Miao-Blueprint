@@ -72,11 +72,10 @@ final class HologramCutClient {
             Object receivedWorld = minecraft.theWorld, connection = minecraft.getNetHandler();
             Object receivedActor = minecraft.thePlayer;
             if (receivedWorld == null || receivedActor == null || connection == null || inbound != connection) return;
-            minecraft.func_152344_a(
-                () -> {
-                    if (receivedWorld == minecraft.theWorld && connection == minecraft.getNetHandler()
-                        && receivedActor == minecraft.thePlayer) receive(nbt);
-                });
+            minecraft.func_152344_a(() -> {
+                if (receivedWorld == minecraft.theWorld && connection == minecraft.getNetHandler()
+                    && receivedActor == minecraft.thePlayer) receive(nbt);
+            });
         });
     }
 
@@ -153,7 +152,8 @@ final class HologramCutClient {
     void tick() {
         Minecraft mc = mc();
         if (!HologramClient.worldInputFocused() || !Mouse.isCreated() || !Mouse.isButtonDown(1)) rightDown = false;
-        if (world != mc.theWorld || connection != mc.getNetHandler() || actor != mc.thePlayer
+        if (world != mc.theWorld || connection != mc.getNetHandler()
+            || actor != mc.thePlayer
             || mc.thePlayer != null && dimension != mc.thePlayer.dimension) {
             HologramCutStoragePreview.invalidate();
             HologramNetwork.clearCutClientTransport();
@@ -200,8 +200,7 @@ final class HologramCutClient {
         }
         // Recover an overlapping local cut left by older input routing without touching its server-owned queue.
         if (!demolitionMode && blueprintBusy()
-            && HologramCutInput
-                .exitsMode(stage, cutMode || demolitionMode, cutSession, lockedBounds != null)) {
+            && HologramCutInput.exitsMode(stage, cutMode || demolitionMode, cutSession, lockedBounds != null)) {
             chooseBlueprintMode();
             closeScreen();
         }
@@ -624,7 +623,8 @@ final class HologramCutClient {
 
     /** Only existing explicit Sync buttons can ask to continue a known earlier operation. */
     void retryDirectory() {
-        if (!requests.unresolvedDemolition().isEmpty()) {
+        if (!requests.unresolvedDemolition()
+            .isEmpty()) {
             refreshDirectory();
             return;
         }
@@ -637,14 +637,17 @@ final class HologramCutClient {
 
     private boolean currentPeer() {
         Minecraft mc = mc();
-        return world != null && world == mc.theWorld && connection != null && connection == mc.getNetHandler()
-            && actor != null && actor == mc.thePlayer && dimension == mc.thePlayer.dimension;
+        return world != null && world == mc.theWorld
+            && connection != null
+            && connection == mc.getNetHandler()
+            && actor != null
+            && actor == mc.thePlayer
+            && dimension == mc.thePlayer.dimension;
     }
 
     private boolean requireBoundsPeer() {
         if (currentPeer() && boundsCapability != null) return true;
-        status.show(loaded ? "此服务器未确认支持范围剪切；仅可查看暂存，未执行操作。"
-            : "请先同步支持范围剪切的暂存列表；未执行操作。");
+        status.show(loaded ? "此服务器未确认支持范围剪切；仅可查看暂存，未执行操作。" : "请先同步支持范围剪切的暂存列表；未执行操作。");
         return false;
     }
 
@@ -679,8 +682,8 @@ final class HologramCutClient {
             status.show("请先关闭当前界面，再打开剪切暂存。");
             return;
         }
-        HologramScreen editor = HologramScreen.localWorkspace(
-            minecraft.thePlayer.getHeldItem(), minecraft.thePlayer.dimension);
+        HologramScreen editor = HologramScreen
+            .localWorkspace(minecraft.thePlayer.getHeldItem(), minecraft.thePlayer.dimension);
         if (editor.ui.workspaces.tryActivateCut()) editor.openFrom(null);
     }
 
@@ -730,7 +733,10 @@ final class HologramCutClient {
 
     /** Browsing never changes the world preview; an explicit storage action starts it once. */
     void beginStoragePlacement(String id) {
-        if (!held() || !requireBoundsPeer() || busy() || blueprintBusy() || HologramBackgroundTasks.busy()
+        if (!held() || !requireBoundsPeer()
+            || busy()
+            || blueprintBusy()
+            || HologramBackgroundTasks.busy()
             || !containsEntry(id)) return;
         stage = HologramCutInput.Stage.IDLE;
         select(id);
@@ -750,8 +756,12 @@ final class HologramCutClient {
     void undo(String id) {
         UndoProof confirmation = armStorageUndo(id);
         if (confirmation == null) return;
-        mc().displayGuiScreen(new HologramCutConfirmScreen(text("confirmUndo"), text("confirmUndoDetail"),
-            () -> requestStorageUndo(confirmation), () -> {}));
+        mc().displayGuiScreen(
+            new HologramCutConfirmScreen(
+                text("confirmUndo"),
+                text("confirmUndoDetail"),
+                () -> requestStorageUndo(confirmation),
+                () -> {}));
     }
 
     /** Editor controls share the tool's held-item, directory and unresolved-write gates. */
@@ -760,6 +770,7 @@ final class HologramCutClient {
     }
 
     static final class UndoProof {
+
         final ToolProof tool;
         final ClipBounds bounds;
 
@@ -789,7 +800,8 @@ final class HologramCutClient {
         }
         if (busy()) {
             status.directoryFailed(text("syncRequired"));
-            if (!requests.busy() || !requests.unresolvedWrite().isEmpty()) refreshDirectory();
+            if (!requests.busy() || !requests.unresolvedWrite()
+                .isEmpty()) refreshDirectory();
             return;
         }
         NBTTagCompound n = action("undo", proof.bounds.id);
@@ -798,6 +810,7 @@ final class HologramCutClient {
     }
 
     static final class ToolProof {
+
         private final Object world, handler, actor, stack, item;
         private final UUID token;
         private final int slot, dimension;
@@ -816,10 +829,19 @@ final class HologramCutClient {
 
         boolean matches(Object actualWorld, Object actualHandler, Object actualActor, Object actualStack,
             Object actualItem, UUID actualToken, int actualSlot, int actualDimension) {
-            return world != null && world == actualWorld && handler != null && handler == actualHandler
-                && actor != null && actor == actualActor && stack != null && stack == actualStack
-                && item != null && item == actualItem && token != null && token.equals(actualToken)
-                && slot == actualSlot && dimension == actualDimension;
+            return world != null && world == actualWorld
+                && handler != null
+                && handler == actualHandler
+                && actor != null
+                && actor == actualActor
+                && stack != null
+                && stack == actualStack
+                && item != null
+                && item == actualItem
+                && token != null
+                && token.equals(actualToken)
+                && slot == actualSlot
+                && dimension == actualDimension;
         }
     }
 
@@ -827,23 +849,38 @@ final class HologramCutClient {
         if (!held() || !requireBoundsPeer()) return null;
         Minecraft mc = mc();
         ItemStack stack = mc.thePlayer.getHeldItem();
-        return new ToolProof(mc.theWorld, mc.getNetHandler(), mc.thePlayer, stack, stack.getItem(), boundsCapability,
-            mc.thePlayer.inventory.currentItem, mc.thePlayer.dimension);
+        return new ToolProof(
+            mc.theWorld,
+            mc.getNetHandler(),
+            mc.thePlayer,
+            stack,
+            stack.getItem(),
+            boundsCapability,
+            mc.thePlayer.inventory.currentItem,
+            mc.thePlayer.dimension);
     }
 
     private boolean toolCurrent(ToolProof proof) {
         if (proof != null && held() && requireBoundsPeer()) {
             Minecraft mc = mc();
             ItemStack stack = mc.thePlayer.getHeldItem();
-            if (proof.matches(mc.theWorld, mc.getNetHandler(), mc.thePlayer, stack, stack.getItem(), boundsCapability,
-                mc.thePlayer.inventory.currentItem, mc.thePlayer.dimension)) return true;
+            if (proof.matches(
+                mc.theWorld,
+                mc.getNetHandler(),
+                mc.thePlayer,
+                stack,
+                stack.getItem(),
+                boundsCapability,
+                mc.thePlayer.inventory.currentItem,
+                mc.thePlayer.dimension)) return true;
         }
         status.show("手持投影仪或剪切确认已变化；暂存未改动，请重新确认。");
         return false;
     }
 
     private void confirmPaste() {
-        if (!held() || !requireBoundsPeer() || stage != HologramCutInput.Stage.LOCKED || locked == null || busy()) return;
+        if (!held() || !requireBoundsPeer() || stage != HologramCutInput.Stage.LOCKED || locked == null || busy())
+            return;
         final ClipBounds bounds = lockedBounds;
         if (bounds == null || !bounds.sameEntry(clipboardBounds(selected))) {
             status.show(UNAVAILABLE_BOUNDS);
@@ -861,17 +898,17 @@ final class HologramCutClient {
         mc().displayGuiScreen(
             new HologramCutConfirmScreen(
                 text("confirmPaste"),
-                "这里只显示范围。服务器会在放置前核对实际方块与权限。 "
-                    + coordinates(at) + " | " + poseSummary(),
+                "这里只显示范围。服务器会在放置前核对实际方块与权限。 " + coordinates(at) + " | " + poseSummary(),
                 () -> submitPaste(bounds, at, placementPose, proof),
                 this::cancel));
     }
 
     private void submitPaste(ClipBounds bounds, int[] at, Transform placementPose, ToolProof proof) {
         if (!toolCurrent(proof)) return;
-        if (stage != HologramCutInput.Stage.LOCKED
-            || pose != placementPose || !Arrays.equals(locked, at)
-            || !bounds.sameEntry(lockedBounds) || !bounds.sameEntry(clipboardBounds(selected))
+        if (stage != HologramCutInput.Stage.LOCKED || pose != placementPose
+            || !Arrays.equals(locked, at)
+            || !bounds.sameEntry(lockedBounds)
+            || !bounds.sameEntry(clipboardBounds(selected))
             || bounds.boxAt(placementPose, at) == null) {
             status.show(UNAVAILABLE_BOUNDS);
             return;
@@ -906,8 +943,7 @@ final class HologramCutClient {
     }
 
     private boolean exitLocalMode() {
-        if (!HologramCutInput
-            .exitsMode(stage, cutMode || demolitionMode, cutSession, lockedBounds != null))
+        if (!HologramCutInput.exitsMode(stage, cutMode || demolitionMode, cutSession, lockedBounds != null))
             return false;
         exitCutMode();
         return true;
@@ -1052,10 +1088,10 @@ final class HologramCutClient {
             entries.sort((a, b) -> Long.compare(a.getLong("sequence"), b.getLong("sequence")));
             HologramCutStoragePreview.directoryChanged(entries);
             status.directoryRecovered();
-            if ("list".equals(op) && boundsCapability == null)
-                status.show("此服务器未确认支持范围剪切；仅可查看暂存。");
+            if ("list".equals(op) && boundsCapability == null) status.show("此服务器未确认支持范围剪切；仅可查看暂存。");
             if ("list".equals(op) && reply.target.isEmpty()
-                && (!requests.unresolvedWrite().isEmpty() || !pendingRecovery.isEmpty()))
+                && (!requests.unresolvedWrite()
+                    .isEmpty() || !pendingRecovery.isEmpty()))
                 status.show("结果尚未核定；请手动同步暂存以核对原操作。");
         }
         if ("list".equals(op) && !acceptedDirectory) {
@@ -1085,7 +1121,8 @@ final class HologramCutClient {
                 String operation = resolved == null ? pendingRecoveryOp : resolved.action;
                 status.show(text(completed ? "resultConfirmed" : "notExecuted"));
                 if ("cut".equals(operation)) finishCut(reply.target, completed);
-                if (completed && resolved != null && requests.currentActivity(resolved)
+                if (completed && resolved != null
+                    && requests.currentActivity(resolved)
                     && ("paste".equals(operation) || "undo".equals(operation))) cancel();
                 if (reply.target.equals(pendingRecovery)) {
                     pendingRecovery = "";
@@ -1097,8 +1134,8 @@ final class HologramCutClient {
             && !requests.unresolvedWrite()
                 .isEmpty())
             status.directoryFailed(n.getBoolean("success") ? text("syncTimeout") : n.getString("message"));
-        if (n.getBoolean("success") && requests.currentActivity(reply)
-            && ("paste".equals(op) || "undo".equals(op))) cancel();
+        if (n.getBoolean("success") && requests.currentActivity(reply) && ("paste".equals(op) || "undo".equals(op)))
+            cancel();
         if ("cut".equals(op)) finishCut(reply.id, n.getBoolean("success"));
         if (!"list".equals(op) && !"preview".equals(op)
             && (!"cut".equals(op) || !n.getBoolean("success"))
@@ -1300,19 +1337,22 @@ final class HologramCutClient {
     }
 
     ClipBounds clipboardBounds(String id) {
-        for (NBTTagCompound row : entries) if (row.getString("id").equals(id)) return ClipBounds.read(row);
+        for (NBTTagCompound row : entries) if (row.getString("id")
+            .equals(id)) return ClipBounds.read(row);
         return null;
     }
 
-    private static final String[] DIRECTORY_INTS = {
-        "x", "y", "z", "dimension", "sizeX", "sizeY", "sizeZ", "blocks", "selectedCells" };
+    private static final String[] DIRECTORY_INTS = { "x", "y", "z", "dimension", "sizeX", "sizeY", "sizeZ", "blocks",
+        "selectedCells" };
 
     static NBTTagCompound directoryRow(NBTTagCompound input) {
         if (!input.hasKey("id", 8)) return null;
         String id = input.getString("id");
         if (id.length() != 36) return null;
         try {
-            if (!UUID.fromString(id).toString().equals(id)) return null;
+            if (!UUID.fromString(id)
+                .toString()
+                .equals(id)) return null;
         } catch (IllegalArgumentException invalid) {
             return null;
         }
@@ -1356,25 +1396,37 @@ final class HologramCutClient {
         }
 
         boolean sameEntry(ClipBounds other) {
-            return other != null && id.equals(other.id) && sequence == other.sequence
-                && x == other.x && y == other.y && z == other.z && dimension == other.dimension
-                && sx == other.sx && sy == other.sy && sz == other.sz;
+            return other != null && id.equals(other.id)
+                && sequence == other.sequence
+                && x == other.x
+                && y == other.y
+                && z == other.z
+                && dimension == other.dimension
+                && sx == other.sx
+                && sy == other.sy
+                && sz == other.sz;
         }
 
         int[] boxAt(Transform pose, int[] at) {
             if (at == null || at.length != 3) return null;
             int[] size = pose.size(sx, sy, sz);
             if (!fits(at[0], at[1], at[2], size[0], size[1], size[2])) return null;
-            return new int[] { at[0], at[1], at[2],
-                at[0] + size[0] - 1, at[1] + size[1] - 1, at[2] + size[2] - 1 };
+            return new int[] { at[0], at[1], at[2], at[0] + size[0] - 1, at[1] + size[1] - 1, at[2] + size[2] - 1 };
         }
 
         private static boolean fits(int x, int y, int z, int sx, int sy, int sz) {
-            return sx > 0 && sy > 0 && sz > 0
-                && sx <= HologramCutProtocol.MAX_SIDE && sy <= HologramCutProtocol.MAX_SIDE
-                && sz <= HologramCutProtocol.MAX_SIDE && (long) sx * sy * sz <= HologramCutProtocol.MAX_CELLS
-                && x >= -30000000 && z >= -30000000 && y >= 0
-                && (long) x + sx <= 30000000 && (long) z + sz <= 30000000 && (long) y + sy <= 256;
+            return sx > 0 && sy > 0
+                && sz > 0
+                && sx <= HologramCutProtocol.MAX_SIDE
+                && sy <= HologramCutProtocol.MAX_SIDE
+                && sz <= HologramCutProtocol.MAX_SIDE
+                && (long) sx * sy * sz <= HologramCutProtocol.MAX_CELLS
+                && x >= -30000000
+                && z >= -30000000
+                && y >= 0
+                && (long) x + sx <= 30000000
+                && (long) z + sz <= 30000000
+                && (long) y + sy <= 256;
         }
     }
 

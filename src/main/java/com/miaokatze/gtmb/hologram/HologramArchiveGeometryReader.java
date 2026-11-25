@@ -21,7 +21,9 @@ public final class HologramArchiveGeometryReader implements AutoCloseable {
     private static final int HASH_BYTES = 32, HEADER_BYTES = 56, ENTRY_BYTES = 56, MAX_PAGES = 65_536;
     private static final int HORIZONTAL = 60_000_000, VERTICAL = 256, MAX_CELLS = 4_000_000;
     private static final int MAX_PAGE_BYTES = MAX_PAGE_ROWS * Integer.BYTES;
+
     public enum Material {
+
         STONE_BRICK("minecraft:stonebrick"),
         QUARTZ_BLOCK("minecraft:quartz_block"),
         GLOWSTONE("minecraft:glowstone");
@@ -73,7 +75,8 @@ public final class HologramArchiveGeometryReader implements AutoCloseable {
     /**
      * Transfers closure of the exact handle on entry, including failed validation. The caller provides the trusted
      * manifest from its verified private catalog, not a digest taken from the candidate file. Reader access and close
-     * remain on one worker. Opening authenticates only the bounded index; each requested payload is verified separately.
+     * remain on one worker. Opening authenticates only the bounded index; each requested payload is verified
+     * separately.
      */
     public static HologramArchiveGeometryReader take(SeekableByteChannel owned, byte[] trustedManifest)
         throws IOException {
@@ -113,7 +116,9 @@ public final class HologramArchiveGeometryReader implements AutoCloseable {
                 throw invalid("manifest identity");
             if (current != null && !current.getAsBoolean()) throw stale();
             return new HologramArchiveGeometryReader(
-                owned, trustedManifest == null ? null : trustedManifest.clone(), current);
+                owned,
+                trustedManifest == null ? null : trustedManifest.clone(),
+                current);
         } catch (IOException | RuntimeException | Error failed) {
             try {
                 owned.close();
@@ -135,8 +140,12 @@ public final class HologramArchiveGeometryReader implements AutoCloseable {
         if (header.getInt() != MAGIC || header.getInt() != VERSION) throw invalid("magic/version");
         cells = header.getLong();
         pages = header.getInt();
-        if (header.getInt() != MATERIALS.length || cells < 1 || cells > MAX_CELLS || pages < 1
-            || pages > MAX_PAGES || pages > cells || cells > (long) pages * MAX_PAGE_ROWS
+        if (header.getInt() != MATERIALS.length || cells < 1
+            || cells > MAX_CELLS
+            || pages < 1
+            || pages > MAX_PAGES
+            || pages > cells
+            || cells > (long) pages * MAX_PAGE_ROWS
             || indexEnd(pages) + cells * Integer.BYTES != length) throw invalid("directory bounds");
         byte[] palette = new byte[HASH_BYTES];
         header.get(palette);
@@ -156,9 +165,14 @@ public final class HologramArchiveGeometryReader implements AutoCloseable {
             int entry = i * ENTRY_BYTES;
             int x = index.getInt(entry), y = index.getInt(entry + 4), z = index.getInt(entry + 8);
             int rows = index.getInt(entry + 12);
-            if (x < (-HORIZONTAL >> 4) || x > (HORIZONTAL >> 4) || z < (-HORIZONTAL >> 4)
-                || z > (HORIZONTAL >> 4) || y < (-VERTICAL >> 4) || y > (VERTICAL >> 4)
-                || rows < 1 || rows > MAX_PAGE_ROWS || index.getLong(entry + 16) != offset
+            if (x < (-HORIZONTAL >> 4) || x > (HORIZONTAL >> 4)
+                || z < (-HORIZONTAL >> 4)
+                || z > (HORIZONTAL >> 4)
+                || y < (-VERTICAL >> 4)
+                || y > (VERTICAL >> 4)
+                || rows < 1
+                || rows > MAX_PAGE_ROWS
+                || index.getLong(entry + 16) != offset
                 || i != 0 && compare(x, y, z, lastX, lastY, lastZ) <= 0) throw invalid("directory entry");
             total += rows;
             offset += (long) rows * Integer.BYTES;
@@ -198,7 +212,8 @@ public final class HologramArchiveGeometryReader implements AutoCloseable {
         int previous = -1;
         for (int i = 0; i < count; i++) {
             int packed = body.getInt(), slot = packed >>> 16, material = packed & 0xffff;
-            if (slot <= previous || slot >= MAX_PAGE_ROWS || material >= MATERIALS.length
+            if (slot <= previous || slot >= MAX_PAGE_ROWS
+                || material >= MATERIALS.length
                 || Math.abs((x << 4) + (slot >>> 8)) > HORIZONTAL
                 || Math.abs((y << 4) + ((slot >>> 4) & 15)) > VERTICAL
                 || Math.abs((z << 4) + (slot & 15)) > HORIZONTAL) throw invalid("page row");

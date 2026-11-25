@@ -84,20 +84,22 @@ final class HologramAreaPreparation {
     /** Ownership transfers only on accepted admission. A full queue is retried by a later ordinary server tick. */
     boolean start(HologramPresets.Preset source) {
         if (task != null) return true;
-        FutureTask<HologramPresets.Preset> candidate = new FutureTask<>(
-            () -> {
-                var input = source;
-                if (source.cells instanceof HologramLiteralCaptureRows packed) {
-                    // Use a detached header. Progress/UI may still read source.cells on the owner thread.
-                    input = HologramSnapshotMetadataSource.copyMetadata(source);
-                    input.palette = source.palette;
-                    input.cells = packed.sensitive();
-                }
-                var sanitized = HologramAePolicy.sanitizeOwned(input, Collections.unmodifiableMap(networks),
-                    Collections.unmodifiableMap(nativeShells), this::update).preset;
-                if (input != source) sanitized.cells = source.cells;
-                return sanitized;
-            });
+        FutureTask<HologramPresets.Preset> candidate = new FutureTask<>(() -> {
+            var input = source;
+            if (source.cells instanceof HologramLiteralCaptureRows packed) {
+                // Use a detached header. Progress/UI may still read source.cells on the owner thread.
+                input = HologramSnapshotMetadataSource.copyMetadata(source);
+                input.palette = source.palette;
+                input.cells = packed.sensitive();
+            }
+            var sanitized = HologramAePolicy.sanitizeOwned(
+                input,
+                Collections.unmodifiableMap(networks),
+                Collections.unmodifiableMap(nativeShells),
+                this::update).preset;
+            if (input != source) sanitized.cells = source.cells;
+            return sanitized;
+        });
         if (execute(candidate)) {
             task = candidate;
             return true;

@@ -72,7 +72,8 @@ final class HologramNativePreviewWorld extends HologramResourceWorld {
 
     /** Separate dummy worlds keep creative callbacks from replacing already selected survival blocks or hatches. */
     void retainOnlyAdditionalTo(HologramNativePreviewWorld primary) throws java.io.IOException {
-        for (var it = placements.keySet().iterator(); it.hasNext();) {
+        for (var it = placements.keySet()
+            .iterator(); it.hasNext();) {
             if (primary.placements.containsKey(it.nextLong())) it.remove();
         }
         HologramBlueprintLimits.require(1L + primary.placements.size() + placements.size());

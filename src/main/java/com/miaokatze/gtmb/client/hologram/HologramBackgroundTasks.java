@@ -40,11 +40,11 @@ public final class HologramBackgroundTasks {
             succeeded = result == HologramTaskOwner.Result.SUCCESS && !noWork;
             completion = noWork ? "无需施工" + (detail == null || detail.isEmpty() ? "" : "：" + detail)
                 : label
-                + (succeeded ? "已完成"
-                    : result == HologramTaskOwner.Result.PARTIAL ? "部分完成"
-                    : result == HologramTaskOwner.Result.REVIEW_REQUIRED ? "等待确认"
-                        : result == HologramTaskOwner.Result.CANCELLED ? "已取消" : "失败")
-                + (detail == null || detail.isEmpty() ? "" : "：" + detail);
+                    + (succeeded ? "已完成"
+                        : result == HologramTaskOwner.Result.PARTIAL ? "部分完成"
+                            : result == HologramTaskOwner.Result.REVIEW_REQUIRED ? "等待确认"
+                                : result == HologramTaskOwner.Result.CANCELLED ? "已取消" : "失败")
+                    + (detail == null || detail.isEmpty() ? "" : "：" + detail);
             if (OWNED_CONTEXT_LOST.equals(operation)) completion = detail;
             if ("orderMissingMaterials".equals(operation)) completion += "；右键投影仪返回材料确认，点击“刷新材料”核对后继续放置。";
             chat(completion);
@@ -215,7 +215,9 @@ public final class HologramBackgroundTasks {
         boundToken = OWNER.token();
     }
 
-    /** Client thread, only from a confirmed construction route. Reads and wire acknowledgments never begin this task. */
+    /**
+     * Client thread, only from a confirmed construction route. Reads and wire acknowledgments never begin this task.
+     */
     public static Ticket beginOwnedPlacement(UUID request, String label, BooleanSupplier cancel) {
         Binding binding = placementBinding();
         if (request == null || binding == null || !binding.valid() || busy()) return null;
@@ -232,21 +234,23 @@ public final class HologramBackgroundTasks {
     /** Resolve only an admitted client ticket; the caller separately authenticates the original receipt. */
     public static Ticket ownedPlacementTicket(UUID request) {
         Ticket ticket = placementProgress.ticket();
-        return ownedPlacementTask() && ticket != null && ticket.request().equals(request)
+        return ownedPlacementTask() && ticket != null
+            && ticket.request()
+                .equals(request)
             && placementProgress.active(ticket, placementBinding()) ? ticket : null;
     }
 
     /** Phase-local counters and serial, not a percentage guessed from timing or transport acknowledgments. */
     public static boolean observeOwnedPlacement(Ticket ticket, Phase phase, long sequence, long done, long total) {
-        return ownsPlacement(ticket) && placementProgress.observe(
-            ticket, placementBinding(), phase, sequence, done, total, System.nanoTime());
+        return ownsPlacement(ticket)
+            && placementProgress.observe(ticket, placementBinding(), phase, sequence, done, total, System.nanoTime());
     }
 
     /** An authenticated stopped or rejected request can retire only its own presentation. */
     public static boolean finishOwnedPlacement(Ticket ticket, long sequence, Outcome outcome, long placed,
         long alreadySatisfied, long total, String message) {
-        if (!ownsPlacement(ticket) || !placementProgress.finish(
-            ticket, placementBinding(), sequence, outcome, placed, alreadySatisfied, total, System.nanoTime()))
+        if (!ownsPlacement(ticket) || !placementProgress
+            .finish(ticket, placementBinding(), sequence, outcome, placed, alreadySatisfied, total, System.nanoTime()))
             return false;
         return notifyOwnedPlacementTerminal(ticket, outcome, message);
     }
@@ -270,8 +274,12 @@ public final class HologramBackgroundTasks {
         Minecraft mc = Minecraft.getMinecraft();
         if (mc == null || mc.thePlayer == null) return null;
         var held = mc.thePlayer.getHeldItem();
-        return new Binding(mc.theWorld, mc.getNetHandler(), mc.thePlayer,
-            ItemNekoHologramProjector.isProjector(held) ? held : null, mc.thePlayer.inventory.currentItem);
+        return new Binding(
+            mc.theWorld,
+            mc.getNetHandler(),
+            mc.thePlayer,
+            ItemNekoHologramProjector.isProjector(held) ? held : null,
+            mc.thePlayer.inventory.currentItem);
     }
 
     static boolean ownedPlacementTask() {
@@ -279,8 +287,12 @@ public final class HologramBackgroundTasks {
     }
 
     private static boolean ownsPlacement(Ticket ticket) {
-        return ticket != null && placementProgress.ticket() == ticket && OWNER.matches(
-            OWNED_PLACEMENT, ticket.request().toString()) && OWNER.token() == ticket.token;
+        return ticket != null && placementProgress.ticket() == ticket
+            && OWNER.matches(
+                OWNED_PLACEMENT,
+                ticket.request()
+                    .toString())
+            && OWNER.token() == ticket.token;
     }
 
     static boolean ownedPlacementVisible() {
@@ -291,7 +303,8 @@ public final class HologramBackgroundTasks {
     public static boolean showOwnedPlacement(Ticket ticket) {
         if (!ownsPlacement(ticket) || !placementProgress.visible(placementBinding())) return false;
         OWNER.attach();
-        Minecraft.getMinecraft().displayGuiScreen(new HologramPlacementLoadingScreen(ticket));
+        Minecraft.getMinecraft()
+            .displayGuiScreen(new HologramPlacementLoadingScreen(ticket));
         return true;
     }
 
@@ -310,8 +323,9 @@ public final class HologramBackgroundTasks {
         HologramProgress progress = ownedPlacementView(ticket);
         if (progress == null) return "";
         String summary = HologramProgressView.summary(progress, System.nanoTime());
-        return progress.total == 0 && progress.done > 0 ? summary + " · " + progress.done + " "
-            + HologramProgressView.phase("unit." + progress.unit) : summary;
+        return progress.total == 0 && progress.done > 0
+            ? summary + " · " + progress.done + " " + HologramProgressView.phase("unit." + progress.unit)
+            : summary;
     }
 
     static String ownedPlacementStatus() {

@@ -113,9 +113,8 @@ final class HologramNativeCompactStart {
             receipt.send(p, id, false, "现场原生控制器或朝向已变化。");
             return;
         }
-        if (ordinary && (StructureSources.hasSource(unit.getClass())
-            || com.miaokatze.gtmb.api.BlueprintSnapshots
-                .hasProcessors(com.miaokatze.gtmb.api.BlueprintSnapshots.Stage.CAPTURE_COMPLETE))) {
+        if (ordinary && (StructureSources.hasSource(unit.getClass()) || com.miaokatze.gtmb.api.BlueprintSnapshots
+            .hasProcessors(com.miaokatze.gtmb.api.BlueprintSnapshots.Stage.CAPTURE_COMPLETE))) {
             receipt.send(p, id, false, "当前原生结构使用了需要独立审核的提供器，请使用高级施工。");
             return;
         }
@@ -187,8 +186,7 @@ final class HologramNativeCompactStart {
 
     static String preparationTimeout(boolean ordinary, long start, long lastProgress, long now) {
         if (ordinary && now - start >= ORDINARY_LIMIT_NANOS) return "原生补建达到准备时间上限，未开始施工。";
-        if (now - (ordinary ? lastProgress : start) >= IDLE_NANOS)
-            return "原生补建准备超时，未开始施工。";
+        if (now - (ordinary ? lastProgress : start) >= IDLE_NANOS) return "原生补建准备超时，未开始施工。";
         return null;
     }
 
@@ -223,15 +221,17 @@ final class HologramNativeCompactStart {
         HologramControllerCapture.collect(s, !collecting);
         collecting = true;
         if (s.nativeCompactStart != this) return true;
-        long discovered = s.capture == null ? 0
-            : s.capture.nativeWalkUnits - (s.capture == before ? visited : 0);
+        long discovered = s.capture == null ? 0 : s.capture.nativeWalkUnits - (s.capture == before ? visited : 0);
         HologramControllerCapture.FinishWork finishWork = s.captureWork;
-        progress(discovered + (finishWork == null ? 0 : finishWork.lastWork()),
+        progress(
+            discovered + (finishWork == null ? 0 : finishWork.lastWork()),
             finishWork == null || !finishWork.finalizing() ? "placement.capture" : "placement.plan");
         if (!s.capturePending) {
             if (ordinary && (s.capture == null || s.capture.incomplete || !s.captureError.isEmpty())) {
-                finish(false, !s.captureError.isEmpty() ? s.captureError
-                    : s.capture == null || s.capture.failure.isEmpty() ? "原生结构采集未完成" : s.capture.failure);
+                finish(
+                    false,
+                    !s.captureError.isEmpty() ? s.captureError
+                        : s.capture == null || s.capture.failure.isEmpty() ? "原生结构采集未完成" : s.capture.failure);
             } else if (ordinary && !s.capture.readyPlacementSource(s)) {
                 finish(false, "当前原生结构使用了需要独立审核的提供器或现场规则，未开始补建");
             } else if (ordinary && s.planMissing > 0) {
@@ -266,8 +266,7 @@ final class HologramNativeCompactStart {
 
     private boolean current() {
         HologramSession s = session;
-        return s.job == 0
-            && !s.cancelled
+        return s.job == 0 && !s.cancelled
             && s.machine != null
             && HologramWorkspace.find(s.player.getUniqueID()) == s
             && HologramSessionPolicy.valid(s)

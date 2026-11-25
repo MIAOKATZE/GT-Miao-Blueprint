@@ -4,9 +4,9 @@
 package com.miaokatze.gtmb.hologram;
 
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.LinkedHashMap;
 
 import net.minecraft.block.Block;
 import net.minecraft.init.Blocks;
@@ -17,16 +17,18 @@ import com.gtnewhorizon.structurelib.structure.IStructureElement;
 
 import gregtech.api.GregTechAPI;
 
-/** Display-only evidence collected inside the existing, loaded-client-world declaration walk.
- * Counts refer to declared positions, not GT's server-owned formed flag or hatch membership. */
+/**
+ * Display-only evidence collected inside the existing, loaded-client-world declaration walk.
+ * Counts refer to declared positions, not GT's server-owned formed flag or hatch membership.
+ */
 final class HologramLocalControllerSite {
+
     private int occupied, missing, different, unknown, hatches, matching, matchingSolid;
     private final Map<IStructureElement<?>, Channel> declarations = new IdentityHashMap<>();
     private final Map<String, Integer> channels = new LinkedHashMap<>();
 
-    String observe(IStructureElement<?> element, boolean unread, Block actual, int meta, ItemStack stack,
-        int facing, Block expected, int expectedMeta, ItemStack wanted, int wantedFacing, boolean unsupported,
-        boolean hatch) {
+    String observe(IStructureElement<?> element, boolean unread, Block actual, int meta, ItemStack stack, int facing,
+        Block expected, int expectedMeta, ItemStack wanted, int wantedFacing, boolean unsupported, boolean hatch) {
         if (element != null) {
             Channel channel = declarations.computeIfAbsent(element, Channel::read);
             if (channel != Channel.NONE) {
@@ -34,15 +36,26 @@ final class HologramLocalControllerSite {
                 channels.merge(channel.id, value, (a, b) -> a.intValue() == b.intValue() ? a : 0);
             }
         }
-        if (unread || actual == null) { unknown++; return "unsupported"; }
+        if (unread || actual == null) {
+            unknown++;
+            return "unsupported";
+        }
         if (actual != Blocks.air) {
             occupied++;
             if (hatch) hatches++;
         }
-        if (unsupported || expected == null) { unknown++; return "unsupported"; }
-        if (actual == Blocks.air && expected != Blocks.air) { missing++; return "missing"; }
+        if (unsupported || expected == null) {
+            unknown++;
+            return "unsupported";
+        }
+        if (actual == Blocks.air && expected != Blocks.air) {
+            missing++;
+            return "missing";
+        }
         boolean same = actual == GregTechAPI.sBlockMachines || expected == GregTechAPI.sBlockMachines
-            ? actual == expected && stack != null && wanted != null && HologramValues.same(stack, wanted)
+            ? actual == expected && stack != null
+                && wanted != null
+                && HologramValues.same(stack, wanted)
                 && (wantedFacing < 0 || facing == wantedFacing)
             : HologramBlockIdentity.sameForPlacement(actual, meta, expected, expectedMeta);
         if (same) {
@@ -68,6 +81,7 @@ final class HologramLocalControllerSite {
     }
 
     private static final class Channel {
+
         static final Channel NONE = new Channel("", java.util.Collections.emptyList(), false);
         final String id;
         final List<ItemStack> options;
@@ -98,8 +112,9 @@ final class HologramLocalControllerSite {
                     if (structure && "withChannel".equals(op)) {
                         if (id != null) break; // a nested selector changes which trigger actually governs this slot
                         id = HologramDeclarationWrappers.channel(element);
-                    } else if (!(structure && ("onElementPass".equals(op) || "onElementFail".equals(op)
-                        || "withDescription".equals(op)) || gt && "activeCoils".equals(op))) break;
+                    } else if (!(structure
+                        && ("onElementPass".equals(op) || "onElementFail".equals(op) || "withDescription".equals(op))
+                        || gt && "activeCoils".equals(op))) break;
                     element = HologramDeclarationWrappers.nativeBacking(element);
                 }
             } catch (RuntimeException | ReflectiveOperationException | LinkageError unavailable) {

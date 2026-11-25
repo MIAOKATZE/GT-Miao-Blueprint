@@ -22,7 +22,6 @@ import net.minecraft.world.chunk.Chunk;
 import net.minecraft.world.chunk.EmptyChunk;
 import net.minecraft.world.chunk.storage.ExtendedBlockStorage;
 
-
 /** Captures the player's loaded region on the client tick, then prepares a detached local draft. */
 public final class HologramLocalAreaCapture implements AutoCloseable {
 
@@ -40,8 +39,7 @@ public final class HologramLocalAreaCapture implements AutoCloseable {
     private boolean closed, completed;
     private int shown;
 
-    public HologramLocalAreaCapture(World world, int dimension, HologramAreaSelection selection)
-        throws IOException {
+    public HologramLocalAreaCapture(World world, int dimension, HologramAreaSelection selection) throws IOException {
         if (world == null || !world.isRemote) throw new IllegalArgumentException("Client world required");
         this.world = world;
         this.dimension = dimension;
@@ -80,10 +78,11 @@ public final class HologramLocalAreaCapture implements AutoCloseable {
 
     public int progress() {
         if (completed) return 100;
-        if (!cursor.done()) return (int)(cursor.completed()*80 / cursor.total());
-        HologramAreaPreparation.Progress current=preparation.progress();
-        int phase=current.total>0?(int)Math.min(19,current.done*19/current.total):0;
-        shown=Math.max(shown,80+phase);return shown;
+        if (!cursor.done()) return (int) (cursor.completed() * 80 / cursor.total());
+        HologramAreaPreparation.Progress current = preparation.progress();
+        int phase = current.total > 0 ? (int) Math.min(19, current.done * 19 / current.total) : 0;
+        shown = Math.max(shown, 80 + phase);
+        return shown;
     }
 
     @Override

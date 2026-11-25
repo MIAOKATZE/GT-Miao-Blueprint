@@ -11,7 +11,6 @@ import net.minecraft.nbt.NBTTagList;
 
 import com.miaokatze.gtmb.api.CutTransforms.Transform;
 import com.miaokatze.gtmb.hologram.HologramCutProtocol;
-
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
 /** Browser reads cannot revive a previous selection or a closed/save-switched browser. */
@@ -74,7 +73,8 @@ public final class HologramCutStoragePreviewRegression {
         NBTTagCompound legacy = new NBTTagCompound();
         legacy.setString("requestId", protocolId);
         legacy.setTag("preview", new NBTTagCompound());
-        SimpleAssert.that(HologramCutStoragePreview.receive(legacy),
+        SimpleAssert.that(
+            HologramCutStoragePreview.receive(legacy),
             "late legacy browser replies are consumed, not passed to ordinary placement accounting");
         legacy.setString("requestId", "09544d42-6d75-4567-8123-123456789abc");
         SimpleAssert.that(!HologramCutStoragePreview.receive(legacy), "real action acknowledgements are not claimed");
@@ -82,59 +82,78 @@ public final class HologramCutStoragePreviewRegression {
         NBTTagCompound passiveRequest = new NBTTagCompound();
         passiveRequest.setString("action", "list");
         passiveRequest.setString("id", "");
-        SimpleAssert.that(HologramCutClient.prepareStorageControl(passiveRequest)
-            && HologramCutProtocol.passiveList(passiveRequest) && passiveRequest.hasKey("cutMetadataOnly", 1),
+        SimpleAssert.that(
+            HologramCutClient.prepareStorageControl(passiveRequest) && HologramCutProtocol.passiveList(passiveRequest)
+                && passiveRequest.hasKey("cutMetadataOnly", 1),
             "the real client sender stamps the ordinary passive LIST so the old strict parser refuses it");
         NBTTagCompound retry = new NBTTagCompound();
         retry.setString("action", "list");
         retry.setString("id", protocolId);
-        SimpleAssert.that(HologramCutClient.prepareStorageControl(retry) && !retry.hasKey("cutMetadataOnly")
-            && protocolId.equals(retry.getString("id")),
+        SimpleAssert.that(
+            HologramCutClient.prepareStorageControl(retry) && !retry.hasKey("cutMetadataOnly")
+                && protocolId.equals(retry.getString("id")),
             "manual exact Retry keeps its original targeted status/recovery shape");
         NBTTagCompound oldControls = new NBTTagCompound();
         HologramCutProtocol.writeBoundsProof(oldControls, UUID.fromString(protocolId));
         oldControls.setString("action", "openWorkspace");
-        SimpleAssert.that(!HologramCutClient.prepareStorageControl(oldControls),
+        SimpleAssert.that(
+            !HologramCutClient.prepareStorageControl(oldControls),
             "the stock sender cannot open a remote Cut manager even with a typed peer proof");
         oldControls.setString("action", "preview");
-        SimpleAssert.that(!HologramCutClient.prepareStorageControl(oldControls),
+        SimpleAssert.that(
+            !HologramCutClient.prepareStorageControl(oldControls),
             "the local pane has no legacy raw preview wire fallback");
 
         UUID endpoint = UUID.fromString(protocolId);
         NBTTagCompound actualList = new NBTTagCompound();
         actualList.setBoolean("success", true);
         actualList.setTag("entries", new NBTTagList());
-        SimpleAssert.that(HologramCutClient.acceptedBoundsProof("list", true, actualList) == null,
+        SimpleAssert.that(
+            HologramCutClient.acceptedBoundsProof("list", true, actualList) == null,
             "a successful old-peer list without typed proof does not arm mutations");
         HologramCutProtocol.writeBoundsProof(actualList, endpoint);
-        SimpleAssert.eq(endpoint, HologramCutClient.acceptedBoundsProof("list", true, actualList),
+        SimpleAssert.eq(
+            endpoint,
+            HologramCutClient.acceptedBoundsProof("list", true, actualList),
             "exact typed version and endpoint capability return only on the accepted LIST path");
-        SimpleAssert.that(HologramCutClient.acceptedBoundsProof("cut", true, actualList) == null
-            && HologramCutClient.acceptedBoundsProof("preview", true, actualList) == null
-            && HologramCutClient.acceptedBoundsProof("list", false, actualList) == null,
+        SimpleAssert.that(
+            HologramCutClient.acceptedBoundsProof("cut", true, actualList) == null
+                && HologramCutClient.acceptedBoundsProof("preview", true, actualList) == null
+                && HologramCutClient.acceptedBoundsProof("list", false, actualList) == null,
             "no unsolicited/non-directory ACK can grant the write capability");
         actualList.setLong("cutBoundsProtocol", 1L);
-        SimpleAssert.that(HologramCutClient.acceptedBoundsProof("list", true, actualList) == null,
+        SimpleAssert.that(
+            HologramCutClient.acceptedBoundsProof("list", true, actualList) == null,
             "coercible numeric versions are not typed proof");
         HologramCutProtocol.writeBoundsProof(actualList, endpoint);
         actualList.setString("cutBoundsToken", "1-1-1-1-1");
-        SimpleAssert.that(HologramCutClient.acceptedBoundsProof("list", true, actualList) == null,
+        SimpleAssert.that(
+            HologramCutClient.acceptedBoundsProof("list", true, actualList) == null,
             "noncanonical or missing endpoint values cannot arm stock clipboard writes");
 
         Object world = new Object(), handler = new Object(), actor = new Object();
         Object stack = new Object(), item = new Object();
         HologramCutClient.ToolProof bound = new HologramCutClient.ToolProof(
-            world, handler, actor, stack, item, endpoint, 2, 0);
-        SimpleAssert.that(bound.matches(world, handler, actor, stack, item, endpoint, 2, 0),
+            world,
+            handler,
+            actor,
+            stack,
+            item,
+            endpoint,
+            2,
+            0);
+        SimpleAssert.that(
+            bound.matches(world, handler, actor, stack, item, endpoint, 2, 0),
             "the unchanged final clipboard tool proof still matches");
-        SimpleAssert.that(!bound.matches(world, handler, actor, new Object(), item, endpoint, 2, 0)
-            && !bound.matches(world, handler, actor, stack, new Object(), endpoint, 2, 0)
-            && !bound.matches(world, handler, actor, stack, item, endpoint, 3, 0)
-            && !bound.matches(world, handler, actor, stack, item, UUID.randomUUID(), 2, 0)
-            && !bound.matches(new Object(), handler, actor, stack, item, endpoint, 2, 0)
-            && !bound.matches(world, new Object(), actor, stack, item, endpoint, 2, 0)
-            && !bound.matches(world, handler, new Object(), stack, item, endpoint, 2, 0)
-            && !bound.matches(world, handler, actor, stack, item, endpoint, 2, 1),
+        SimpleAssert.that(
+            !bound.matches(world, handler, actor, new Object(), item, endpoint, 2, 0)
+                && !bound.matches(world, handler, actor, stack, new Object(), endpoint, 2, 0)
+                && !bound.matches(world, handler, actor, stack, item, endpoint, 3, 0)
+                && !bound.matches(world, handler, actor, stack, item, UUID.randomUUID(), 2, 0)
+                && !bound.matches(new Object(), handler, actor, stack, item, endpoint, 2, 0)
+                && !bound.matches(world, new Object(), actor, stack, item, endpoint, 2, 0)
+                && !bound.matches(world, handler, new Object(), stack, item, endpoint, 2, 0)
+                && !bound.matches(world, handler, actor, stack, item, endpoint, 2, 1),
             "same-class replacement stack, slot, token, world, handler or actor cannot inherit a previous confirmation");
 
         NBTTagCompound received = new NBTTagCompound();
@@ -149,16 +168,21 @@ public final class HologramCutStoragePreviewRegression {
         NBTTagCompound safe = HologramCutClient.directoryRow(received);
         SimpleAssert.that(!safe.hasKey("cells") && !safe.hasKey("preview"), "older directory payload is not retained");
         HologramCutClient.ClipBounds bounds = HologramCutClient.ClipBounds.read(safe);
-        SimpleAssert.that(bounds != null && Arrays.equals(new int[] { 12, 20, 31, 16, 22, 32 },
-            bounds.boxAt(new Transform(1, 0, 0, 0), new int[] { 12, 20, 31 })),
+        SimpleAssert.that(
+            bounds != null && Arrays.equals(
+                new int[] { 12, 20, 31, 16, 22, 32 },
+                bounds.boxAt(new Transform(1, 0, 0, 0), new int[] { 12, 20, 31 })),
             "local rotation renders exact transformed inclusive bounds");
-        SimpleAssert.that(bounds.boxAt(new Transform(1, 0, 0, 0), new int[] { 12, 254, 31 }) == null,
+        SimpleAssert.that(
+            bounds.boxAt(new Transform(1, 0, 0, 0), new int[] { 12, 254, 31 }) == null,
             "world-height overflow cannot yield confirmable bounds");
         safe.setLong("sequence", 72);
-        SimpleAssert.that(!bounds.sameEntry(HologramCutClient.ClipBounds.read(safe)),
+        SimpleAssert.that(
+            !bounds.sameEntry(HologramCutClient.ClipBounds.read(safe)),
             "same ID at a newer revision is not the selected confirmed entry");
         safe.setInteger("sequence", 71);
-        SimpleAssert.that(HologramCutClient.ClipBounds.read(safe) == null,
+        SimpleAssert.that(
+            HologramCutClient.ClipBounds.read(safe) == null,
             "wrongly typed sequence cannot arm bounds-only placement");
     }
 }

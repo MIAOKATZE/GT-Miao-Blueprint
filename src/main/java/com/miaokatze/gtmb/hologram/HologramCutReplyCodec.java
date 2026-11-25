@@ -53,9 +53,11 @@ final class HologramCutReplyCodec {
     }
 
     static NBTTagCompound decode(byte[] compressed) throws IOException {
-        if (!fitsFrame(compressed.length) || compressed.length <= 18 || (compressed[0] & 255) != 0x1f
-            || (compressed[1] & 255) != 0x8b || compressed[2] != 8 || compressed[3] != 0)
-            throw invalid();
+        if (!fitsFrame(compressed.length) || compressed.length <= 18
+            || (compressed[0] & 255) != 0x1f
+            || (compressed[1] & 255) != 0x8b
+            || compressed[2] != 8
+            || compressed[3] != 0) throw invalid();
         byte[] raw = new byte[MAX_RAW_BYTES + 1];
         int trailer = compressed.length - 8, written = 0;
         Inflater inflater = new Inflater(true);
@@ -88,7 +90,8 @@ final class HologramCutReplyCodec {
 
     private static long littleWord(byte[] bytes, int at) {
         return (bytes[at] & 255L) | (bytes[at + 1] & 255L) << 8
-            | (bytes[at + 2] & 255L) << 16 | (bytes[at + 3] & 255L) << 24;
+            | (bytes[at + 2] & 255L) << 16
+            | (bytes[at + 3] & 255L) << 24;
     }
 
     private static int fieldType(String key, boolean row) {
@@ -238,11 +241,16 @@ final class HologramCutReplyCodec {
 
     private static int stringLimit(String key) {
         switch (key) {
-            case "action": return 5;
-            case "code": return MAX_CODE;
-            case "message": return MAX_MESSAGE;
-            case "name": return HologramCutNaming.MAX_LENGTH;
-            default: return 36;
+            case "action":
+                return 5;
+            case "code":
+                return MAX_CODE;
+            case "message":
+                return MAX_MESSAGE;
+            case "name":
+                return HologramCutNaming.MAX_LENGTH;
+            default:
+                return 36;
         }
     }
 

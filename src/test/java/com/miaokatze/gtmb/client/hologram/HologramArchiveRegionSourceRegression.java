@@ -62,41 +62,52 @@ public final class HologramArchiveRegionSourceRegression {
             Budget third = new Budget(1, 1);
             Result complete = source.read(a, third);
             counted(third, 1, 1);
-            SimpleAssert.that(complete.state == State.READY && owner.accepts(complete.window),
+            SimpleAssert.that(
+                complete.state == State.READY && owner.accepts(complete.window),
                 "only the fully proved center+faces is current");
             SimpleAssert.eq(2, complete.window.centerRows(), "center renders only its two rows, not the halo");
-            SimpleAssert.eq(Material.GLOWSTONE, HologramArchiveGeometryReader.material(complete.window.code(2, 0, 2)),
+            SimpleAssert.eq(
+                Material.GLOWSTONE,
+                HologramArchiveGeometryReader.material(complete.window.code(2, 0, 2)),
                 "trusted exact palette order");
             SimpleAssert.eq(1, complete.window.code(-1, 1, 2), "negative X halo uses the left section's right face");
             SimpleAssert.eq(2, complete.window.code(16, 1, 2), "positive X halo uses the right section's left face");
             SimpleAssert.eq(0, complete.window.code(4, 16, 5), "directory-proved absent upper neighbor");
             SimpleAssert.eq(3, input.payloadReads, "physical test channel sees one read for each occupied page");
-            SimpleAssert.that(owner.request(center, 1) == a, "camera-only motion that stays in the same region "
-                + "does not create another geometry request");
+            SimpleAssert.that(
+                owner.request(center, 1) == a,
+                "camera-only motion that stays in the same region " + "does not create another geometry request");
             Budget zero = new Budget(0, 0);
             SimpleAssert.that(source.read(a, zero).window == complete.window, "same view does zero geometry work");
             counted(zero, 0, 0);
 
             var b = owner.request(east, 1);
-            SimpleAssert.that(!owner.accepts(complete.window) && source.read(a, zero).state == State.STALE,
+            SimpleAssert.that(
+                !owner.accepts(complete.window) && source.read(a, zero).state == State.STALE,
                 "old spatial request does not publish");
             Result reused = source.read(b, zero);
-            SimpleAssert.that(reused.state == State.READY && reused.window.code(-1, 1, 2) == 1,
+            SimpleAssert.that(
+                reused.state == State.READY && reused.window.code(-1, 1, 2) == 1,
                 "adjacent center and authenticated halo can reuse raw pages");
             var refreshed = owner.request(east, 2);
-            SimpleAssert.that(!owner.accepts(reused.window) && owner.request(east, 1) == null,
+            SimpleAssert.that(
+                !owner.accepts(reused.window) && owner.request(east, 1) == null,
                 "texture reload rejects earlier results and cannot regress");
             Result afterReload = source.read(refreshed, zero);
-            SimpleAssert.that(owner.accepts(afterReload.window) && !new Views().accepts(afterReload.window),
+            SimpleAssert.that(
+                owner.accepts(afterReload.window) && !new Views().accepts(afterReload.window),
                 "same raw geometry is allowed only in the current exact texture/source owner");
             SimpleAssert.eq(3, input.payloadReads, "texture reload needs no raw page I/O");
             var empty = owner.request(new Region(10, 0, 0), 2);
             Result gap = source.read(empty, zero);
-            SimpleAssert.that(owner.accepts(gap.window) && gap.window.centerRows() == 0 && gap.window.code(0, 0, 0) == 0,
+            SimpleAssert.that(
+                owner.accepts(gap.window) && gap.window.centerRows() == 0 && gap.window.code(0, 0, 0) == 0,
                 "empty region does not schedule adjacent payloads");
             owner.retire();
-            SimpleAssert.that(!owner.accepts(gap.window) && source.read(empty, zero).state == State.STALE
-                && owner.request(center, 3) == null, "pane/source retirement is irreversible");
+            SimpleAssert.that(
+                !owner.accepts(gap.window) && source.read(empty, zero).state == State.STALE
+                    && owner.request(center, 3) == null,
+                "pane/source retirement is irreversible");
         }
         SimpleAssert.that(!input.isOpen(), "worker closes its exact owned handle");
     }
@@ -122,7 +133,8 @@ public final class HologramArchiveRegionSourceRegression {
             Budget work = fullBudget();
             expectIo(() -> source.read(view, work));
             counted(work, 3, 4);
-            SimpleAssert.that(!corrupt.isOpen() && !rejected.current(view),
+            SimpleAssert.that(
+                !corrupt.isOpen() && !rejected.current(view),
                 "failed halo is not air, no partially accepted result, exact handle retired");
         }
 
@@ -153,20 +165,25 @@ public final class HologramArchiveRegionSourceRegression {
             counted(cold, 6, 23_552);
             Budget adjacent = fullBudget();
             Result b = source.read(owner.request(new Region(-12, -1, -9), 1), adjacent);
-            SimpleAssert.that(owner.accepts(b.window) && b.window.centerRows() == 4096 && b.window.code(-1, 0, 0) == 1,
+            SimpleAssert.that(
+                owner.accepts(b.window) && b.window.centerRows() == 4096 && b.window.code(-1, 0, 0) == 1,
                 "same tower shares the solid bottom face");
             counted(adjacent, 4, 13_632);
             Budget gap = new Budget(0, 0);
-            SimpleAssert.eq(0, source.read(owner.request(new Region(-8, -1, -9), 1), gap).window.centerRows(),
+            SimpleAssert.eq(
+                0,
+                source.read(owner.request(new Region(-8, -1, -9), 1), gap).window.centerRows(),
                 "real module gap does not read body rows");
             counted(gap, 0, 0);
         }
-        try (var source = HologramArchiveRegionSource.take(
-            owner = new Views(), Files.newByteChannel(existing), hex(FIVE_MANIFEST))) {
+        try (var source = HologramArchiveRegionSource
+            .take(owner = new Views(), Files.newByteChannel(existing), hex(FIVE_MANIFEST))) {
             Budget edge = fullBudget();
             Result border = source.read(owner.request(new Region(-9, -1, -9), 1), edge);
-            SimpleAssert.that(owner.accepts(border.window) && border.window.centerRows() == 4096
-                && border.window.code(15, 0, 0) == 1 && border.window.code(16, 0, 0) == 0,
+            SimpleAssert.that(
+                owner.accepts(border.window) && border.window.centerRows() == 4096
+                    && border.window.code(15, 0, 0) == 1
+                    && border.window.code(16, 0, 0) == 0,
                 "last occupied tower row exposes its face to the proved module gap");
             counted(edge, 5, 18_944);
         }
@@ -183,6 +200,7 @@ public final class HologramArchiveRegionSourceRegression {
 
     @FunctionalInterface
     private interface Work {
+
         void run() throws IOException;
     }
 
@@ -199,12 +217,21 @@ public final class HologramArchiveRegionSourceRegression {
         int[][] rows = { { row(15, 1, 2, 0) }, { row(2, 0, 2, 2), row(15, 1, 2, 0) }, { row(0, 1, 2, 1) } };
         int start = HEADER + ENTRY * rows.length;
         ByteBuffer archive = ByteBuffer.allocate(start + 4 * Integer.BYTES);
-        archive.putInt(0x47545047).putInt(1).putLong(4).putInt(3).putInt(3).put(hex(PALETTE));
+        archive.putInt(0x47545047)
+            .putInt(1)
+            .putLong(4)
+            .putInt(3)
+            .putInt(3)
+            .put(hex(PALETTE));
         int next = start;
         for (int i = 0; i < rows.length; i++) {
             ByteBuffer page = ByteBuffer.allocate(rows[i].length * Integer.BYTES);
             for (int packed : rows[i]) page.putInt(packed);
-            archive.putInt(i - 1).putInt(0).putInt(0).putInt(rows[i].length).putLong(next)
+            archive.putInt(i - 1)
+                .putInt(0)
+                .putInt(0)
+                .putInt(rows[i].length)
+                .putLong(next)
                 .put(sha256().digest(page.array()));
             System.arraycopy(page.array(), 0, archive.array(), next, page.capacity());
             next += page.capacity();

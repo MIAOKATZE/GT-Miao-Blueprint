@@ -100,6 +100,7 @@ final class HologramLocalBlueprintCodec {
     private final Map<Object, JsonObject> opaque = java.util.Collections.synchronizedMap(new WeakHashMap<>());
     private volatile JsonObject envelope;
     private boolean explicitRetention = true;
+
     @com.github.bsideup.jabel.Desugar
     record Loaded(Preset document, CompactLayout layout) {}
 
@@ -349,13 +350,15 @@ final class HologramLocalBlueprintCodec {
 
     boolean retainedMaterialPolicy(Preset source) {
         JsonObject retained = opaque.get(source);
-        return retained != null && (!emptyString(retained.get("processingNbt"))
-            || !emptyString(retained.get("semanticNbt")) || !emptyString(retained.get("quantumGroupingNbt")));
+        return retained != null
+            && (!emptyString(retained.get("processingNbt")) || !emptyString(retained.get("semanticNbt"))
+                || !emptyString(retained.get("quantumGroupingNbt")));
     }
 
     private static String stringValue(JsonElement value) {
-        return value != null && value.isJsonPrimitive() && value.getAsJsonPrimitive().isString()
-            ? value.getAsString() : null;
+        return value != null && value.isJsonPrimitive()
+            && value.getAsJsonPrimitive()
+                .isString() ? value.getAsString() : null;
     }
 
     private static boolean emptyString(JsonElement value) {
@@ -479,15 +482,32 @@ final class HologramLocalBlueprintCodec {
             }
         }
         if (geometry == null && preset.cells instanceof HologramLiteralCaptureRows packed) {
-            return com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintMigration.author(header,extensions,packed.size(),
+            return com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintMigration.author(
+                header,
+                extensions,
+                packed.size(),
                 new com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintMigration.IndexedAuthoredCell() {
-                    public int descriptor(int rank) { return packed.descriptor(rank); }
-                    public int coordinate(int rank,int axis) { return packed.coordinate(rank,axis); }
-                    public JsonObject at(int rank) { return row(packed.get(rank)); }
-                },current);
+
+                    public int descriptor(int rank) {
+                        return packed.descriptor(rank);
+                    }
+
+                    public int coordinate(int rank, int axis) {
+                        return packed.coordinate(rank, axis);
+                    }
+
+                    public JsonObject at(int rank) {
+                        return row(packed.get(rank));
+                    }
+                },
+                current);
         }
-        return com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintMigration.author(header, extensions,
-            geometry == null ? preset.cells.size() : geometry.rows().cells(),
+        return com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintMigration.author(
+            header,
+            extensions,
+            geometry == null ? preset.cells.size()
+                : geometry.rows()
+                    .cells(),
             rank -> {
                 if (geometry == null) return row(preset.cells.get(rank));
                 var layout = geometry.rows();
@@ -496,11 +516,13 @@ final class HologramLocalBlueprintCodec {
                 target.addProperty("y", layout.coordinate(rank, 1));
                 target.addProperty("z", layout.coordinate(rank, 2));
                 return target;
-            }, current);
+            },
+            current);
     }
 
     private JsonObject row(Object entry) {
-        JsonObject result = MODEL.toJsonTree(entry).getAsJsonObject();
+        JsonObject result = MODEL.toJsonTree(entry)
+            .getAsJsonObject();
         merge(entry, result);
         return result;
     }
@@ -512,7 +534,10 @@ final class HologramLocalBlueprintCodec {
         header.add("structures", rows(preset.structures));
         header.add("hintAreas", rows(preset.hintAreas));
         return HologramBlueprintCompactCodec.writeLocalPacked(
-            envelope == null ? new JsonObject() : envelope, header, geometry.rows(), rows(preset.palette));
+            envelope == null ? new JsonObject() : envelope,
+            header,
+            geometry.rows(),
+            rows(preset.palette));
     }
 
     byte[] write(Preset preset) throws IOException {

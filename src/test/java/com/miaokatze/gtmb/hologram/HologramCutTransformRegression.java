@@ -122,9 +122,10 @@ public final class HologramCutTransformRegression {
     private static void vanillaPlacementEncodings() {
         int no = HologramCutTransformMetadata.UNREPRESENTABLE;
         int[] support = { -1, 5, 4, 3, 2, 1 }, stairs = { 5, 4, 3, 2 };
-        Block[] upright = { Blocks.chest, Blocks.trapped_chest, Blocks.furnace, Blocks.lit_furnace,
-            Blocks.ender_chest, Blocks.wall_sign };
-        Block[] sixFaces = { Blocks.dispenser, Blocks.dropper, Blocks.piston, Blocks.sticky_piston, Blocks.piston_head };
+        Block[] upright = { Blocks.chest, Blocks.trapped_chest, Blocks.furnace, Blocks.lit_furnace, Blocks.ender_chest,
+            Blocks.wall_sign };
+        Block[] sixFaces = { Blocks.dispenser, Blocks.dropper, Blocks.piston, Blocks.sticky_piston,
+            Blocks.piston_head };
         Set<String> tested = new HashSet<>();
         for (int x = 0; x < 4; x++)
             for (int y = 0; y < 4; y++) for (int z = 0; z < 4; z++) for (int mirror = 0; mirror < 8; mirror++) {
@@ -197,7 +198,9 @@ public final class HologramCutTransformRegression {
 
     private static void pinned(Block block, int meta, CutTransforms.Transform pose, int expected) {
         String id = Block.blockRegistry.getNameForObject(block);
-        SimpleAssert.eq(expected, HologramCutTransformMetadata.placementMetadata(block, id, meta, pose),
+        SimpleAssert.eq(
+            expected,
+            HologramCutTransformMetadata.placementMetadata(block, id, meta, pose),
             "native placement encoding " + id + ":" + meta + " " + java.util.Arrays.toString(pose.matrix()));
     }
 
@@ -211,31 +214,44 @@ public final class HologramCutTransformRegression {
         NBTTagCompound original = (NBTTagCompound) raw.copy();
         CutTransforms.Transform pitch = new CutTransforms.Transform(0, 1, 0, 0);
         NBTTagCompound local = HologramCutTransforms.apply(raw, pitch, 0, 80, 0);
-        SimpleAssert.eq(2, local.getTagList("cells", 10).getCompoundTagAt(0).getInteger("meta"),
+        SimpleAssert.eq(
+            2,
+            local.getTagList("cells", 10)
+                .getCompoundTagAt(0)
+                .getInteger("meta"),
             "legacy detached preview can keep an unrepresentable old chest encoding for presentation");
         try {
             HologramCutTransforms.applyForPlacement(raw, pitch, 0, 80, 0);
             throw new AssertionError("quarter pitch cannot authorize a real chest placement");
         } catch (java.io.IOException expected) {
-            SimpleAssert.that(expected.getMessage().contains("minecraft:chest"),
+            SimpleAssert.that(
+                expected.getMessage()
+                    .contains("minecraft:chest"),
                 "the refusal truthfully identifies the known unrepresentable block");
         }
         try {
             CutTransforms.Transform yawAndMirror = new CutTransforms.Transform(1, 0, 0, 4);
             NBTTagCompound placed = HologramCutTransforms.applyForPlacement(raw, yawAndMirror, 0, 80, 0);
-            NBTTagCompound changed = placed.getTagList("cells", 10).getCompoundTagAt(0);
-            SimpleAssert.eq(4, changed.getInteger("meta"), "legal yaw plus horizontal mirror keeps exact chest heading");
-            SimpleAssert.that(original.getTagList("cells", 10).getCompoundTagAt(0).getCompoundTag("tile")
-                .equals(changed.getCompoundTag("tile")), "pinned vanilla metadata leaves complete native tile NBT alone");
+            NBTTagCompound changed = placed.getTagList("cells", 10)
+                .getCompoundTagAt(0);
+            SimpleAssert
+                .eq(4, changed.getInteger("meta"), "legal yaw plus horizontal mirror keeps exact chest heading");
+            SimpleAssert.that(
+                original.getTagList("cells", 10)
+                    .getCompoundTagAt(0)
+                    .getCompoundTag("tile")
+                    .equals(changed.getCompoundTag("tile")),
+                "pinned vanilla metadata leaves complete native tile NBT alone");
             CutTransforms.Transform effectiveIdentity = new CutTransforms.Transform(2, 2, 2, 0);
-            SimpleAssert.that(effectiveIdentity.identity()
-                && HologramCutTransforms.apply(raw, effectiveIdentity, 0, 80, 0)
+            SimpleAssert.that(
+                effectiveIdentity.identity() && HologramCutTransforms.apply(raw, effectiveIdentity, 0, 80, 0)
                     .equals(HologramCutTransforms.applyForPlacement(raw, effectiveIdentity, 0, 80, 0)),
                 "effective matrix identity bypasses new qualification and retains the exact legacy raw envelope");
         } catch (java.io.IOException unexpected) {
             throw new AssertionError("known legal vanilla pose rejected", unexpected);
         }
-        SimpleAssert.that(original.equals(raw), "no qualification, rejection or admitted pose mutates the retained entry");
+        SimpleAssert
+            .that(original.equals(raw), "no qualification, rejection or admitted pose mutates the retained entry");
     }
 
     private static void sparsePoses(NBTTagCompound full) {

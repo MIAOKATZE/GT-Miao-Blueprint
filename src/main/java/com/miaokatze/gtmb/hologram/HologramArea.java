@@ -121,8 +121,7 @@ final class HologramArea extends HologramAreaSelection {
                 Block block = world.getBlock(x, y, z);
                 int meta = world.getBlockMetadata(x, y, z);
                 TileEntity tile = world.getTileEntity(x, y, z);
-                if (block != Blocks.air)
-                    writer.append(blueprint, block, meta, tile, x - minX, y - minY, z - minZ);
+                if (block != Blocks.air) writer.append(blueprint, block, meta, tile, x - minX, y - minY, z - minZ);
             }
         }
         if (!blockCursor.done()) return false;
@@ -227,15 +226,16 @@ final class HologramArea extends HologramAreaSelection {
         if ("canonicalize".equals(importPhase)) return preparation == null ? 1 : preparation.progress().total;
         if ("projection".equals(importPhase)) return population == null ? 0 : population.total();
         if ("plan".equals(importPhase)) return planTask == null ? 0 : planTask.total();
-        if ("networks".equals(importPhase) && blueprint != null && blueprint.cells instanceof HologramLiteralCaptureRows packed)
-            return packed.sensitive().size();
+        if ("networks".equals(importPhase) && blueprint != null
+            && blueprint.cells instanceof HologramLiteralCaptureRows packed)
+            return packed.sensitive()
+                .size();
         return blueprint == null ? 0 : blueprint.cells.size();
     }
 
     String importUnit() {
-        if ("projection".equals(importPhase)
-            || "plan".equals(importPhase)
-            || "canonicalize".equals(importPhase)) return "entries";
+        if ("projection".equals(importPhase) || "plan".equals(importPhase) || "canonicalize".equals(importPhase))
+            return "entries";
         return "cells";
     }
 
@@ -253,7 +253,8 @@ final class HologramArea extends HologramAreaSelection {
     /** Progress belongs to the current phase, with no estimated weights between unrelated operations. */
     int importProgress() {
         HologramAreaPreparation.Progress current = progressSnapshot();
-        return current.total <= 0 ? 0 : (int) Math.max(0, Math.min(importing ? 99 : 100, 100D * current.done / current.total));
+        return current.total <= 0 ? 0
+            : (int) Math.max(0, Math.min(importing ? 99 : 100, 100D * current.done / current.total));
     }
 
     /** Inventory identity is read without client-only pick hooks or harvesting callbacks. */

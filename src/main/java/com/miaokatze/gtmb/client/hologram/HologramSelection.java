@@ -18,6 +18,7 @@ public final class HologramSelection {
     private HologramLocalMaterialIndex.Selection materialSelection;
     private HologramLocalMaterialIndex.Result materialResult;
     private final Set<Integer> indices = new LinkedHashSet<Integer>() {
+
         @Override
         public boolean add(Integer index) {
             if (!super.add(index)) return false;
@@ -36,7 +37,7 @@ public final class HologramSelection {
         public void clear() {
             super.clear();
             if (materialSelection != null) materialSelection.clear();
-            if(nativeMaterials!=null)nativeMaterials.clear();
+            if (nativeMaterials != null) nativeMaterials.clear();
         }
 
         @Override
@@ -64,31 +65,37 @@ public final class HologramSelection {
 
     void bindMaterials(HologramState state) {
         materialState = state;
-        if (materialIndex == state.localMaterialIndex && nativeOwner==state.nativeViewport) return;
-        nativeOwner=state.nativeViewport;nativeMaterials=nativeOwner==null?null:nativeOwner.new Selection();
-        if(nativeMaterials!=null)for(int index:indices)if(index>=0&&index<state.cells.size())nativeMaterials.change(index,1);
+        if (materialIndex == state.localMaterialIndex && nativeOwner == state.nativeViewport) return;
+        nativeOwner = state.nativeViewport;
+        nativeMaterials = nativeOwner == null ? null : nativeOwner.new Selection();
+        if (nativeMaterials != null)
+            for (int index : indices) if (index >= 0 && index < state.cells.size()) nativeMaterials.change(index, 1);
         materialIndex = state.localMaterialIndex;
         materialSelection = materialIndex == null ? null : materialIndex.new Selection();
-        if (materialSelection != null)
-            for (int index : indices) if (index >= 0 && index < state.cells.size())
-                materialSelection.change(state.cells.get(index), 1);
+        if (materialSelection != null) for (int index : indices)
+            if (index >= 0 && index < state.cells.size()) materialSelection.change(state.cells.get(index), 1);
         finishMaterials();
     }
 
     private void changeMaterial(int index, int delta) {
-        if(nativeMaterials!=null&&index>=0&&index<materialState.cells.size())nativeMaterials.change(index,delta);
+        if (nativeMaterials != null && index >= 0 && index < materialState.cells.size())
+            nativeMaterials.change(index, delta);
         if (materialSelection != null && index >= 0 && index < materialState.cells.size())
             materialSelection.change(materialState.cells.get(index), delta);
     }
 
     private void finishMaterials() {
-        materialResult = nativeMaterials!=null?nativeMaterials.result():materialSelection == null ? null : materialSelection.result();
+        materialResult = nativeMaterials != null ? nativeMaterials.result()
+            : materialSelection == null ? null : materialSelection.result();
     }
 
     HologramLocalMaterialIndex.Result materialResult(HologramState state) {
-        return (nativeOwner!=null&&nativeOwner==state.nativeViewport&&nativeOwner.currentProviders()||materialIndex != null && materialIndex == state.localMaterialIndex && materialIndex.current())
-            ? materialResult : null;
+        return (nativeOwner != null && nativeOwner == state.nativeViewport && nativeOwner.currentProviders()
+            || materialIndex != null && materialIndex == state.localMaterialIndex && materialIndex.current())
+                ? materialResult
+                : null;
     }
+
     private final java.util.BitSet selectedBits = new java.util.BitSet();
     private int selectedBitsVersion = -1;
     private int corner = -1;

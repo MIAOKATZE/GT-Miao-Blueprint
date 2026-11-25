@@ -92,8 +92,7 @@ final class HologramWorkspaceScheduler {
         if (HologramStructureProjection.canAdvance(s)) return true;
         HologramArea area = HologramWorkspace.AREAS.get(s.player.getUniqueID());
         if (area != null && area.importing) return canAdvanceImport(area) || HologramSnapshotPreparation.canAdvance(s);
-        return s.voucherCoverageTask != null
-            || s.attachmentTask != null && s.attachmentTask.ready()
+        return s.voucherCoverageTask != null || s.attachmentTask != null && s.attachmentTask.ready()
             || s.localPlanPending && s.localPlanError.isEmpty()
             || HologramSnapshotPreparation.canAdvance(s);
     }

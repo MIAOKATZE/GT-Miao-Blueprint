@@ -11,8 +11,8 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Queue;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.player.EntityPlayerMP;
@@ -92,7 +92,8 @@ public final class HologramServerLoadRegression {
             preferences.priority = 1;
             preferences.me = false;
             HologramMaterials.write(tool, preferences);
-            NBTTagCompound configured = (NBTTagCompound) tool.getTagCompound().copy();
+            NBTTagCompound configured = (NBTTagCompound) tool.getTagCompound()
+                .copy();
 
             var reentry = new AtomicReference<Runnable>();
             NetworkManager network = new NetworkManager(false) {
@@ -112,7 +113,8 @@ public final class HologramServerLoadRegression {
             SimpleAssert.eq(configured, tool.getTagCompound(), "a live socket alone can't initialize before login");
             new HologramLifecycle().loggedIn(new PlayerEvent.PlayerLoggedInEvent(player));
             var login = HologramWorkspace.captureActionEndpoint(player.playerNetServerHandler);
-            SimpleAssert.that(login != null && HologramWorkspace.constructionGate(login) != null,
+            SimpleAssert.that(
+                login != null && HologramWorkspace.constructionGate(login) != null,
                 "the production login event establishes authority without any GTMB action");
 
             // Exercise the real vanilla inventory tick and normal hotbar differential slot producer.
@@ -134,17 +136,23 @@ public final class HologramServerLoadRegression {
             deltas.clear();
             player.inventory.decrementAnimations();
             window.detectAndSendChanges();
-            String id = tool.getTagCompound().getString(HologramSessionKeys.TOOL_ID);
-            SimpleAssert.that(HologramNativeCompactStart.canonical(id) && !other.hasTagCompound(),
+            String id = tool.getTagCompound()
+                .getString(HologramSessionKeys.TOOL_ID);
+            SimpleAssert.that(
+                HologramNativeCompactStart.canonical(id) && !other.hasTagCompound(),
                 "only the actual selected fresh projector acquires canonical server identity");
-            NBTTagCompound retained = (NBTTagCompound) tool.getTagCompound().copy();
+            NBTTagCompound retained = (NBTTagCompound) tool.getTagCompound()
+                .copy();
             retained.removeTag(HologramSessionKeys.TOOL_ID);
             SimpleAssert.eq(configured, retained, "initializing an identity preserves all source preferences");
             SimpleAssert.eq(1, deltas.size(), "vanilla container emits one held hotbar slot delta");
             assertVanillaToolIdentity(deltas.get(0), registered, id);
             player.inventory.decrementAnimations();
             window.detectAndSendChanges();
-            SimpleAssert.eq(id, tool.getTagCompound().getString(HologramSessionKeys.TOOL_ID),
+            SimpleAssert.eq(
+                id,
+                tool.getTagCompound()
+                    .getString(HologramSessionKeys.TOOL_ID),
                 "a second real inventory tick does not remint");
             SimpleAssert.eq(1, deltas.size(), "stable identity causes no repeat vanilla slot delta");
 
@@ -153,11 +161,15 @@ public final class HologramServerLoadRegression {
             player.inventory.mainInventory[0] = old;
             reentry.set(() -> player.inventory.mainInventory[0] = successor);
             player.inventory.decrementAnimations();
-            SimpleAssert.that(reentry.get() == null && !old.hasTagCompound() && !successor.hasTagCompound(),
+            SimpleAssert.that(
+                reentry.get() == null && !old.hasTagCompound() && !successor.hasTagCompound(),
                 "a swap inside a server transport callback never binds the stale item or the replacement");
             player.inventory.decrementAnimations();
-            SimpleAssert.that(HologramNativeCompactStart.canonical(
-                successor.getTagCompound().getString(HologramSessionKeys.TOOL_ID)) && !old.hasTagCompound(),
+            SimpleAssert.that(
+                HologramNativeCompactStart.canonical(
+                    successor.getTagCompound()
+                        .getString(HologramSessionKeys.TOOL_ID))
+                    && !old.hasTagCompound(),
                 "the replacement can acquire its own identity on its own real inventory tick");
 
             ItemStack mutated = new ItemStack(registered);
@@ -165,7 +177,8 @@ public final class HologramServerLoadRegression {
             player.inventory.mainInventory[0] = mutated;
             reentry.set(() -> mutated.func_150996_a(changedType));
             player.inventory.decrementAnimations();
-            SimpleAssert.that(mutated.getItem() == changedType && !mutated.hasTagCompound(),
+            SimpleAssert.that(
+                mutated.getItem() == changedType && !mutated.hasTagCompound(),
                 "a changed item identity on the same stack cannot inherit the old type proof");
 
             ItemStack changedScope = new ItemStack(registered);
@@ -173,16 +186,21 @@ public final class HologramServerLoadRegression {
             // Reenter specifically during the second transport check, after the original scope looked current.
             reentry.set(() -> reentry.set(() -> HologramWorkspace.publishActionDimension(player)));
             player.inventory.decrementAnimations();
-            SimpleAssert.that(!changedScope.hasTagCompound() && !HologramWorkspace.currentActionEndpoint(login)
-                && HologramWorkspace.captureActionEndpoint(player.playerNetServerHandler) != null,
+            SimpleAssert.that(
+                !changedScope.hasTagCompound() && !HologramWorkspace.currentActionEndpoint(login)
+                    && HologramWorkspace.captureActionEndpoint(player.playerNetServerHandler) != null,
                 "same-object lifecycle rotation during the transport proof never initializes the old observation");
 
             ItemStack malformed = new ItemStack(registered);
             malformed.setTagCompound(new NBTTagCompound());
-            malformed.getTagCompound().setInteger(HologramSessionKeys.TOOL_ID, 7);
+            malformed.getTagCompound()
+                .setInteger(HologramSessionKeys.TOOL_ID, 7);
             player.inventory.mainInventory[0] = malformed;
             player.inventory.decrementAnimations();
-            SimpleAssert.eq(7, malformed.getTagCompound().getInteger(HologramSessionKeys.TOOL_ID),
+            SimpleAssert.eq(
+                7,
+                malformed.getTagCompound()
+                    .getInteger(HologramSessionKeys.TOOL_ID),
                 "unexpected existing identity tags are left for normal admission to refuse");
             player.inventory.mainInventory[0] = old;
             world.isRemote = true;
@@ -201,11 +219,13 @@ public final class HologramServerLoadRegression {
             new NetHandlerPlayServer(null, fakeNetwork, fake);
             HologramWorkspace.publishActionEndpoint(fake, false);
             fake.inventory.decrementAnimations();
-            SimpleAssert.that(!fake.inventory.mainInventory[0].hasTagCompound(),
+            SimpleAssert.that(
+                !fake.inventory.mainInventory[0].hasTagCompound(),
                 "even an attached FakePlayer does not initialize a selected projector");
             HologramWorkspace.revokeActionEndpoint(player);
             player.inventory.decrementAnimations();
-            SimpleAssert.that(!old.hasTagCompound(), "retiring login with its socket still open prevents initialization");
+            SimpleAssert
+                .that(!old.hasTagCompound(), "retiring login with its socket still open prevents initialization");
             new HologramLifecycle().loggedIn(new PlayerEvent.PlayerLoggedInEvent(player));
             channel.close();
             player.inventory.decrementAnimations();
@@ -240,11 +260,16 @@ public final class HologramServerLoadRegression {
         Field contents = S2FPacketSetSlot.class.getDeclaredField("field_149178_c");
         contents.setAccessible(true);
         ItemStack received = vanillaSlotRoundTrip(delta, contents);
-        SimpleAssert.that(received != null && received.getItem() == registered,
+        SimpleAssert.that(
+            received != null && received.getItem() == registered,
             "normal vanilla slot deserialization resolves the actual registered projector");
-        SimpleAssert.eq(identity, received.getTagCompound().getString(HologramSessionKeys.TOOL_ID),
+        SimpleAssert.eq(
+            identity,
+            received.getTagCompound()
+                .getString(HologramSessionKeys.TOOL_ID),
             "vanilla transfers the exact identity without a GTMB message");
-        SimpleAssert.that(vanillaSlotRoundTrip(new S2FPacketSetSlot(0, 36, null), contents) == null,
+        SimpleAssert.that(
+            vanillaSlotRoundTrip(new S2FPacketSetSlot(0, 36, null), contents) == null,
             "the same vanilla path also decodes the actual empty-slot form");
     }
 
@@ -842,22 +867,29 @@ public final class HologramServerLoadRegression {
         int[] dispatched = { 0 };
         Runnable dispatch = () -> dispatched[0]++;
         try {
-            SimpleAssert.that(HologramWorkspace.captureActionEndpoint(connection) == null,
+            SimpleAssert.that(
+                HologramWorkspace.captureActionEndpoint(connection) == null,
                 "ingress cannot mint an unpublished authentication generation");
             HologramWorkspace.publishActionEndpoint(player, false);
             HologramWorkspace.ActionEndpoint first = HologramWorkspace.captureActionEndpoint(connection);
-            SimpleAssert.that(first != null && first.player == player && first.connection == connection,
+            SimpleAssert.that(
+                first != null && first.player == player && first.connection == connection,
                 "the actual authenticated handler captures the initial published endpoint");
             HologramWorkspace.publishActionEndpoint(player, false);
-            SimpleAssert.that(first == HologramWorkspace.captureActionEndpoint(connection),
+            SimpleAssert.that(
+                first == HologramWorkspace.captureActionEndpoint(connection),
                 "a repeated unchanged lifecycle notification cannot reset the generation");
             taskGate = HologramWorkspace.constructionGate(first);
-            SimpleAssert.that(taskGate != null && first.constructionScope != null,
+            SimpleAssert.that(
+                taskGate != null && first.constructionScope != null,
                 "trusted lifecycle binds the construction scope without any construction packet");
             HologramConstructionTaskGate.Request oldIntent = new HologramConstructionTaskGate.Request(
-                java.util.UUID.randomUUID(), 1, HologramConstructionTaskGate.Kind.INCREMENTAL_NATIVE);
+                java.util.UUID.randomUUID(),
+                1,
+                HologramConstructionTaskGate.Kind.INCREMENTAL_NATIVE);
             oldJob = taskGate.acquire(first.constructionScope, oldIntent, false, false);
-            SimpleAssert.that(oldJob.decision == HologramConstructionTaskGate.Decision.GRANTED,
+            SimpleAssert.that(
+                oldJob.decision == HologramConstructionTaskGate.Decision.GRANTED,
                 "the exact authenticated endpoint can hold a scope lease");
             uncertain = taskGate.beginTransaction(oldJob.lease);
             SimpleAssert.that(taskGate.transactionCurrent(uncertain), "one exact permit owns the next mutation");
@@ -866,22 +898,25 @@ public final class HologramServerLoadRegression {
             player.worldObj = (HologramServiceEditRegression.ReadOnlyWorld) unsafe
                 .allocateInstance(HologramServiceEditRegression.ReadOnlyWorld.class);
             player.dimension = originalDimension + 1;
-            lifecycle.changedDimension(new PlayerEvent.PlayerChangedDimensionEvent(
-                player, originalDimension, player.dimension));
+            lifecycle.changedDimension(
+                new PlayerEvent.PlayerChangedDimensionEvent(player, originalDimension, player.dimension));
             HologramWorkspace.ActionEndpoint otherWorld = HologramWorkspace.captureActionEndpoint(connection);
             SimpleAssert.that(otherWorld != null && otherWorld != first, "the destination is immediately usable");
-            SimpleAssert.that(HologramWorkspace.constructionGate(first) == null
-                && HologramWorkspace.constructionGate(otherWorld) == taskGate
-                && otherWorld.constructionScope != first.constructionScope && !taskGate.transactionCurrent(uncertain)
-                && !taskGate.revoke(first.constructionScope)
-                && taskGate.settle(uncertain, HologramConstructionTaskGate.Settlement.RECOVERY_PENDING),
+            SimpleAssert.that(
+                HologramWorkspace.constructionGate(first) == null
+                    && HologramWorkspace.constructionGate(otherWorld) == taskGate
+                    && otherWorld.constructionScope != first.constructionScope
+                    && !taskGate.transactionCurrent(uncertain)
+                    && !taskGate.revoke(first.constructionScope)
+                    && taskGate.settle(uncertain, HologramConstructionTaskGate.Settlement.RECOVERY_PENDING),
                 "real lifecycle rotation fences old work but retains its exact unfinished permit");
             player.worldObj = world;
             player.dimension = originalDimension;
-            lifecycle.changedDimension(new PlayerEvent.PlayerChangedDimensionEvent(
-                player, originalDimension + 1, originalDimension));
+            lifecycle.changedDimension(
+                new PlayerEvent.PlayerChangedDimensionEvent(player, originalDimension + 1, originalDimension));
             HologramWorkspace.ActionEndpoint returned = HologramWorkspace.captureActionEndpoint(connection);
-            SimpleAssert.that(returned != null && returned != first && returned != otherWorld,
+            SimpleAssert.that(
+                returned != null && returned != first && returned != otherWorld,
                 "a round trip to the same World instance uses a new lifecycle generation");
             HologramNetwork.runQueuedAction(first, oldWorld, dispatch);
             SimpleAssert.eq(0, dispatched[0], "same handler and exact World object cannot revive a retired Action");
@@ -892,79 +927,94 @@ public final class HologramServerLoadRegression {
             // A prior synchronous listener on A -> B transfers back before GTMB sees the outer event.
             player.worldObj = world;
             player.dimension = originalDimension;
-            lifecycle.changedDimension(new PlayerEvent.PlayerChangedDimensionEvent(
-                player, originalDimension + 1, originalDimension));
+            lifecycle.changedDimension(
+                new PlayerEvent.PlayerChangedDimensionEvent(player, originalDimension + 1, originalDimension));
             HologramWorkspace.ActionEndpoint nestedReturn = HologramWorkspace.captureActionEndpoint(connection);
-            SimpleAssert.that(nestedReturn != null && nestedReturn != returned
-                && nestedReturn.constructionScope.generation > returned.constructionScope.generation,
+            SimpleAssert.that(
+                nestedReturn != null && nestedReturn != returned
+                    && nestedReturn.constructionScope.generation > returned.constructionScope.generation,
                 "nested return retires both prior endpoint and construction scope without seeing the departure");
             HologramConstructionTaskGate.Request denied = new HologramConstructionTaskGate.Request(
-                java.util.UUID.randomUUID(), 1, HologramConstructionTaskGate.Kind.PROJECTED_LAYER);
-            SimpleAssert.that(taskGate.acquire(nestedReturn.constructionScope, denied, false, false).decision
-                == HologramConstructionTaskGate.Decision.RECOVERY_PENDING && taskGate.busy(player.getUniqueID()),
+                java.util.UUID.randomUUID(),
+                1,
+                HologramConstructionTaskGate.Kind.PROJECTED_LAYER);
+            SimpleAssert.that(
+                taskGate.acquire(nestedReturn.constructionScope, denied, false, false).decision
+                    == HologramConstructionTaskGate.Decision.RECOVERY_PENDING && taskGate.busy(player.getUniqueID()),
                 "a later lifecycle cannot bypass uncertainty even without a positive journal hint");
-            SimpleAssert.that(taskGate.settle(uncertain, HologramConstructionTaskGate.Settlement.ROLLED_BACK)
-                && !taskGate.busy(player.getUniqueID())
-                && taskGate.acquire(nestedReturn.constructionScope, denied, false, false).decision
-                    == HologramConstructionTaskGate.Decision.RETIRED_UNKNOWN,
+            SimpleAssert.that(
+                taskGate.settle(uncertain, HologramConstructionTaskGate.Settlement.ROLLED_BACK)
+                    && !taskGate.busy(player.getUniqueID())
+                    && taskGate.acquire(nestedReturn.constructionScope, denied, false, false).decision
+                        == HologramConstructionTaskGate.Decision.RETIRED_UNKNOWN,
                 "only exact authoritative settlement releases the old hold; a refused request is never revived");
-            lifecycle.changedDimension(new PlayerEvent.PlayerChangedDimensionEvent(
-                player, originalDimension, originalDimension + 1));
-            lifecycle.changedDimension(new PlayerEvent.PlayerChangedDimensionEvent(
-                player, originalDimension, originalDimension));
-            SimpleAssert.that(nestedReturn == HologramWorkspace.captureActionEndpoint(connection),
+            lifecycle.changedDimension(
+                new PlayerEvent.PlayerChangedDimensionEvent(player, originalDimension, originalDimension + 1));
+            lifecycle.changedDimension(
+                new PlayerEvent.PlayerChangedDimensionEvent(player, originalDimension, originalDimension));
+            SimpleAssert.that(
+                nestedReturn == HologramWorkspace.captureActionEndpoint(connection),
                 "the stale outer destination and same-dimension duplicate do not rotate the current generation");
             HologramNetwork.runQueuedAction(returned, beforeNestedReturn, dispatch);
-            SimpleAssert.eq(0, dispatched[0], "nested dimension return cannot revive an Action queued before departure");
+            SimpleAssert
+                .eq(0, dispatched[0], "nested dimension return cannot revive an Action queued before departure");
             HologramNetwork.runQueuedAction(nestedReturn, queue.acquire(connection), dispatch);
             SimpleAssert.eq(1, dispatched[0], "fresh action after actual dimension publication dispatches");
 
             HologramRequestGate.Lease oldChannel = queue.acquire(connection);
             channelField.set(network, replacement);
-            SimpleAssert.that(HologramWorkspace.captureActionEndpoint(connection) == null,
+            SimpleAssert.that(
+                HologramWorkspace.captureActionEndpoint(connection) == null,
                 "an open replacement channel is not the context previously authenticated");
             HologramWorkspace.publishActionEndpoint(player, false);
             HologramWorkspace.ActionEndpoint replaced = HologramWorkspace.captureActionEndpoint(connection);
-            SimpleAssert.that(
-                replaced != null && replaced != nestedReturn, "only lifecycle can publish the changed transport");
+            SimpleAssert
+                .that(replaced != null && replaced != nestedReturn, "only lifecycle can publish the changed transport");
             HologramNetwork.runQueuedAction(nestedReturn, oldChannel, dispatch);
             SimpleAssert.eq(1, dispatched[0], "a queued Action cannot redirect to a newly open channel");
 
             respawned = (EntityPlayerMP) factory.invoke(null, unsafe, world, player.getUniqueID(), "RespawnedFixture");
-            respawned.playerNetServerHandler.netManager.channel().close();
+            respawned.playerNetServerHandler.netManager.channel()
+                .close();
             respawned.playerNetServerHandler = connection;
             respawned.dimension = originalDimension;
             HologramRequestGate.Lease beforeRespawn = queue.acquire(connection);
             HologramWorkspace.publishActionEndpoint(respawned, true);
-            SimpleAssert.that(HologramWorkspace.captureActionEndpoint(connection) == null,
+            SimpleAssert.that(
+                HologramWorkspace.captureActionEndpoint(connection) == null,
                 "the stock 1.7.10 respawn event retires the old player before handler assignment");
             // Later Forge listeners can move the exact successor before vanilla updates handler.playerEntity.
             respawned.worldObj = otherWorld.world;
             respawned.dimension = originalDimension + 1;
-            lifecycle.changedDimension(new PlayerEvent.PlayerChangedDimensionEvent(
-                respawned, originalDimension, respawned.dimension));
-            lifecycle.changedDimension(new PlayerEvent.PlayerChangedDimensionEvent(
-                player, originalDimension + 1, originalDimension));
-            SimpleAssert.that(HologramWorkspace.captureActionEndpoint(connection) == null,
+            lifecycle.changedDimension(
+                new PlayerEvent.PlayerChangedDimensionEvent(respawned, originalDimension, respawned.dimension));
+            lifecycle.changedDimension(
+                new PlayerEvent.PlayerChangedDimensionEvent(player, originalDimension + 1, originalDimension));
+            SimpleAssert.that(
+                HologramWorkspace.captureActionEndpoint(connection) == null,
                 "refreshing the provisional destination neither opens ingress nor lets the predecessor return");
             connection.playerEntity = respawned;
             HologramWorkspace.ActionEndpoint successor = HologramWorkspace.captureActionEndpoint(connection);
-            SimpleAssert.that(successor != null && successor.player == respawned && successor.world == otherWorld.world
-                && HologramWorkspace.currentActionEndpoint(successor),
+            SimpleAssert.that(
+                successor != null && successor.player == respawned
+                    && successor.world == otherWorld.world
+                    && HologramWorkspace.currentActionEndpoint(successor),
                 "after the handler transfer, normal ingress uses the provisional successor's final destination");
             HologramWorkspace.revokeActionEndpoint(player);
-            SimpleAssert.that(successor == HologramWorkspace.captureActionEndpoint(connection)
-                && HologramWorkspace.constructionGate(successor) == taskGate
-                && !taskGate.revoke(replaced.constructionScope),
+            SimpleAssert.that(
+                successor == HologramWorkspace.captureActionEndpoint(connection)
+                    && HologramWorkspace.constructionGate(successor) == taskGate
+                    && !taskGate.revoke(replaced.constructionScope),
                 "late retirement for the old entity cannot remove the successor's endpoint or construction scope");
             HologramNetwork.runQueuedAction(replaced, beforeRespawn, dispatch);
             SimpleAssert.eq(1, dispatched[0], "the old entity cannot act after authenticated respawn");
             HologramNetwork.runQueuedAction(successor, queue.acquire(connection), dispatch);
             SimpleAssert.eq(2, dispatched[0], "the newly authenticated player can act normally");
             HologramWorkspace.revokeActionEndpoint(respawned);
-            SimpleAssert.that(HologramWorkspace.captureActionEndpoint(connection) == null
-                && HologramWorkspace.constructionGate(successor) == null
-                && !taskGate.scopeCurrent(successor.constructionScope),
+            SimpleAssert.that(
+                HologramWorkspace.captureActionEndpoint(connection) == null
+                    && HologramWorkspace.constructionGate(successor) == null
+                    && !taskGate.scopeCurrent(successor.constructionScope),
                 "logout revokes the exact scope and delayed packets never create a new authenticated generation");
         } finally {
             // Pure test permits have no game or journal side effects, even after an earlier assertion.

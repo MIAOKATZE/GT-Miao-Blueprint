@@ -20,25 +20,30 @@ import net.minecraftforge.fluids.FluidStack;
 
 /** Detached theoretical demand. It never observes inventory, opens a session, or authorizes payment. */
 public final class HologramStaticMaterials {
-    /** Merely observes the exact same-name inventory item. No external provider callbacks or placement grant. */
-    public static ItemStack exactRegistryShell(String registry,int metadata)throws IOException{
-        Object b=Block.blockRegistry.getObject(registry),i=Item.itemRegistry.getObject(registry);
-        if(!(b instanceof Block block)||!(i instanceof net.minecraft.item.ItemBlock item)
-            ||!registry.equals(Block.blockRegistry.getNameForObject(block))
-            ||!registry.equals(Item.itemRegistry.getNameForObject(item))
-            ||Block.getBlockFromItem(item)!=block||Item.getItemFromBlock(block)!=item||metadata<0||metadata>15)
-            throw new IOException("Unproven ordinary inventory identity");
-        return new ItemStack(item,1,metadata);
-    }
 
+    /** Merely observes the exact same-name inventory item. No external provider callbacks or placement grant. */
+    public static ItemStack exactRegistryShell(String registry, int metadata) throws IOException {
+        Object b = Block.blockRegistry.getObject(registry), i = Item.itemRegistry.getObject(registry);
+        if (!(b instanceof Block block) || !(i instanceof net.minecraft.item.ItemBlock item)
+            || !registry.equals(Block.blockRegistry.getNameForObject(block))
+            || !registry.equals(Item.itemRegistry.getNameForObject(item))
+            || Block.getBlockFromItem(item) != block
+            || Item.getItemFromBlock(block) != item
+            || metadata < 0
+            || metadata > 15) throw new IOException("Unproven ordinary inventory identity");
+        return new ItemStack(item, 1, metadata);
+    }
 
     private HologramStaticMaterials() {}
 
     /** Invalidates capture-local resource facts when an explicit native provider registration changes. */
-    public static long nativeGeneration() { return HologramNativePlacement.generation(); }
+    public static long nativeGeneration() {
+        return HologramNativePlacement.generation();
+    }
 
     /** Immutable resolved rows. Payloads are private and never exposed or passed back to providers. */
     public static final class Contribution {
+
         private final Object[] identities;
         private final NBTTagCompound[] rows;
         private final int unaccounted;
@@ -46,8 +51,10 @@ public final class HologramStaticMaterials {
         private final boolean cacheReviewRequired, alternatives;
 
         private Contribution(Builder source) {
-            identities = source.rows.keySet().toArray();
-            rows = source.rows.values().toArray(new NBTTagCompound[0]);
+            identities = source.rows.keySet()
+                .toArray();
+            rows = source.rows.values()
+                .toArray(new NBTTagCompound[0]);
             unaccounted = source.unaccounted;
             detail = source.detail;
             cacheReviewRequired = source.cacheReviewRequired;

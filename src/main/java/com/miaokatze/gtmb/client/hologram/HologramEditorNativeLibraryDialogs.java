@@ -86,13 +86,14 @@ final class HologramEditorNativeLibraryDialogs {
                 "gtmb_native_library_" + kind.name()
                     .toLowerCase(java.util.Locale.ROOT)),
             null) {
-                @Override
-                public boolean shouldAnimate() {
-                    // A committed source switch retires this graph immediately; no invisible closing panel
-                    // may survive in MUI's open-panel stack and shade/swallow input to the destination.
-                    return !(kind == Kind.DISCARD && handingOffProjection) && super.shouldAnimate();
-                }
-            };
+
+            @Override
+            public boolean shouldAnimate() {
+                // A committed source switch retires this graph immediately; no invisible closing panel
+                // may survive in MUI's open-panel stack and shade/swallow input to the destination.
+                return !(kind == Kind.DISCARD && handingOffProjection) && super.shouldAnimate();
+            }
+        };
         dialog.setDisablePanelsBelow(true)
             .setCloseOnOutOfBoundsClick(false)
             .setDraggable(true)
@@ -107,7 +108,10 @@ final class HologramEditorNativeLibraryDialogs {
                 com.cleanroommc.modularui.widget.sizer.Unit.Measure.PIXEL);
         dialog.onCloseAction(() -> {
             if (kind == Kind.DISCARD && handingOffProjection) return; // confirmed, not cancelled
-            if (kind == Kind.CONVERSION) { ui.library.cancelConversionPrompt(); return; }
+            if (kind == Kind.CONVERSION) {
+                ui.library.cancelConversionPrompt();
+                return;
+            }
             if (kind == Kind.ADMIN) {
                 ui.library.libraryAdminDrawer(false);
                 return;
@@ -124,17 +128,35 @@ final class HologramEditorNativeLibraryDialogs {
                 .widthRel(1f)
                 .height(22));
         if (kind == Kind.CONVERSION) {
-            content.child(HologramEditorNativeTheme.label(() -> ui.library.conversionPromptName())
-                .widthRel(1f).height(22));
-            content.child(HologramEditorNativeTheme.label(() -> ui.library.promptCanConvert()
-                ? projector("library.convert_selected_help") : projector("library.convert_unpaired")).widthRel(1f).expanded());
-            Flow choices = Flow.row().widthRel(1f).height(24).childPadding(4);
-            choices.child(conversionChoice("library.upgrade_one", ui.library::promptCanConvert,
-                () -> ui.library.confirmConversionPrompt(false)));
-            choices.child(conversionChoice("library.upgrade", ui.library::nativeCanUpgrade,
-                () -> ui.library.confirmConversionPrompt(true)));
+            content.child(
+                HologramEditorNativeTheme.label(() -> ui.library.conversionPromptName())
+                    .widthRel(1f)
+                    .height(22));
+            content.child(
+                HologramEditorNativeTheme
+                    .label(
+                        () -> ui.library.promptCanConvert() ? projector("library.convert_selected_help")
+                            : projector("library.convert_unpaired"))
+                    .widthRel(1f)
+                    .expanded());
+            Flow choices = Flow.row()
+                .widthRel(1f)
+                .height(24)
+                .childPadding(4);
+            choices.child(
+                conversionChoice(
+                    "library.upgrade_one",
+                    ui.library::promptCanConvert,
+                    () -> ui.library.confirmConversionPrompt(false)));
+            choices.child(
+                conversionChoice(
+                    "library.upgrade",
+                    ui.library::nativeCanUpgrade,
+                    () -> ui.library.confirmConversionPrompt(true)));
             choices.child(conversionChoice("dialog.cancel", () -> true, ui.library::cancelConversionPrompt));
-            content.child(choices); dialog.child(content); return dialog;
+            content.child(choices);
+            dialog.child(content);
+            return dialog;
         }
         if (kind == Kind.ADMIN) admin(content);
         else if (kind == Kind.PRESET) {
@@ -198,7 +220,9 @@ final class HologramEditorNativeLibraryDialogs {
 
     private ButtonWidget<?> conversionChoice(String key, BooleanSupplier enabled, Runnable click) {
         return HologramEditorNativeTheme.button(() -> projector(key), null, click, enabled, () -> false, false)
-            .widthRel(1f).expanded().height(24);
+            .widthRel(1f)
+            .expanded()
+            .height(24);
     }
 
     private void admin(Flow content) {
@@ -237,7 +261,9 @@ final class HologramEditorNativeLibraryDialogs {
                     NBTTagCompound reviewed = ui.library.sourceSwitchProposal();
                     HologramScreen owner = ui.host.parent();
                     owner.deferNativeCommand(() -> {
-                        if (owner.ui != ui || !dialog.isOpen() || desired() != kind || !enabled.getAsBoolean()
+                        if (owner.ui != ui || !dialog.isOpen()
+                            || desired() != kind
+                            || !enabled.getAsBoolean()
                             || !reviewed.equals(ui.library.sourceSwitchProposal())) return;
                         // Run outside MUI's mouse dispatch. Close the actual modal before the local/synchronous
                         // workspace change can pause its graph; a subsequent refresh of this graph may never run.
@@ -263,8 +289,9 @@ final class HologramEditorNativeLibraryDialogs {
     }
 
     private String title(Kind kind) {
-        return kind == Kind.CONVERSION ? projector("library.convert_required") : kind == Kind.ADMIN ? projector("library.admin_title")
-            : kind == Kind.DELETE ? projector("library.delete_selected")
-                : kind == Kind.PRESET ? projector("dialog.preset_title") : ui.library.nativeReviewTitle();
+        return kind == Kind.CONVERSION ? projector("library.convert_required")
+            : kind == Kind.ADMIN ? projector("library.admin_title")
+                : kind == Kind.DELETE ? projector("library.delete_selected")
+                    : kind == Kind.PRESET ? projector("dialog.preset_title") : ui.library.nativeReviewTitle();
     }
 }

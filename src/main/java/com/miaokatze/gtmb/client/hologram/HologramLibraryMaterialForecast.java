@@ -59,7 +59,8 @@ final class HologramLibraryMaterialForecast {
     static HologramLibraryMaterialForecast fromCapture(HologramLibraryClient.DisplaySource captured) {
         if (captured == null) return null;
         return captured.savedMaterials != null && (captured.capturedIndexedMaterialSource() || captured.draft != null)
-            ? project(captured.savedMaterials) : null;
+            ? project(captured.savedMaterials)
+            : null;
     }
 
     /** Reads only the bounded source summary, never geometry, an NBT payload, or the file. */
@@ -162,6 +163,7 @@ final class HologramLibraryMaterialForecast {
             || !variant.block()
                 .equals(variant.item()))
             return false;
-        return damage<=15&&!variant.item().isEmpty();
+        return damage <= 15 && !variant.item()
+            .isEmpty();
     }
 }

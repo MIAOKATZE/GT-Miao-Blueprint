@@ -41,8 +41,8 @@ final class HologramServerLibrary {
     private static final Gson GSON = new Gson();
     private static final int MAX_ENTRIES = 1024;
     private static final int MAX_PEERS = 64;
-    private static final AttributeKey<PublicCopyHistory> PUBLIC_COPY_HISTORY =
-        new AttributeKey<>("gtmb.hologram.publicCopyHistory");
+    private static final AttributeKey<PublicCopyHistory> PUBLIC_COPY_HISTORY = new AttributeKey<>(
+        "gtmb.hologram.publicCopyHistory");
     private static final long MAX_STORED_BYTES = 64L * 1024 * 1024;
     static final long MAX_PUBLIC_DTO_BYTES = 512L * 1024 * 1024;
     private static final long MAX_RESERVED_BYTES = 2L * HologramBlueprintArtifact.MAX_BYTES;
@@ -373,8 +373,7 @@ final class HologramServerLibrary {
             handle(peer, request);
         } catch (IOException | RuntimeException invalid) {
             String op = request.getString("op");
-            if (HologramLibraryProtocol.uploadChunk(request) || "uploadBegin".equals(op))
-                abort(peer);
+            if (HologramLibraryProtocol.uploadChunk(request) || "uploadBegin".equals(op)) abort(peer);
             error(peer, invalid.getMessage(), request.getLong("clientTaskToken"));
         }
     }
@@ -408,14 +407,15 @@ final class HologramServerLibrary {
                     request.getInteger("uploadKiB"),
                     request.getInteger("downloadKiB"),
                     HologramLibraryPermissions.read(request.getTagList("permissionGroups", 10)),
-                    request.hasKey("privateNativeCacheSlots",3)?request.getInteger("privateNativeCacheSlots"):config.view().nativeCacheSlots);
+                    request.hasKey("privateNativeCacheSlots", 3) ? request.getInteger("privateNativeCacheSlots")
+                        : config.view().nativeCacheSlots);
             } else config.update(
                 peer.admin,
                 request.getLong("expectedRevision"),
                 request.getInteger("uploadKiB"),
                 request.getInteger("downloadKiB"),
                 request.getInteger("maxUploads"));
-            HologramPrivateNativeServer.configChanged(this,config.view().nativeCacheSlots);
+            HologramPrivateNativeServer.configChanged(this, config.view().nativeCacheSlots);
             broadcastConfig();
             NBTTagCompound confirmed = statusTag(peer.admin);
             confirmed.setString("configRequestId", request.getString("configRequestId"));
@@ -439,8 +439,7 @@ final class HologramServerLibrary {
         else if ("download".equals(op)) {
             requirePublicCopy(peer, request);
             long task = request.getLong("clientTaskToken");
-            if (!peer.copyConnection.history.claim(task))
-                throw new IOException("旧复制请求不会重新传送蓝图，请明确重新复制");
+            if (!peer.copyConnection.history.claim(task)) throw new IOException("旧复制请求不会重新传送蓝图，请明确重新复制");
             Entry entry = publicEntry(request);
             if (request.hasKey("sourceRevision") || request.hasKey("sourceHash")) requirePublicRevision(entry, request);
             // This operation transfers a complete usable file; a browse label never authorizes releasing it.
@@ -450,8 +449,7 @@ final class HologramServerLibrary {
             identity.setLong("sourceRevision", entry.revision);
             byte[] bundle;
             if (entry.nativeSlot != null) {
-                if (!request.getBoolean("acceptNative"))
-                    throw new IOException("此原生蓝图需要支持原生公开图库的客户端");
+                if (!request.getBoolean("acceptNative")) throw new IOException("此原生蓝图需要支持原生公开图库的客户端");
                 bundle = nativePublic.download(entry.nativeSlot);
             } else {
                 HologramBlueprintArtifact.Artifact artifact = storedArtifact(entry);
@@ -459,8 +457,13 @@ final class HologramServerLibrary {
                     .transfer(HologramBlueprintCompactCodec.publicShare(artifact.json), artifact);
                 bundle = HologramBlueprintArtifact.encode(download.json, download.png);
             }
-            queueDownload(peer, bundle, entry.name(), identity, entry.id(), entry.nativeSlot == null
-                ? HologramBlueprintArtifact.VERSION : HologramNativePublicArtifact.VERSION);
+            queueDownload(
+                peer,
+                bundle,
+                entry.name(),
+                identity,
+                entry.id(),
+                entry.nativeSlot == null ? HologramBlueprintArtifact.VERSION : HologramNativePublicArtifact.VERSION);
         } else if ("exportDraft".equals(op)) {
             HologramLibraryFacade.exportDraft(peer.player, request);
         } else if ("cancelTransfer".equals(op) || "cancel".equals(op)) {
@@ -481,8 +484,9 @@ final class HologramServerLibrary {
     private void requirePublicCopy(Peer peer, NBTTagCompound request) throws IOException {
         requireDownload(peer.owner);
         if (HologramBusinessWirePolicy.libraryRequest(
-            request, HologramBusinessWirePolicy.Owner.NONE, HologramBusinessWirePolicy.Origin.NETWORK_INGRESS)
-            != HologramBusinessWirePolicy.Intent.LIBRARY_DOWNLOAD)
+            request,
+            HologramBusinessWirePolicy.Owner.NONE,
+            HologramBusinessWirePolicy.Origin.NETWORK_INGRESS) != HologramBusinessWirePolicy.Intent.LIBRARY_DOWNLOAD)
             throw new IOException("完整蓝图仅在明确复制到本地时下载");
         if (!publicCopyCurrent(peer, request.getLong("clientTaskToken")))
             throw new IOException("服务器蓝图复制已取消或连接已变更，请重新确认复制");
@@ -491,8 +495,11 @@ final class HologramServerLibrary {
 
     private boolean publicCopyCurrent(Peer peer, long token) {
         PublicCopyConnection copy = peer.copyConnection;
-        return !closed && peer.online && token > peer.retiredThrough && copy != null
-            && token > copy.history.retiredThrough && copy.current(peer.player);
+        return !closed && peer.online
+            && token > peer.retiredThrough
+            && copy != null
+            && token > copy.history.retiredThrough
+            && copy.current(peer.player);
     }
 
     private static void requirePublicRevision(Entry entry, NBTTagCompound request) throws IOException {
@@ -513,7 +520,9 @@ final class HologramServerLibrary {
         if (!HologramNativePublicArtifact.supported(request.getInteger("artifactVersion")))
             throw new IOException("Unsupported blueprint artifact version");
         if (request.getInteger("artifactVersion") == HologramNativePublicArtifact.VERSION
-            && HologramBusinessWirePolicy.libraryRequest(request, HologramBusinessWirePolicy.Owner.NONE,
+            && HologramBusinessWirePolicy.libraryRequest(
+                request,
+                HologramBusinessWirePolicy.Owner.NONE,
                 HologramBusinessWirePolicy.Origin.NETWORK_INGRESS) != HologramBusinessWirePolicy.Intent.LIBRARY_UPLOAD)
             throw new IOException("当前请求不是明确的原生蓝图发布");
         if (peer.upload != null) throw new IOException("An upload is already active");
@@ -583,8 +592,7 @@ final class HologramServerLibrary {
     private Entry checkReplacement(Peer peer, NBTTagCompound request) throws IOException {
         Entry prior = owned(peer.owner, request.getString("replaceId"));
         boolean nativeFormat = request.getInteger("artifactVersion") == HologramNativePublicArtifact.VERSION;
-        if (nativeFormat != (prior.nativeSlot != null))
-            throw new IOException("不能用另一种格式覆盖已发布版本；请在本地另存原生副本后发布，原公库条目不变");
+        if (nativeFormat != (prior.nativeSlot != null)) throw new IOException("不能用另一种格式覆盖已发布版本；请在本地另存原生副本后发布，原公库条目不变");
         if (nativeFormat) requirePublicRevision(prior, request);
         return prior;
     }
@@ -601,12 +609,13 @@ final class HologramServerLibrary {
         String id = previous == null ? "public_" + UUID.randomUUID() : previous.id();
         long revision = Math.addExact(catalogRevision, 1);
         var stored = nativePublic.prepare(id, peer.owner, peer.name, revision, bytes);
-        String cleanupWarning = nativePublic.commit(stored, bytes, previous == null ? null : previous.nativeSlot, () -> {
-            requirePublish(peer.owner);
-            if (!upload.valid || peer.upload != upload
-                || !publicCopyCurrent(peer, upload.request.getLong("clientTaskToken")))
-                throw new IOException("Public native upload was retired");
-        });
+        String cleanupWarning = nativePublic
+            .commit(stored, bytes, previous == null ? null : previous.nativeSlot, () -> {
+                requirePublish(peer.owner);
+                if (!upload.valid || peer.upload != upload
+                    || !publicCopyCurrent(peer, upload.request.getLong("clientTaskToken")))
+                    throw new IOException("Public native upload was retired");
+            });
         Map<String, Entry> next = new LinkedHashMap<>(published);
         next.put(id, new Entry(stored));
         publishIndex(next);
@@ -683,8 +692,9 @@ final class HologramServerLibrary {
             NBTTagCompound label = new NBTTagCompound();
             label.setString("id", entry.id());
             label.setString("name", entry.name());
-            label.setBoolean("fullyVoucherCovered", entry.nativeSlot == null
-                && Boolean.TRUE.equals(entry.blueprint.fullyVoucherCovered));
+            label.setBoolean(
+                "fullyVoucherCovered",
+                entry.nativeSlot == null && Boolean.TRUE.equals(entry.blueprint.fullyVoucherCovered));
             label.setString("gtmbVersion", entry.version());
             if (entry.nativeSlot != null) label.setInteger("artifactVersion", HologramNativePublicArtifact.VERSION);
             label.setString("sourceHash", entry.hash);
@@ -1228,7 +1238,8 @@ final class HologramServerLibrary {
             throw new IOException("Server download queue is busy; retry later");
         long task = request.getLong("clientTaskToken");
         HologramLibraryDownload.Encoded encoded = HologramLibraryDownload.encode(
-            bytes, () -> publicDownload ? publicCopyCurrent(peer, task)
+            bytes,
+            () -> publicDownload ? publicCopyCurrent(peer, task)
                 : peer.online && !closed && (task == 0 || task > peer.retiredThrough));
         if (publicDownload) requirePublicCopy(peer, request);
         peer.download = new Download(encoded, task);
@@ -1442,14 +1453,39 @@ final class HologramServerLibrary {
             compactSource = true;
         }
 
-        String id() { return nativeSlot == null ? blueprint.id : nativeSlot.id(); }
-        String name() { return nativeSlot == null ? blueprint.name : nativeSlot.label().name(); }
-        String author() { return nativeSlot == null ? (blueprint.authorName == null ? "" : blueprint.authorName)
-            : nativeSlot.label().author(); }
-        int cells() { return nativeSlot == null ? blueprint.cells.size() : nativeSlot.label().cells(); }
-        int structures() { return nativeSlot == null ? blueprint.structures.size() : nativeSlot.label().structures(); }
-        String version() { return nativeSlot == null ? (blueprint.nativeBlueprint == null ? ""
-            : blueprint.nativeBlueprint.gtmbVersion) : nativeSlot.label().version(); }
+        String id() {
+            return nativeSlot == null ? blueprint.id : nativeSlot.id();
+        }
+
+        String name() {
+            return nativeSlot == null ? blueprint.name
+                : nativeSlot.label()
+                    .name();
+        }
+
+        String author() {
+            return nativeSlot == null ? (blueprint.authorName == null ? "" : blueprint.authorName)
+                : nativeSlot.label()
+                    .author();
+        }
+
+        int cells() {
+            return nativeSlot == null ? blueprint.cells.size()
+                : nativeSlot.label()
+                    .cells();
+        }
+
+        int structures() {
+            return nativeSlot == null ? blueprint.structures.size()
+                : nativeSlot.label()
+                    .structures();
+        }
+
+        String version() {
+            return nativeSlot == null ? (blueprint.nativeBlueprint == null ? "" : blueprint.nativeBlueprint.gtmbVersion)
+                : nativeSlot.label()
+                    .version();
+        }
 
         /** Publication and explicit migration use the compact writers; loading binds the observed original format. */
         Entry(Envelope envelope, int bytes, String hash, long revision, byte[] json) throws IOException {
@@ -1520,8 +1556,11 @@ final class HologramServerLibrary {
 
         private static boolean current(EntityPlayerMP player, NetHandlerPlayServer handler, NetworkManager network,
             Channel channel) {
-            return channel != null && channel.isOpen() && player.playerNetServerHandler == handler
-                && handler.playerEntity == player && handler.netManager == network && network.getNetHandler() == handler
+            return channel != null && channel.isOpen()
+                && player.playerNetServerHandler == handler
+                && handler.playerEntity == player
+                && handler.netManager == network
+                && network.getNetHandler() == handler
                 && network.channel() == channel;
         }
 
@@ -1540,7 +1579,8 @@ final class HologramServerLibrary {
             }
             // No player, world, or library is retained by the attribute after the channel closes.
             return owner.equals(history.owner) && current(player, handler, network, channel)
-                ? new PublicCopyConnection(handler, network, channel, history) : null;
+                ? new PublicCopyConnection(handler, network, channel, history)
+                : null;
         }
     }
 

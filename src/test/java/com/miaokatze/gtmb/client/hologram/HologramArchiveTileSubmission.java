@@ -232,8 +232,7 @@ final class HologramArchiveTileSubmission<H> {
         }
         Status status = work.refused ? Status.BACKEND_REFUSED
             : work.capacity ? Status.CAPACITY_LIMITED
-            : pending ? Status.AWAITING_TILES
-            : work.submittedQuads > 0 ? Status.SUBMITTED : Status.EMPTY;
+                : pending ? Status.AWAITING_TILES : work.submittedQuads > 0 ? Status.SUBMITTED : Status.EMPTY;
         return report(status, work);
     }
 
@@ -249,8 +248,9 @@ final class HologramArchiveTileSubmission<H> {
         if (phase == null) return report(Status.UNSUPPORTED, work);
         drain(phase, work);
         if (!phase.live()) return interrupted(phase, work);
-        return report(work.refused ? Status.BACKEND_REFUSED
-            : retired.isEmpty() ? Status.EMPTY : Status.DELETION_DEFERRED, work);
+        return report(
+            work.refused ? Status.BACKEND_REFUSED : retired.isEmpty() ? Status.EMPTY : Status.DELETION_DEFERRED,
+            work);
     }
 
     private boolean admitStamp(long stamp) {
@@ -357,7 +357,8 @@ final class HologramArchiveTileSubmission<H> {
     }
 
     private void removeInvisible(Frame frame) {
-        for (Iterator<Map.Entry<Tile, Resident<H>>> it = residents.entrySet().iterator(); it.hasNext();) {
+        for (Iterator<Map.Entry<Tile, Resident<H>>> it = residents.entrySet()
+            .iterator(); it.hasNext();) {
             var entry = it.next();
             boolean keep = false;
             for (int i = 0; i < frame.ready; i++) keep |= frame.tile(i) == entry.getKey();
@@ -543,6 +544,7 @@ final class HologramArchiveTileSubmission<H> {
     }
 
     private void requireRender() {
-        if (Thread.currentThread() != render) throw new IllegalStateException("Archive submission belongs to render thread");
+        if (Thread.currentThread() != render)
+            throw new IllegalStateException("Archive submission belongs to render thread");
     }
 }
