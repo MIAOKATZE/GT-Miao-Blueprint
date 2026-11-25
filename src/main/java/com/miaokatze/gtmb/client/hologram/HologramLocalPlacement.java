@@ -231,8 +231,8 @@ final class HologramLocalPlacement {
         request.setIntArray("previewPose", pose.recipe());
         if (source != null && source.nativeReceipt != null) {
             var held = Minecraft.getMinecraft().thePlayer.getHeldItem();
-            request.setInteger("reviewedSources", com.miaokatze.gtmb.hologram.HologramProjectedMainPolicy.settingsKey(
-                com.miaokatze.gtmb.hologram.HologramMaterials.read(held)));
+            request.setInteger("reviewedSources", com.miaokatze.gtmb.hologram.HologramProjectedMainPolicy.savedPlacementKey(
+                com.miaokatze.gtmb.hologram.HologramMaterials.read(held), Minecraft.getMinecraft().thePlayer.capabilities.isCreativeMode));
         }
         if (!options.hasKey("openReview", 1)) request.setBoolean("openReview", true);
         return new Submission(source, display, lockGeneration, request);

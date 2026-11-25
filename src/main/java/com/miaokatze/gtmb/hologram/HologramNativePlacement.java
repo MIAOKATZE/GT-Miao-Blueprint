@@ -209,7 +209,7 @@ public final class HologramNativePlacement {
         if (payload == null || payload.hasNoTags()) throw unsupported("native tile payload was not retained");
         try {
             NBTTagCompound tag = HologramEnergyPayload
-                .prepare(block, metadata, HologramBlueprintNbt.nativePayload(payload), null).tileEmpty;
+                .prepare(block, metadata, targetPayload(block, payload), null).tileEmpty;
             HologramAeNativeResources.validateSelectedFinalPayload(tag);
             HologramResourceWorld world = HologramResourceWorld.create(block, metadata);
             tag.setInteger("x", 0);
@@ -303,7 +303,7 @@ public final class HologramNativePlacement {
             TileEntity expected = adapter.create(
                 block,
                 metadata,
-                HologramEnergyPayload.withoutBuffers(HologramBlueprintNbt.nativePayload(payload)),
+                HologramEnergyPayload.withoutBuffers(targetPayload(block, payload)),
                 detached);
             if (expected == null || !actual.getClass()
                 .equals(expected.getClass())) return false;
@@ -327,6 +327,12 @@ public final class HologramNativePlacement {
         } catch (Exception | LinkageError invalid) {
             return false;
         }
+    }
+
+    private static NBTTagCompound targetPayload(Block block, NBTTagCompound source) throws IOException {
+        NBTTagCompound target = HologramBlueprintNbt.nativePayload(source);
+        HologramLittleTilesMaterialAliases.applyTile(block, target);
+        return target;
     }
 
     private static void omitPreviewFlag(NBTTagCompound tag) {
@@ -366,7 +372,7 @@ public final class HologramNativePlacement {
                 if (analysis.blocking || !analysis.supported) throw unsupported("AE blueprint has unresolved issues");
                 selected = analysis.payload();
             }
-            NBTTagCompound tag = HologramBlueprintNbt.nativePayload(selected);
+            NBTTagCompound tag = targetPayload(block, selected);
             if (tag == null) throw unsupported("native tile payload was not retained");
             tag.setInteger("x", x);
             tag.setInteger("y", y);

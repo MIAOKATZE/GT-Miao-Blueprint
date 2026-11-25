@@ -54,7 +54,10 @@ final class HologramNativeTiles {
         boolean littleTiles = block.getClass()
             .getName()
             .equals("com.creativemd.littletiles.common.blocks.BlockTile");
-        if (littleTiles && adapter == null) checkLittleTiles(tag);
+        if (littleTiles) {
+            if (adapter == null) checkLittleTiles(tag);
+            com.miaokatze.gtmb.hologram.HologramLittleTilesMaterialAliases.applyTile(block, tag);
+        }
         if (adapter == null && block.getClass()
             .getName()
             .equals("gcewing.architecture.common.block.BlockSawbench")) {

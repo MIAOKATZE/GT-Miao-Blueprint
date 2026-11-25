@@ -94,7 +94,7 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
 
     @Override
     public String localSubmitLabel() {
-        return availability == PlainAvailability.READY ? "开始施工（按所选料源）" : "施工不可用 · " + availability.reason;
+        return "确认施工";
     }
 
     @Override
@@ -104,17 +104,38 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
 
     @Override
     public boolean localVoucherAvailable() {
-        return availability == PlainAvailability.READY && ticket.current(Minecraft.getMinecraft());
+        return localVoucherBlocker().isEmpty();
+    }
+
+    @Override
+    public String localSubmitBlocker() {
+        return availability == PlainAvailability.READY ? "" : availability.reason;
+    }
+
+    @Override
+    public String localVoucherBlocker() {
+        Minecraft client = Minecraft.getMinecraft();
+        if (!ticket.current(client)) return "投影已失效";
+        if (ticket.frozen.source().nativeReceipt == null) return "请先保存原生蓝图";
+        if (!client.thePlayer.capabilities.allowEdit) return "需要编辑权限";
+        if (client.thePlayer.capabilities.isCreativeMode) return "创造模式无需用券";
+        // Selecting payment is a local preference, not a placement request or stock reservation.
+        // Older compatible servers did not advertise this option; admission still checks its live policy.
+        NBTTagCompound config = HologramLibraryClient.INSTANCE.config();
+        boolean enabled = client.isIntegratedServerRunning()
+            ? com.miaokatze.gtmb.hologram.HologramDecorationVoucher.enabled()
+            : !config.hasKey("nativeDecorationVoucher", 1) || config.getBoolean("nativeDecorationVoucher");
+        return enabled ? "" : "服务器已停用装饰券";
     }
 
     @Override
     public boolean localVoucherSelected() {
-        return voucherSelected;
+        return voucherSelected && localVoucherAvailable();
     }
 
     @Override
     public String localVoucherLabel() {
-        return voucherSelected ? "✓ 请求装饰抵扣 · 服务端核验" : "使用猫猫装饰抵用券";
+        return localVoucherSelected() ? "✓ 装饰抵扣" : "装饰抵扣";
     }
 
     @Override
@@ -155,9 +176,18 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
                 availability = HologramLibraryClient.INSTANCE.plainPlacementAvailability(ticket.frozen, client);
                 if (availability != PlainAvailability.READY) {
                     HologramClient.selectionNotice(availability.reason + "，未开始施工。");
-                } else if (dispatchRefused(action, () -> paymentChoice(ticket.consume(client), voucherSelected,bindingChoices()), placement::submitFrozen)) {
-                    returnToWorld(client);
-                    HologramClient.selectionNotice("当前锁定范围或连接未通过施工检查；已保留位置，未开始施工。");
+                } else {
+                    // Consume retires the screen ticket. Snapshot the validated choice first.
+                    boolean payWithVoucher = localVoucherSelected();
+                    if (voucherSelected && !payWithVoucher && !client.thePlayer.capabilities.isCreativeMode) {
+                        voucherSelected = false;
+                        HologramClient.selectionNotice(localVoucherBlocker() + "，请重新确认");
+                        return;
+                    }
+                    if (dispatchRefused(action, () -> paymentChoice(ticket.consume(client), payWithVoucher, bindingChoices()), placement::submitFrozen)) {
+                        returnToWorld(client);
+                        HologramClient.selectionNotice("施工未开始，已保留投影");
+                    }
                 }
             }
         });
@@ -282,7 +312,7 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
                 && client.thePlayer.inventory.currentItem == slot
                 && client.thePlayer.getHeldItem() == tool
                 && toolId.equals(id(tool))
-                && (reviewedSources==Integer.MIN_VALUE||reviewedSources==com.miaokatze.gtmb.hologram.HologramProjectedMainPolicy.settingsKey(HologramMaterials.read(tool)));
+                && (reviewedSources==Integer.MIN_VALUE||reviewedSources==com.miaokatze.gtmb.hologram.HologramProjectedMainPolicy.savedPlacementKey(HologramMaterials.read(tool),client.thePlayer.capabilities.isCreativeMode));
         }
 
         Submission consume(Minecraft client) {

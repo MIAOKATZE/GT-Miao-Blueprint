@@ -26,6 +26,7 @@ public final class HologramEditorTutorialPlaybackRegression {
     }
 
     public static void run() {
+        cutLessonUsesIsolatedDirectory();
         retiredCallbacksCannotMutateRestoredState();
         retiredFramesCannotRecreateReleasedResources();
         emptyWorkspaceHasNoCapturedDocument();
@@ -36,6 +37,36 @@ public final class HologramEditorTutorialPlaybackRegression {
         blockedPlaybackRetainsItsCauseUntilRestore();
         replayRestoresNavigationWithoutThePreviousFailure();
         blockedDiagnosticsExcludeDocumentsAndUserText();
+    }
+
+    public static void cutLessonUsesIsolatedDirectory() {
+        HologramUiModules sandbox = new HologramUiModules(null);
+        NBTTagCompound state = new NBTTagCompound();
+        state.setBoolean("target", true);
+        state.setString("editorWorkspace", "projection");
+        sandbox.session.initializeIsolated(new HologramState(state), (operation, request) -> {
+            throw new AssertionError("opening a lesson must not submit CUT requests");
+        });
+        SimpleAssert.that(sandbox.workspaces.hasProjectionContent(), "physical samples have a controller target");
+        HologramEditorCutWorkspace lesson = new HologramEditorCutWorkspace(sandbox);
+        sandbox.workspaces.activateCutLesson(lesson);
+        SimpleAssert.that(sandbox.workspaces.isCut(), "isolated CUT lesson displays its own directory");
+        HologramUiModules live = new HologramUiModules(null);
+        // Seed just the live session state without opening the player's on-disk UI preferences.
+        try {
+            var snapshot = HologramUiSession.class.getDeclaredField("state");
+            snapshot.setAccessible(true);
+            snapshot.set(live.session, new HologramState(state));
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError(failure);
+        }
+        SimpleAssert.that(live.workspaces.hasProjectionContent(), "the live graph owns a real controller projection");
+        try {
+            live.workspaces.activateCutLesson(lesson);
+            throw new AssertionError("a live editor must not use lesson admission");
+        } catch (IllegalStateException expected) {
+            SimpleAssert.that(!live.workspaces.isCut(), "live CUT protections remain active");
+        }
     }
 
     private static void blockedPlaybackRetainsItsCauseUntilRestore() {

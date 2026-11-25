@@ -123,6 +123,7 @@ public final class HologramLibraryConfig {
             tag.setInteger("uploadKiB", uploadKiB);
             tag.setInteger("downloadKiB", downloadKiB);
             tag.setInteger("maxUploads", maxUploads);tag.setInteger("nativeSavedProtocol",1);
+            tag.setBoolean("nativeDecorationVoucher", HologramDecorationVoucher.enabled());
             tag.setInteger("privateNativeCacheSlots",nativeCacheSlots);
             tag.setLong("configRevision", revision);
             tag.setBoolean("admin", admin);

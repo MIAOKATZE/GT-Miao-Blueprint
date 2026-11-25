@@ -99,6 +99,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     private MaterialPresentation materialPresentation;
     private long materialSerial;
     private int hoverX, hoverY, hoveredCell = -1;
+    HologramState controllerSitePickTarget;
     static long previewSliceCaptures, previewSliceHits, previewSliceReplayedQuads, previewSliceUnsupported,
         previewSliceFallbackFrames;
     static long previewSliceCapturedInts;
@@ -253,6 +254,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         projectedRequest = presentedRequest = null;
         cameraOnlyProjection = previewCameraMoving = false;
         presentedState = null;
+        controllerSitePickTarget = null;
         displayedState = null;
         previewSubmitted = false;
         publishedPreviewCells.clear();
@@ -1211,8 +1213,10 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
             previewPreparation.readyObserved = true;
             if (!browseViewport && state.data.getBoolean("localStandardController") && !state.cells.isEmpty())
                 com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.info(
-                    "Controller preview stage=render-ready generation={} view={} target={} prepared={} published={} visible={} faces={} nativeModels={} elapsedMs={}",
-                    state.data.getString("generation"), view, state.cells.size(), previewPreparation.completed,
+                    "Controller preview stage=render-ready generation={} view={} scope={} cells={} prepared={} published={} visible={} faces={} nativeModels={} elapsedMs={}",
+                    state.data.getString("generation"), view,
+                    state.data.getBoolean("controllerSiteDisplay") ? "installed" : "target",
+                    state.cells.size(), previewPreparation.completed,
                     previewPreparation.projection.published, visibleCellCount, cachedFaces.size(),
                     nativePreviewCells.size(), (System.nanoTime() - previewPreparation.startedAt) / 1_000_000L);
             com.miaokatze.gtmb.hologram.HologramRuntimeMetrics.loadStage(
@@ -1699,10 +1703,17 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         if (presentedState == null || presentedFrame == null) return -1;
         for (int at = cachedMarkers.size() - 1; at >= 0; at--) {
             RoleMarker marker = cachedMarkers.get(at);
-            if (x >= marker.left && x < marker.right && y >= marker.top && y < marker.bottom) return marker.cell.index;
+            if (x >= marker.left && x < marker.right && y >= marker.top && y < marker.bottom)
+                return pickTargetIndex(marker.cell.index);
         }
         Face face = nearestFace(cachedFaces, x, y, true);
-        return face == null ? -1 : face.cell.index;
+        return face == null ? -1 : pickTargetIndex(face.cell.index);
+    }
+
+    private int pickTargetIndex(int index) {
+        if (!presentedState.data.getBoolean("controllerSiteDisplay")) return index;
+        HologramState target = controllerSitePickTarget;
+        return target != null && target.controllerView(1) == presentedState ? presentedState.matchingIndex(target, index) : -1;
     }
 
     private static Face nearestFace(List<Face> faces, int x, int y, boolean includeEmpty) {
@@ -1734,6 +1745,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     private static boolean previewVisible(HologramState.Cell c, int layer, int view, boolean current,
         boolean showEmptyCells) {
         if (c.status.equals("removed") || view == 2 && (c.completed() || c.status.equals("satisfied"))) return false;
+        if (current && c.capturedNativeTarget() != null && c.localObservationMissing()) return false;
         if (HologramBlockRender.invisible(c, current)) return false;
         boolean empty = !c.anchor && !c.iconOnly && (current ? c.id : c.wantId).equals("minecraft:air");
         return (!empty || showEmptyCells) && (c.anchor || c.dy == layer || layer == Integer.MAX_VALUE);

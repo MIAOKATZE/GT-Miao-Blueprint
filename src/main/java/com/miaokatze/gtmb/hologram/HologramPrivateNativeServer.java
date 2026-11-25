@@ -68,10 +68,10 @@ final class HologramPrivateNativeServer implements AutoCloseable {
     private static boolean allowed(HologramWorkspace.ActionEndpoint ep,Request begin){
         if(begin==null||begin.op!=BEGIN||!HologramWorkspace.currentActionEndpoint(ep)||HologramWorkspace.constructionGate(ep)==null)return false;
         var p=ep.player;ItemStack tool=p.getHeldItem();
-        return !p.isDead&&p.capabilities.allowEdit&&!p.capabilities.isCreativeMode&&p.dimension==begin.dimension
+        return !p.isDead&&p.capabilities.allowEdit&&p.dimension==begin.dimension
             &&ItemNekoHologramProjector.isProjector(tool)&&tool.hasTagCompound()&&begin.tool!=null
             &&begin.tool.toString().equals(tool.getTagCompound().getString(HologramSessionKeys.TOOL_ID))
-            &&HologramProjectedMainPolicy.settingsKey(HologramMaterials.read(tool))==begin.sources
+            &&HologramProjectedMainPolicy.savedPlacementKey(HologramMaterials.read(tool),p.capabilities.isCreativeMode)==begin.sources
             &&HologramWorldFlow.worldPosition(begin.x,begin.y,begin.z,ep.world.getHeight())&&ep.world.blockExists(begin.x,begin.y,begin.z)
             &&HologramSessionPolicy.previewReach(p,begin.x,begin.y,begin.z);
     }

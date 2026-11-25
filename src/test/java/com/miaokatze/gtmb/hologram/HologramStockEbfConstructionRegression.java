@@ -103,7 +103,8 @@ public final class HologramStockEbfConstructionRegression {
             var gate = HologramWorkspace.constructionGate(endpoint);
             SimpleAssert.that(gate != null, "headless fixture publishes real authenticated endpoint owner");
             var configuration = new HologramStockNativeEntry.EbfConfig(6, installed);
-            selectedEbfMe(world,controller,facing,endpoint,id,configuration);
+            selectedEbfMe(world,controller,facing,endpoint,id,configuration); // Existing request at sequence 1.
+            declaredWholeNew(world, controller, facing, endpoint, id); // Sequence 2–5 before legacy 11–20.
             var wrong = typed(endpoint, controller, facing, id, request(1), configuration);
             try {
                 HologramStockNativeEntry.begin(wrong);
@@ -261,6 +262,148 @@ public final class HologramStockEbfConstructionRegression {
             network.channel().close();
             HologramConstructionJournal.STORAGE_ROOT.set(previousStorage);
         }
+    }
+
+    /** Whole generic endpoint against the exact GT #1000 declaration and a bare controller, not the legacy EBF codec. */
+    private static void declaredWholeNew(RawWorld world, BaseMetaTileEntity controller,
+        ExtendedFacing facing, HologramWorkspace.ActionEndpoint endpoint, String id)
+        throws IOException, ReflectiveOperationException {
+        var machine = (gregtech.common.tileentities.machines.multi.MTEElectricBlastFurnace) controller.getMetaTileEntity();
+        var definition = machine.getStructureDefinition();
+        var elements = definition.getStructureFor("main");
+        var cursor = new HologramStructureCursor(elements, 1, 3, 0);
+        var offsets = new ArrayList<HologramDeclaredNativeSelection.Offset>();
+        var original = new ArrayList<Block>();
+        var metadata = new ArrayList<Integer>();
+        var tiles = new ArrayList<TileEntity>();
+        var exhaust = coordinate(controller, facing, 0, -3, 1);
+        var shell = coordinate(controller, facing, -1, -3, 0);
+        var coil = coordinate(controller, facing, -1, -2, 0);
+        var player = endpoint.player;
+        var inventory = player.inventory.mainInventory;
+        var heldCasing = inventory[1];
+        var heldCoil = inventory[2];
+        var replies = new ArrayList<HologramStockNativeWire.Reply>();
+        var server = new HologramStockNativeServer((actor, reply) -> {
+            SimpleAssert.that(actor == endpoint, "the authenticated actor owns the exact declared receipt");
+            replies.add(HologramStockNativeWire.readReply(HologramStockNativeWire.writeReply(reply)));
+        });
+        // Bare headless launch does not apply the buildPiece/HatchBuilder mixins; register the actual GT array
+        // from its own construct() offsets, and attach the matching build callback to its actual muffler leaf.
+        while (cursor.done() < cursor.total()) {
+            int element = cursor.done();
+            var position = cursor.declarationOffset(facing);
+            if (position == null || position.x() == 0 && position.y() == 0 && position.z() == 0) continue;
+            int x = controller.xCoord + position.x(), y = controller.yCoord + position.y(),
+                z = controller.zCoord + position.z();
+            if (x == exhaust[0] && y == exhaust[1] && z == exhaust[2]) {
+                var leaf = elements[element];
+                Object builder = new Object();
+                HologramHatchPolicy.declare(builder, java.util.Collections.singletonList(gregtech.api.enums.HatchElement.Muffler), false);
+                HologramHatchPolicy.built(builder, leaf);
+                SimpleAssert.that(HologramHatchPolicy.completeMarker(leaf), "exact GT exhaust is a declared required hatch");
+            }
+            offsets.add(position);
+            original.add(world.getBlock(x, y, z));
+            metadata.add(world.getBlockMetadata(x, y, z));
+            tiles.add(world.getTileEntity(x, y, z));
+            world.seed(x, y, z, Blocks.air, 0);
+            world.seedTile(x, y, z, null);
+        }
+        @SuppressWarnings("unchecked")
+        var tileNames = (java.util.Map<Class<?>,String>) cpw.mods.fml.relauncher.ReflectionHelper
+            .findField(TileEntity.class, "classToNameMap", "field_145853_j").get(null);
+        String oldTileName = tileNames.putIfAbsent(BaseMetaTileEntity.class, "gtmb_fixture:registered_gt_device");
+        try (var registration = com.miaokatze.gtmb.api.StructureSources.register("gtmb_test:exact-gt-ebf",
+            gregtech.common.tileentities.machines.multi.MTEElectricBlastFurnace.class,
+            (context, trigger) -> new com.miaokatze.gtmb.api.StructureSources.Plan(definition,
+                java.util.Collections.singletonList(new com.miaokatze.gtmb.api.StructureSources.Piece("main", 1, 3, 0, trigger))))) {
+            var selection = new HologramDeclaredNativeSelection(1000, java.util.Collections.singletonMap("coil", 6), 0, 0,
+                java.util.Collections.emptyList(), java.util.Collections.emptyList());
+            var create = (java.util.function.LongFunction<HologramStockNativeWire.Confirmation>) seq ->
+                HologramStockNativeWire.Confirmation.declared(new HologramStockNativeWire.Key(UUID.randomUUID(), seq, 0),
+                    player.dimension, UUID.fromString(id), controller.xCoord, controller.yCoord, controller.zCoord,
+                    2, 0, facing.ordinal(), 1, false, false, 1, selection);
+            long generation = endpoint.constructionScope.generation;
+            inventory[1] = inventory[2] = null;
+            player.capabilities.isCreativeMode = true;
+            var stale = create.apply(2);
+            SimpleAssert.that(server.enqueue(endpoint, HologramStockNativeWire.readRequest(HologramStockNativeWire.probe(stale))),
+                "empty creative EBF PROBE was queued");
+            server.tick(Long.MAX_VALUE);
+            SimpleAssert.eq(HologramStockNativeWire.Phase.CAPABLE, replies.get(replies.size()-1).phase(),
+                "real Creative allowEdit gives a read-only declared EBF proof");
+            player.capabilities.isCreativeMode = false;
+            var rejected = finishDeclared(server, endpoint, replies, stale.forGeneration(generation));
+            SimpleAssert.that(rejected.phase() == HologramStockNativeWire.Phase.REFUSED
+                && rejected.reason().contains("游戏模式已变化") && world.writes().isEmpty(),
+                "mode switch between PROBE and BEGIN invalidates its proof without touching the world");
+            var missing = create.apply(3);
+            proveDeclared(server, endpoint, replies, missing);
+            var unfunded = finishDeclared(server, endpoint, replies, missing.forGeneration(generation));
+            SimpleAssert.that(unfunded.phase() == HologramStockNativeWire.Phase.STOPPED
+                && unfunded.reason().contains("材料来源不足") && world.writes().isEmpty(),
+                "not Creative: empty stock remains blocked on the same declared confirmation");
+            inventory[1] = new ItemStack(GregTechAPI.sBlockCasings1, 32, 11);
+            inventory[2] = new ItemStack(GregTechAPI.sBlockCasings5, 16, 9);
+            var survivor = create.apply(4);
+            proveDeclared(server, endpoint, replies, survivor);
+            var built = finishDeclared(server, endpoint, replies, survivor.forGeneration(generation));
+            SimpleAssert.that(built.phase() == HologramStockNativeWire.Phase.COMPLETE && built.placed() == 32
+                && built.reason().contains("1 处未选仓室") && world.writes().size()==32
+                && inventory[1].stackSize == 16 && inventory[2] == null
+                && world.getBlock(shell[0], shell[1], shell[2]) == GregTechAPI.sBlockCasings1
+                && world.getBlockMetadata(coil[0], coil[1], coil[2]) == 9
+                && world.getBlock(exhaust[0], exhaust[1], exhaust[2]) == Blocks.air,
+                "survival bare EBF commits exact shell/coils, charges 16 casing + 16 chosen coil, no guessed exhaust: " + built);
+            for (var p : offsets)
+                world.seed(controller.xCoord+p.x(),controller.yCoord+p.y(),controller.zCoord+p.z(),Blocks.air,0);
+            world.writes().clear();
+            inventory[1] = inventory[2] = null;
+            player.capabilities.isCreativeMode = true;
+            var creative = create.apply(5);
+            proveDeclared(server, endpoint, replies, creative);
+            var free = finishDeclared(server, endpoint, replies, creative.forGeneration(generation));
+            SimpleAssert.that(free.phase() == HologramStockNativeWire.Phase.COMPLETE && free.placed() == 32
+                && free.reason().contains("1 处未选仓室") && world.writes().size() == 32
+                && inventory[1] == null && inventory[2] == null && !HologramConstructionJournal.pending(player)
+                && world.getTileEntity(controller.xCoord, controller.yCoord, controller.zCoord) == controller
+                && world.getBlockMetadata(coil[0],coil[1],coil[2]) == 9,
+                "creative bare EBF commits real shell and selected coil with an empty inventory: " + free);
+            System.out.println("GTMB_DECLARED_EBF_PROOF_AND_PLACEMENT survival=32 (+32 debit), creative=32 (0 debit), exhaust preserved; mode drift and missing stock denied");
+        } finally {
+            for (int i = 0; i < offsets.size(); i++) {
+                var p = offsets.get(i);
+                int x = controller.xCoord + p.x(), y = controller.yCoord + p.y(), z = controller.zCoord + p.z();
+                world.seed(x, y, z, original.get(i), metadata.get(i));
+                world.seedTile(x, y, z, tiles.get(i));
+            }
+            world.writes().clear();
+            if (oldTileName == null) tileNames.remove(BaseMetaTileEntity.class);
+            inventory[1] = heldCasing;
+            inventory[2] = heldCoil;
+            player.capabilities.isCreativeMode = false;
+        }
+    }
+
+    private static void proveDeclared(HologramStockNativeServer server, HologramWorkspace.ActionEndpoint endpoint,
+        List<HologramStockNativeWire.Reply> replies, HologramStockNativeWire.Confirmation confirmation) {
+        SimpleAssert.that(server.enqueue(endpoint, HologramStockNativeWire.readRequest(HologramStockNativeWire.probe(confirmation))),
+            "actual declared PROBE decode and enqueue");
+        server.tick(Long.MAX_VALUE);
+        SimpleAssert.eq(HologramStockNativeWire.Phase.CAPABLE, replies.get(replies.size()-1).phase(),
+            "matching authenticated owner receives CAPABLE");
+    }
+
+    private static HologramStockNativeWire.Reply finishDeclared(HologramStockNativeServer server,
+        HologramWorkspace.ActionEndpoint endpoint, List<HologramStockNativeWire.Reply> replies,
+        HologramStockNativeWire.Confirmation confirmation) {
+        SimpleAssert.that(server.enqueue(endpoint, HologramStockNativeWire.readRequest(HologramStockNativeWire.confirmAfterProbe(confirmation))),
+            "actual declared BEGIN_AFTER_PROBE decode and enqueue");
+        server.tick(Long.MAX_VALUE);
+        var last = replies.get(replies.size() - 1);
+        SimpleAssert.eq(confirmation.key(), last.key(), "actual declared terminal receipt belongs to the confirmation");
+        return last;
     }
 
     private static void verifyLateRawReentry(sun.misc.Unsafe unsafe, RawWorld world, BaseMetaTileEntity controller,

@@ -48,7 +48,8 @@ final class HologramUiPreview {
         if (controllerViewChosen || !metadata.getBoolean("localStandardController") || !metadata.hasKey("siteOccupied", 3)) return;
         controllerViewChosen = true;
         // Terrain crossing a declared cell is a conflict, not evidence of an installed machine.
-        view = metadata.getInteger("siteMatchingSolid") > 0 || metadata.getInteger("siteHatches") > 0 ? 1 : 0;
+        view = metadata.getInteger("siteMatchingSolid") > 0 || metadata.getInteger("siteHatches") > 0
+            || metadata.getInteger("siteNativeOccupied") > 0 ? 1 : 0;
     }
 
     private int hovered = -1;
@@ -228,8 +229,9 @@ final class HologramUiPreview {
                 } else ui.canvas.sceneText("正在准备蓝图", viewportX() + 8, viewportY() + 12, 160, 0xb9d5d4);
                 return;
             }
+            HologramState display = configureControllerSiteDisplay(viewport, snapshot);
             hovered = viewport.preview(
-                snapshot,
+                display,
                 0,
                 0,
                 viewportWidth(),
@@ -242,11 +244,12 @@ final class HologramUiPreview {
                 camera.z,
                 allLayers ? Integer.MAX_VALUE : layer,
                 view,
-                selected,
+                snapshot.matchingIndex(display, selected),
                 mx,
                 my,
                 -1,
                 !cameraGestureActive());
+            hovered = display.matchingIndex(snapshot, hovered);
             ui.textBoxes.draw();
             drawEmptyVoxelPreview(mx, my);
             if (moveHandles && canMoveSelection() && previewInteractive()) drawGizmo(mx, my);
@@ -270,8 +273,8 @@ final class HologramUiPreview {
         }
         return switch (id) {
             case 10, 11, 14, 15 -> true;
-            case 12 -> layer > ui.session.state().minY;
-            case 13 -> layer < ui.session.state().maxY;
+            case 12 -> layer > ui.session.state().controllerView(view).minY;
+            case 13 -> layer < ui.session.state().controllerView(view).maxY;
             default -> false;
         };
     }
@@ -314,8 +317,10 @@ final class HologramUiPreview {
                 ui.canvas.sceneText("正在准备蓝图", viewportX() + 8, viewportY() + 12, 160, 0xb9d5d4);
                 return;
             }
+            HologramState snapshot = ui.session.state();
+            HologramState display = configureControllerSiteDisplay(viewport, snapshot);
             this.hovered = viewport.preview(
-                ui.session.state(),
+                display,
                 viewportX(),
                 viewportY(),
                 viewportWidth(),
@@ -328,19 +333,20 @@ final class HologramUiPreview {
                 this.camera.z,
                 this.allLayers ? Integer.MAX_VALUE : this.layer,
                 this.view,
-                this.selected,
+                snapshot.matchingIndex(display, this.selected),
                 mx,
                 my,
                 -1,
                 !cameraGestureActive());
+            this.hovered = display.matchingIndex(snapshot, this.hovered);
             ui.textBoxes.draw();
         } finally {
             GL11.glPopAttrib();
         }
         ui.canvas.button(10, 38, 55, 44, 17, new String[] { "目标", "现场", "差分" }[this.view], true, mx, my);
         ui.canvas.button(11, 84, 55, 50, 17, this.allLayers ? "全部层" : "层 " + this.layer, true, mx, my);
-        ui.canvas.button(12, 136, 55, 20, 17, "−", this.layer > ui.session.state().minY, mx, my);
-        ui.canvas.button(13, 158, 55, 22, 17, "+", this.layer < ui.session.state().maxY, mx, my);
+        ui.canvas.button(12, 136, 55, 20, 17, "−", this.layer > ui.session.state().controllerView(view).minY, mx, my);
+        ui.canvas.button(13, 158, 55, 22, 17, "+", this.layer < ui.session.state().controllerView(view).maxY, mx, my);
         if (this.selection.size() > 0)
             ui.canvas.text("选中 " + this.selection.size() + " 格 · G 移动轴", 186, 61, 122, 0xffe59b);
         if (this.selection.canSelectRelated(ui.session.state())) ui.canvas.text("全选 T", 264, 61, 42, 0xc99bff);
@@ -587,7 +593,7 @@ final class HologramUiPreview {
         HologramState.Cell cell = ui.session.selectedCell();
         int planeY = !this.allLayers ? ui.session.state().data.getInteger("y") + this.layer
             : cell == null
-                ? ui.session.state().data.getInteger("y") + (ui.session.state().minY + ui.session.state().maxY) / 2
+                ? ui.session.state().data.getInteger("y") + (ui.session.state().controllerView(view).minY + ui.session.state().controllerView(view).maxY) / 2
                 : cell.y;
         int[] voxel = HologramRenderer.editor()
             .pickEmptyVoxel(ui.session.state(), mx, my, planeY);
@@ -852,11 +858,19 @@ final class HologramUiPreview {
             : previewFrameReady(viewportX(), viewportY(), viewportWidth(), previewHeight());
     }
 
+    private HologramState configureControllerSiteDisplay(MiaoVisonLiteRenderer viewport, HologramState target) {
+        HologramState display = target.controllerView(view);
+        viewport.controllerSitePickTarget = display == target ? null : target;
+        // Selection and plan overlays own target indices. SITE pick maps back to target by coordinate.
+        if (display != target) viewport.selection = null;
+        return display;
+    }
+
     boolean previewFrameReady(int x, int y, int width, int height) {
         boolean renderedEmpty = HologramRenderer.editor().showEmptyCells;
         return HologramRenderer.editor()
             .previewPresented(
-                ui.session.state(),
+                ui.session.state().controllerView(view),
                 x,
                 y,
                 width,
@@ -876,7 +890,8 @@ final class HologramUiPreview {
     boolean previewNavigable() {
         if (ui.library.openingLocalSource()) return navigableOpening() != null;
         HologramState displayed = HologramRenderer.previewDisplayState();
-        return previewInputOpen() && displayed != null && displayed.identity == ui.session.state().identity;
+        return previewInputOpen() && displayed != null
+            && displayed.identity == ui.session.state().controllerView(view).identity;
     }
 
     private ViewportCoordinates openingViewport() {
@@ -1396,10 +1411,10 @@ final class HologramUiPreview {
 
     /** Integer pointer poses may pause between moves; avoid new screen captures for the whole owned camera gesture. */
     boolean cameraGestureActive() {
-        return navigationButton >= 0 || dragging && !blueprintCameraControls();
+        return navigationButton >= 0 || dragging;
     }
 
-    /** Blueprint camera presses precede context-menu presses; a short right release opens the existing menu. */
+    /** During loading only a presented frame can navigate. A short editor right release still opens the menu. */
     boolean consumeViewportNavigationMouse(int mx, int my, int button) {
         if (ui.library.openingLocalSource()) {
             HologramOpeningPreview opening = navigableOpening();
@@ -1525,6 +1540,17 @@ final class HologramUiPreview {
                 this.moved = false;
                 this.dragX = mx;
                 this.dragY = my;
+                if (blueprintCameraControls()) {
+                    navigationStartX = mx;
+                    navigationStartY = my;
+                    navigationMotion = 0;
+                }
+                return true;
+            }
+            if (blueprintCameraControls() && previewNavigable() && ui.canvas.inViewport(mx, my)
+                && !previewNavigationBlockedAt(mx, my)) {
+                beginNavigation(mx, my, button);
+                return true;
             }
         }
         return false;
@@ -1589,7 +1615,7 @@ final class HologramUiPreview {
         if (navigationButton >= 0 && navigationButton == button) {
             int mx = ui.canvas.localX(x), my = ui.canvas.localY(y), dx = mx - dragX, dy = my - dragY;
             navigationMotion += Math.abs((long) dx) + Math.abs((long) dy);
-            if (button == 1) {
+            if (button == 0 || button == 1) {
                 if (!navigationDragged) {
                     if (navigationMotion < 4) {
                         dragX = mx;
@@ -1600,8 +1626,7 @@ final class HologramUiPreview {
                     dx = mx - navigationStartX;
                     dy = my - navigationStartY;
                 }
-                yaw -= dx * .012;
-                pitch = Math.max(-1.35, Math.min(1.35, pitch + dy * .012));
+                if (button == 0) rotateBlueprint(dx, dy);
             } else {
                 double scale = HologramRenderer.gridScale();
                 if (scale > 0) {
@@ -1627,6 +1652,10 @@ final class HologramUiPreview {
             return;
         }
         // The older left-drag camera is navigation too; successive input events need not wait for another draw.
+        if (button == 0 && dragging && blueprintCameraControls() && previewNavigable()) {
+            dragBlueprint(ui.canvas.localX(x), ui.canvas.localY(y));
+            return;
+        }
         if (dragging && !blueprintCameraControls() && previewNavigable()) {
             int mx = ui.canvas.localX(x), my = ui.canvas.localY(y), dx = mx - dragX, dy = my - dragY;
             if (Math.abs(dx) + Math.abs(dy) > 1) moved = true;
@@ -1660,6 +1689,25 @@ final class HologramUiPreview {
         if (Math.abs(dx) + Math.abs(dy) > 1) this.moved = true;
         this.dragX = mx;
         this.dragY = my;
+    }
+
+    private void dragBlueprint(int mx, int my) {
+        int dx = mx - dragX, dy = my - dragY;
+        dragX = mx;
+        dragY = my;
+        navigationMotion += Math.abs((long) dx) + Math.abs((long) dy);
+        if (!moved) {
+            if (navigationMotion < 4) return;
+            moved = true;
+            dx = mx - navigationStartX;
+            dy = my - navigationStartY;
+        }
+        rotateBlueprint(dx, dy);
+    }
+
+    private void rotateBlueprint(int dx, int dy) {
+        yaw -= dx * .012;
+        pitch = Math.max(-1.35, Math.min(1.35, pitch + dy * .012));
     }
 
     void mouseMovedOrUp(int x, int y, int button) {
@@ -1727,6 +1775,8 @@ final class HologramUiPreview {
             return;
         }
         if (button == 0 && this.dragging) {
+            if (blueprintCameraControls() && !moved)
+                dragBlueprint(ui.canvas.localX(x), ui.canvas.localY(y));
             int target = HologramRenderer.pick(ui.canvas.localX(x), ui.canvas.localY(y));
             if (!this.moved && ui.canvas.inViewport(ui.canvas.localX(x), ui.canvas.localY(y))
                 && !ui.preview.previewBlockedAt(ui.canvas.localX(x), ui.canvas.localY(y))
@@ -2056,8 +2106,8 @@ final class HologramUiPreview {
         selection.load(indices, -1, ui.session.state().cells.size());
         selected = selection.first();
         allLayers = state.getBoolean("allLayers");
-        layer = allLayers ? ui.session.state().maxY
-            : Math.max(ui.session.state().minY, Math.min(ui.session.state().maxY, state.getInteger("layer")));
+        layer = allLayers ? ui.session.state().controllerView(view).maxY
+            : Math.max(ui.session.state().controllerView(view).minY, Math.min(ui.session.state().controllerView(view).maxY, state.getInteger("layer")));
         controllerViewChosen = true;
         view = state.getInteger("view");
         yaw = state.getDouble("yaw");

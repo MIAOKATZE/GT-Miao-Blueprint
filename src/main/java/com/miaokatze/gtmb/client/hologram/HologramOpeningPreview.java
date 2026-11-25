@@ -103,7 +103,7 @@ final class HologramOpeningPreview {
     }
 
     boolean press(int x, int y, int button) {
-        if (presented == null || (button != 1 && button != 2)) return false;
+        if (presented == null || (button != 0 && button != 2)) return false;
         this.button = button;
         startX = previousX = x;
         startY = previousY = y;
@@ -118,7 +118,7 @@ final class HologramOpeningPreview {
         previousX = x;
         previousY = y;
         motion += Math.abs((long) dx) + Math.abs((long) dy);
-        if (button == 1) {
+        if (button == 0) {
             if (!rotated) {
                 if (motion < 4) return;
                 rotated = true;
@@ -139,7 +139,7 @@ final class HologramOpeningPreview {
     void release(int x, int y, int button) {
         if (this.button != button) return;
         drag(x, y, button);
-        // A short right release here is only a camera release. It can never open the editor context menu.
+        // A short left release here is only a camera release. It can never open the editor context menu.
         cancelDrag();
     }
 

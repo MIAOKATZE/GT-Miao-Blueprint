@@ -78,12 +78,21 @@ public final class HologramCutProtectionRegression {
 
     public static void main(String[] args) throws Exception {
         if (!MinecraftTestBootstrap.enter(HologramCutProtectionRegression.class, args)) return;
-        run();
+        if (Boolean.getBoolean("gtmb.fixture.packCut")) {
+            run(true);
+            com.miaokatze.gtmb.client.hologram.HologramEditorTutorialPlaybackRegression.cutLessonUsesIsolatedDirectory();
+        } else run();
         System.out.println("HologramCutProtectionRegression PASS");
+        // The standalone Gradle worker owns the JVM; Anvil I/O leaves a non-daemon thread.
+        if (Boolean.getBoolean("gtmb.fixture.packCut")) System.exit(0);
+    }
+
+    public static void run() {
+        run(false);
     }
 
     @SuppressWarnings("unchecked")
-    public static void run() {
+    private static void run(boolean packIndex) {
         String threadName = Thread.currentThread()
             .getName();
         Thread.currentThread()
@@ -102,6 +111,22 @@ public final class HologramCutProtectionRegression {
             world.save = new SaveHandler(directory.toFile(), "world", false);
             world.deniedX = Integer.MIN_VALUE;
             world.theChunkProviderServer = new Provider(world, new Writer(world.save.getWorldDirectory()));
+            if (packIndex) {
+                Field index = ChunkProviderServer.class.getDeclaredField("loadedChunkHashMap");
+                index.setAccessible(true);
+                net.minecraft.util.LongHashMap realIndex = (net.minecraft.util.LongHashMap) Class
+                    .forName("com.mitchej123.hodgepodge.util.ServerThreadLongHashMap").getConstructor().newInstance();
+                index.set(world.theChunkProviderServer, realIndex);
+                boolean wrongThreadRefused = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+                    try {
+                        HologramCutWorld.Edit.requireLiveIndex(realIndex);
+                        return false;
+                    } catch (java.io.IOException expected) {
+                        return true;
+                    }
+                }).join();
+                SimpleAssert.that(wrongThreadRefused, "an off-thread snapshot cannot authorize a cut");
+            }
             Field chunkProvider = World.class.getDeclaredField("chunkProvider");
             chunkProvider.setAccessible(true);
             chunkProvider.set(world, world.theChunkProviderServer);

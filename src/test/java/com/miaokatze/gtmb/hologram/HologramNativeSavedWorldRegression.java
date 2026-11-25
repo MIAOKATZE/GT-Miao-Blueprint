@@ -96,7 +96,7 @@ public final class HologramNativeSavedWorldRegression {
 
     public static void runNativeLocalPlacement() throws Exception {
         isolated(unsafe -> {
-            for (String mode : new String[] { "complete", "permission", "cancel", "changed", "changedBeforeAdmission", "changedAfterAdmission","sourceChanged" }) {
+            for (String mode : new String[] { "complete", "permission", "cancel", "changed", "changedBeforeAdmission", "changedAfterAdmission","sourceChanged","creative","creativeRevoked","creativeWithoutEdit" }) {
                 Path root = Files.createTempDirectory("gtmb-native-local-placement-");
                 String logical = "local_12345678-1234-1234-1234-123456789012";
                 try (Fixture f = new Fixture(unsafe, 5)) {
@@ -123,7 +123,7 @@ public final class HologramNativeSavedWorldRegression {
         var voucher=new com.miaokatze.gtmb.common.items.hologram.ItemDecorationVoucher();
         com.miaokatze.gtmb.register.DecorationVoucherRegistry.voucher=voucher;
         try {
-            for (String mode : new String[]{"paid","already","refused"}) {
+            for (String mode : new String[]{"paid","already","refused","missing"}) {
                 Path root=Files.createTempDirectory("gtmb-real-voucher-");
                 String logical="local_12345678-1234-1234-1234-123456789012";
                 try (Fixture f=new Fixture(unsafe,4)){
@@ -133,7 +133,7 @@ public final class HologramNativeSavedWorldRegression {
                         +"{\"x\":1,\"y\":0,\"z\":0,\"block\":\"minecraft:wool\",\"item\":\"minecraft:wool\",\"metadata\":11,\"damage\":11},"
                         +"{\"x\":2,\"y\":0,\"z\":0,\"block\":\"minecraft:stone\",\"item\":\"minecraft:stone\"}]}",null);
                     try(var source=com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintPairStore.open(root,logical)){
-                        f.player.inventory.mainInventory[2]=new ItemStack(voucher,2);
+                        if(!mode.equals("missing"))f.player.inventory.mainInventory[2]=new ItemStack(voucher,2);
                         if(mode.equals("already")) {
                             f.world.seed(8,64,8,Blocks.wool,14);f.world.seed(9,64,8,Blocks.wool,11);
                         }
@@ -150,7 +150,10 @@ public final class HologramNativeSavedWorldRegression {
                         HologramNativeLocalConstruction.tick(Long.MAX_VALUE);
                         var result=attempt.result();
                         int remaining=f.player.inventory.mainInventory[2]==null?0:f.player.inventory.mainInventory[2].stackSize;
-                        if(mode.equals("refused")) {
+                        if(mode.equals("missing")) {
+                            require(result.phase==HologramNativeLocalConstruction.Phase.FAILED && f.stock()==4
+                                && remaining==0 && f.world.writes().isEmpty(),"missing requested voucher never waives or consumes stock");
+                        } else if(mode.equals("refused")) {
                             require(result.phase==HologramNativeLocalConstruction.Phase.FAILED && f.stock()==4
                                 && remaining==2 && f.world.writes().isEmpty(),"permission denial cannot burn a voucher");
                         } else {
@@ -226,24 +229,39 @@ public final class HologramNativeSavedWorldRegression {
         f.world.seed(8,64,7,Blocks.stone,0);
         f.world.arm();
         f.login();
-        f.player.capabilities.allowEdit=!"permission".equals(mode);
+        boolean creative = mode.startsWith("creative");
+        f.player.capabilities.allowEdit=!"permission".equals(mode) && !"creativeWithoutEdit".equals(mode);
+        f.player.capabilities.isCreativeMode=creative;
+        if (creative) {
+            var noSources=HologramMaterials.read(f.player.getHeldItem());
+            noSources.main=noSources.containers=noSources.me=false;
+            HologramMaterials.write(f.player.getHeldItem(),noSources);
+        }
         var ready=HologramNativeLocalConstruction.prepare(draft,original,()->true);
         var attempt=new HologramNativeLocalConstruction.Attempt(1);
         HologramNativeLocalConstruction.submit(attempt,ready,()->f.player,id,f.player.dimension,
-            new int[]{8,64,8},new int[]{0},HologramProjectedMainPolicy.settingsKey(HologramMaterials.read(f.player.getHeldItem())),false);
+            new int[]{8,64,8},new int[]{0},HologramProjectedMainPolicy.savedPlacementKey(HologramMaterials.read(f.player.getHeldItem()),creative),creative);
         if("changedBeforeAdmission".equals(mode))nativeLocalSource(root,logical,4,original);
         if("sourceChanged".equals(mode)){var settings=HologramMaterials.read(f.player.getHeldItem());
             settings.priority=(settings.priority+1)%3;HologramMaterials.write(f.player.getHeldItem(),settings);}
         require(f.stock()==5 && f.world.writes().isEmpty(),"in-process enqueue has no authorization/payment");
         com.miaokatze.gtmb.util.ServerTaskScheduler.INSTANCE.onServerTick(
             new cpw.mods.fml.common.gameevent.TickEvent.ServerTickEvent(cpw.mods.fml.common.gameevent.TickEvent.Phase.END));
-        if ("permission".equals(mode)||"changedBeforeAdmission".equals(mode)||"sourceChanged".equals(mode)) {
+        if ("permission".equals(mode)||"creativeWithoutEdit".equals(mode)||"changedBeforeAdmission".equals(mode)||"sourceChanged".equals(mode)) {
             require(attempt.result().phase==HologramNativeLocalConstruction.Phase.FAILED
                 && f.stock()==5 && f.world.writes().isEmpty(),"real in-process server denies unprivileged player");
             return;
         }
         require(attempt.result().phase==HologramNativeLocalConstruction.Phase.EXECUTING
             && f.stock()==5 && f.world.writes().isEmpty(),"dry source admission before any writes");
+        if ("creativeRevoked".equals(mode)) {
+            f.player.capabilities.isCreativeMode=false;
+            HologramNativeLocalConstruction.tick(Long.MAX_VALUE);
+            require(attempt.result().phase==HologramNativeLocalConstruction.Phase.CANCELLED && f.stock()==5
+                && f.world.writes().isEmpty() && !HologramConstructionJournal.pending(f.player),
+                "a server-side mode change invalidates the free construction lease");
+            return;
+        }
         if("changedAfterAdmission".equals(mode))nativeLocalSource(root,logical,4,original);
         Field bus=MinecraftForge.class.getDeclaredField("EVENT_BUS");
         Object base=unsafe.staticFieldBase(bus);long offset=unsafe.staticFieldOffset(bus);
@@ -262,7 +280,7 @@ public final class HologramNativeSavedWorldRegression {
         var done=attempt.result();
         boolean aborted="cancel".equals(mode);
         require(done.phase==(aborted?HologramNativeLocalConstruction.Phase.CANCELLED:HologramNativeLocalConstruction.Phase.COMPLETE)
-            && done.placed==(aborted?1:2) && done.satisfied==1 && f.stock()==(aborted?4:3)
+            && done.placed==(aborted?1:2) && done.satisfied==1 && f.stock()==(creative?5:aborted?4:3)
             && f.world.getBlock(8,64,9)==Blocks.stone && f.world.getBlock(8,64,7)==Blocks.stone
             && f.world.getBlock(9,64,8)==Blocks.air && f.world.getBlock(8,65,10)==(aborted?Blocks.air:Blocks.stone)
             && !HologramConstructionJournal.pending(f.player),
@@ -419,6 +437,7 @@ public final class HologramNativeSavedWorldRegression {
                 handler.onMessage(req,incoming);
             }finally{buf.release();}
         }
+        public void checkVoucher(boolean expected){require(lastBegin!=null && lastBegin.voucher==expected,"saved review voucher bit survived real BEGIN wire");}
         public void checkBindings(int[] expected){require(lastBegin!=null&&java.util.Arrays.equals(lastBegin.bindingSlots,expected),
             "formal material intent sent only group/slot options, not source network credentials");}
         public void replayLast(){int writes=world.writes(),stock=world.stock(),before=complete;

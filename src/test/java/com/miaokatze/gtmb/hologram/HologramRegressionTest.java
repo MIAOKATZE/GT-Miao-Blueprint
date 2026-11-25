@@ -37,6 +37,20 @@ public final class HologramRegressionTest {
         if (!MinecraftTestBootstrap.enter(HologramRegressionTest.class, args)) return;
         HologramConstructionJournal.STORAGE_ROOT
             .set(java.nio.file.Files.createTempDirectory("gtmb-construction-contracts-"));
+        if (java.util.Arrays.asList(args).contains("--littletiles-material-alias")) {
+            HologramLittleTilesMaterialAliasesRegression.run();
+            return;
+        }
+        if (java.util.Arrays.asList(args).contains("--saved-creative-placement")) {
+            HologramNativeSavedWorldRegression.runNativeLocalPlacement();
+            com.miaokatze.gtmb.client.hologram.HologramClientSavedPlacementRegression.runNativeRemoteConnected();
+            return;
+        }
+        if (java.util.Arrays.asList(args).contains("--blueprint-preview-input")) {
+            com.miaokatze.gtmb.client.hologram.HologramLocalPreviewRegression.run();
+            System.out.println("PASS blueprint preview input and detached display");
+            return;
+        }
         Map<String, Runnable> cases = new LinkedHashMap<>();
         cases.put("batch_restore_and_inventory_source_replacement_are_atomic", HologramBatchEditingRegression::run);
         cases.put(
@@ -601,6 +615,8 @@ public final class HologramRegressionTest {
             com.miaokatze.gtmb.client.hologram.HologramNativeViewportRegression::runRevisionBoundary);
         cases.put("native_blueprint_formal_first_save_retains_capture_and_bound_cover",
             com.miaokatze.gtmb.client.hologram.HologramNativeViewportRegression::runAuthoredCapture);
+        cases.put("littletiles_legacy_concrete_preview_and_payment_identity",
+            HologramLittleTilesMaterialAliasesRegression::run);
         cases.put("native_blueprint_singleplayer_settlement_without_execution_frames", () -> {
             try { HologramNativeSavedWorldRegression.runNativeLocalPlacement(); }
             catch (Exception e) { throw new IllegalStateException(e); }

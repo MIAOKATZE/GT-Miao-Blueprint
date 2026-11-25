@@ -89,7 +89,8 @@ mapOf(
     "runMaterialNamesTest" to "com.miaokatze.gtmb.client.hologram.HologramMaterialNamesRegression",
     "runNativeFirstSaveTest" to "com.miaokatze.gtmb.client.hologram.HologramNativeViewportRegression",
     "runNativeLibraryConversionTest" to "com.miaokatze.gtmb.client.hologram.HologramLibraryNativeConversionRegression",
-    "runNativeRendererReleaseTest" to "com.miaokatze.gtmb.client.hologram.HologramNativeRendererReleaseRegression"
+    "runNativeRendererReleaseTest" to "com.miaokatze.gtmb.client.hologram.HologramNativeRendererReleaseRegression",
+    "runProjectionDiscardUiRegression" to "com.miaokatze.gtmb.client.hologram.HologramLibraryAdminUiRegression"
 ).forEach { (taskName, entryPoint) ->
     tasks.register<JavaExec>(taskName) {
         group = "verification"
@@ -445,4 +446,17 @@ tasks.register<JavaExec>("runNativeBlueprintCodecTest") {
     classpath = sourceSets.test.get().runtimeClasspath
     dependsOn(tasks.named("testClasses"))
     systemProperty("java.awt.headless", "true")
+}
+
+tasks.register<JavaExec>("runCutPackRegression") {
+    group = "verification"
+    description = "Exercises CUT, paste, protection and region readback with the pack's real owner-thread chunk index."
+    mainClass = "com.miaokatze.gtmb.hologram.HologramCutProtectionRegression"
+    classpath = tasks.named<JavaExec>("runHologramTest").get().classpath +
+        configurations.detachedConfiguration(dependencies.create("com.github.GTNewHorizons:Hodgepodge:2.7.221:dev"))
+            .apply { isTransitive = false }
+    systemProperty("gtmb.fixture.packCut", "true")
+    val scratchDir = layout.buildDirectory.dir("runCutPackRegression")
+    workingDir(scratchDir)
+    doFirst { scratchDir.get().asFile.mkdirs() }
 }

@@ -38,7 +38,7 @@ final class HologramStockNativeServer {
 
     @Desugar
     private record Waiting(ActionEndpoint endpoint, Request request, HologramStockNativeEntry.Submission submission,
-        HologramRequestGate.Lease slot) {
+        String refusal, HologramRequestGate.Lease slot) {
 
         Identity identity() {
             return new Identity(endpoint.actor, request.key());
@@ -134,9 +134,9 @@ final class HologramStockNativeServer {
                 confirm = confirm.forGeneration(generation);
                 request = new Request(Command.PROBE, confirm.key(), confirm);
             }
-            var submission = (probe || begin) && confirm != null && confirm.dimension() == endpoint.player.dimension
-                ? HologramStockNativeEntry.ingress(endpoint, confirm.intent(), confirm.tool().toString()) : null;
-            var waiting = new Waiting(endpoint, request, submission, slot);
+            var ingress = probe || begin ? HologramStockNativeEntry.inspect(endpoint, confirm) : null;
+            var waiting = new Waiting(endpoint, request, ingress == null ? null : ingress.submission(),
+                ingress == null ? null : ingress.refusal(), slot);
             synchronized (inbound) {
                 if (!slot.active() || (!stop && inbound.size() >= INGRESS_CAP)) return false;
                 // Burn a bounded authenticated PROBE when queued, even if its endpoint/reset drops it before dispatch.
@@ -290,8 +290,10 @@ final class HologramStockNativeServer {
         var gate = HologramWorkspace.constructionGate(endpoint);
         if (gate == null || gate.query(endpoint.constructionScope, key.gateRequest()).phase
             != HologramConstructionTaskGate.Phase.UNSEEN) return;
-        if (waiting.submission == null || !waiting.submission.current()) {
-            emit(endpoint, new Reply(key, Phase.REFUSED, 0, "投影仪、现场归属或材料来源设置已变化。"));
+        String refusal = waiting.submission == null ? waiting.refusal : waiting.submission.refusal();
+        if (refusal != null) {
+            HologramStockActionTrace.event("server.probe_refused", key, refusal);
+            emit(endpoint, new Reply(key, Phase.REFUSED, 0, refusal));
             return;
         }
         long now = System.nanoTime();
@@ -350,6 +352,7 @@ final class HologramStockNativeServer {
         long sequence = key.request.sequence();
         boolean cold = waiting.request.command() == Command.BEGIN_AFTER_PROBE;
         HologramStockNativeEntry.Submission submission = waiting.submission;
+        String refusal = waiting.refusal;
         long seen = history.seenThrough.get();
         if (cold ? sequence < seen : !history.advance(sequence)) {
             unknown(waiting.endpoint, key);
@@ -363,7 +366,11 @@ final class HologramStockNativeServer {
                 return;
             }
             coldProofs.remove(waiting.endpoint.actor, proof); // Hand off this exact confirmation once, even on refusal.
-            if (submission != null) submission = proof.submitted;
+            if (submission != null) {
+                // Ingress must not be able to substitute a newer capability/configuration for the cold proof.
+                submission = proof.submitted;
+                refusal = submission.refusal();
+            }
         } else {
             coldProofs.remove(waiting.endpoint.actor);
             if (!history.ready) {
@@ -380,9 +387,8 @@ final class HologramStockNativeServer {
             tombstone(waiting.endpoint, key, Phase.STOPPED, "已取消，未开始施工。");
             return;
         }
-        if (submission == null || anotherOwner) {
-            tombstone(waiting.endpoint, key, Phase.REFUSED, anotherOwner ? "当前另有原生施工任务。"
-                : "原生补建的投影仪、维度或已确认材料来源设置不匹配。");
+        if (submission == null || refusal != null || anotherOwner) {
+            tombstone(waiting.endpoint, key, Phase.REFUSED, anotherOwner ? "当前另有原生施工任务。" : refusal);
             return;
         }
         HologramStockNativeEntry entry;

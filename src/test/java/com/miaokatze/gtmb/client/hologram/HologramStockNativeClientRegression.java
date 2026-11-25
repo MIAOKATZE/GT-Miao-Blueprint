@@ -181,6 +181,8 @@ public final class HologramStockNativeClientRegression {
             clickExistingSubmit(ui);
             SimpleAssert.that(recorded.sent.size() == 1 && command(recorded.sent.get(0)) == Command.PROBE,
                 "actual existing material button emits exactly one cold proof request and no eager BEGIN");
+            SimpleAssert.that(ui.review.localFrame().status().contains("等待服务器确认")
+                && !ui.review.localSubmitAvailable(), "the clicked pane remains visible and prevents duplicate send while pending");
             var hudOnly = new NBTTagCompound();
             hudOnly.setString("status", "fixture HUD update");
             field(HologramUiSession.class, "state").set(ui.session, displayed.withMetadata(hudOnly));
@@ -207,6 +209,8 @@ public final class HologramStockNativeClientRegression {
             SimpleAssert.that(recorded.sent.size() == 2 && command(recorded.sent.get(1)) == Command.BEGIN_AFTER_PROBE
                 && key(recorded.sent.get(1), 71).equals(cold), "one matching nonce emits one unchanged cold BEGIN; no duplicate");
             deliver(new Reply(cold, Phase.REFUSED, 0, "Fixture terminal"), connection);
+            SimpleAssert.that(ui.review.localFrame().status().equals("Fixture terminal") && ui.review.localSubmitAvailable(),
+                "a refusal arriving over the real reply codec is visible in the exact material dialog and can be retried");
             SimpleAssert.that(ui.preview.activateControl(26) && recorded.sent.size() == 2, "reopening remains local");
             clickExistingSubmit(ui);
             SimpleAssert.that(recorded.sent.size() == 3 && command(recorded.sent.get(2)) == Command.PROBE,

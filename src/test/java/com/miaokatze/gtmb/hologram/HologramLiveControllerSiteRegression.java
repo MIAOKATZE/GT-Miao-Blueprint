@@ -94,6 +94,7 @@ public final class HologramLiveControllerSiteRegression {
             }
         }
         verifyLarge();
+        verifyInstalledVariant();
         // Real GT meta tile with a live attached energy hatch. Vanilla furnace is the offline TE-capable host block.
         var uf = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
         uf.setAccessible(true);
@@ -142,6 +143,62 @@ public final class HologramLiveControllerSiteRegression {
             SimpleAssert.eq(meta == 4 ? 2 : 0, observed.getCompoundTag("siteChannels").getInteger("sample_channel"),
                 "real StructureLib channel tier; inconsistent physical observations never report a value");
         }
+    }
+
+    private static void verifyInstalledVariant() throws Exception {
+        SimpleAssert.eq(0, HologramInstalledControllerShape.installedGroups(0, 0), "unknown client state");
+        SimpleAssert.eq(0, HologramInstalledControllerShape.installedGroups(0x43, 64), "unformed client");
+        SimpleAssert.eq(0, HologramInstalledControllerShape.installedGroups(0x53, 0), "invalid extended variant");
+        SimpleAssert.eq(5, HologramInstalledControllerShape.installedGroups(0x43, 0), "synchronized extended variant");
+        SimpleAssert.eq(2, HologramInstalledControllerShape.selectedGroups(2), "target stays at selected variant");
+
+        // Actual native array and its navigation transforms, not a bounding box or an invented prefix.
+        String[][] structure = { {"~XXX A", "XX X  ", "X  XX "} };
+        var definition = com.gtnewhorizon.structurelib.structure.StructureDefinition.<Object>builder()
+            .addShape("installed", structure)
+            .addElement('X', StructureUtility.ofBlock(Blocks.wool, 3))
+            .addElement('A', StructureUtility.isAir()).build();
+        var facing = com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing.DEFAULT;
+        var nativeShape = new HologramInstalledControllerShape(definition.getStructureFor("installed"), 0, 0, 0, 5);
+        java.util.List<HologramControllerTarget.Cell> installed = new java.util.ArrayList<>();
+        installed.add(variantFixtureCell(0, 0, 0, true, true));
+        while (nativeShape.hasNext()) {
+            var p = nativeShape.next(facing);
+            if (p != null) installed.add(variantFixtureCell(p.x(), p.y(), p.z(), true, false));
+        }
+        SimpleAssert.eq(10, installed.size(), "air/padding excluded; all native solids included once");
+        var first = installed.get(1);
+        var selected = new java.util.ArrayList<HologramControllerTarget.Cell>();
+        selected.add(variantFixtureCell(first.x(), first.y(), first.z(), true, false));
+        selected.add(variantFixtureCell(20, 20, 20, false, false));
+        selected.add(installed.get(0));
+        var header = new NBTTagCompound();
+        header.setBoolean("localStandardController", true);
+        header.setInteger("siteOccupied", 1);
+        header.setInteger("siteNativeOccupied", 9);
+        var counts = new HologramControllerMaterialCounts.Builder();
+        selected.forEach(row -> counts.add(row, 0, 0, 0));
+        var marker = new HologramControllerTarget.Projection(header, selected, counts.seal(), installed);
+        int[] firstView = com.miaokatze.gtmb.client.hologram.HologramLargeControllerViewportChecks.verify(marker);
+        SimpleAssert.eq(3, firstView[0], "selected target with conflicting coordinate intact");
+        SimpleAssert.eq(10, firstView[1], "site draws native cell count, not target overlap");
+        // Change the target footprint/ordering again. No need to recolor or recompute the native current shape.
+        var second = new HologramControllerTarget.Projection(header, selected.subList(1, 3), null, installed);
+        int[] secondView = com.miaokatze.gtmb.client.hologram.HologramLargeControllerViewportChecks.verify(second);
+        SimpleAssert.eq(2, secondView[0], "new target shape");
+        SimpleAssert.eq(firstView[1], secondView[1], "SITE is independent of target shape");
+        SimpleAssert.eq(2, marker.materialCounts().total(), "SITE-only cells never enter target materials");
+    }
+
+    private static HologramControllerTarget.Cell variantFixtureCell(int x, int y, int z, boolean exists, boolean anchor) {
+        Block shown = anchor ? Blocks.stone : Blocks.wool;
+        Block actual = exists ? shown : Blocks.air;
+        int meta = anchor ? 0 : 3;
+        return new HologramControllerTarget.Cell(x, y, z, x, y, z, Block.blockRegistry.getNameForObject(actual),
+            Block.blockRegistry.getNameForObject(shown), exists ? meta : 0, meta, actual, shown,
+            exists ? new ItemStack(shown, 1, meta) : null, new ItemStack(shown, 1, meta), null, null, anchor, false,
+            false, exists ? "satisfied" : "missing", "", "", "", "", -1, -1, null, null, -1, false,
+            HologramControllerTarget.TargetKind.MATERIAL);
     }
 
     /** A survival element rejects further work halfway through a 100 x 10 x 20 declaration. */

@@ -10,6 +10,8 @@ import java.util.Map;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
+import net.minecraft.nbt.NBTTagCompound;
+
 import com.cleanroommc.modularui.api.IPanelHandler;
 import com.cleanroommc.modularui.screen.ModularPanel;
 import com.cleanroommc.modularui.value.StringValue;
@@ -33,6 +35,7 @@ final class HologramEditorNativeLibraryDialogs {
     private final Map<Kind, IPanelHandler> handlers = new EnumMap<>(Kind.class);
     private final StringValue presetName = new StringValue("");
     private Kind displayed;
+    private boolean handingOffProjection;
 
     HologramEditorNativeLibraryDialogs(HologramUiModules ui) {
         this.ui = ui;
@@ -78,11 +81,18 @@ final class HologramEditorNativeLibraryDialogs {
     }
 
     private ModularPanel build(Kind kind) {
-        Dialog<?> dialog = new Dialog<>(
+        Dialog<?> dialog = new Dialog<Void>(
             ui.panelName(
                 "gtmb_native_library_" + kind.name()
                     .toLowerCase(java.util.Locale.ROOT)),
-            null);
+            null) {
+                @Override
+                public boolean shouldAnimate() {
+                    // A committed source switch retires this graph immediately; no invisible closing panel
+                    // may survive in MUI's open-panel stack and shade/swallow input to the destination.
+                    return !(kind == Kind.DISCARD && handingOffProjection) && super.shouldAnimate();
+                }
+            };
         dialog.setDisablePanelsBelow(true)
             .setCloseOnOutOfBoundsClick(false)
             .setDraggable(true)
@@ -96,6 +106,7 @@ final class HologramEditorNativeLibraryDialogs {
                 () -> HologramLibraryAdminEditor.nativeHeight(ui.host.screenHeight()),
                 com.cleanroommc.modularui.widget.sizer.Unit.Measure.PIXEL);
         dialog.onCloseAction(() -> {
+            if (kind == Kind.DISCARD && handingOffProjection) return; // confirmed, not cancelled
             if (kind == Kind.CONVERSION) { ui.library.cancelConversionPrompt(); return; }
             if (kind == Kind.ADMIN) {
                 ui.library.libraryAdminDrawer(false);
@@ -164,7 +175,7 @@ final class HologramEditorNativeLibraryDialogs {
                 cancelId(kind),
                 () -> kind == Kind.ADMIN ? projector("dialog.close") : projector("dialog.cancel"),
                 () -> true,
-                () -> projector("dialog.cancel_help"))
+                () -> "")
             .widthRel(1f)
             .expanded()
             .height(24);
@@ -177,7 +188,7 @@ final class HologramEditorNativeLibraryDialogs {
         ui.shell.registerTarget("modal.close", cancel);
         footer.child(cancel);
         footer.child(
-            confirm(kind).widthRel(1f)
+            confirm(kind, dialog).widthRel(1f)
                 .expanded()
                 .height(24));
         content.child(footer);
@@ -202,7 +213,7 @@ final class HologramEditorNativeLibraryDialogs {
                 .height(32));
     }
 
-    private ButtonWidget<?> confirm(Kind kind) {
+    private ButtonWidget<?> confirm(Kind kind, Dialog<?> dialog) {
         int id = kind == Kind.DELETE ? 176 : kind == Kind.ADMIN ? 210 : 224;
         BooleanSupplier enabled = () -> kind == Kind.ADMIN ? ui.library.nativeAdmin() && ui.library.adminEditor()
             .canSave()
@@ -219,9 +230,27 @@ final class HologramEditorNativeLibraryDialogs {
                         : ui.library.clearWorkspaceReview() ? projector("dialog.confirm_clear")
                             : ui.library.projectionDiscardReview() ? projector("dialog.confirm_projection")
                                 : projector("dialog.confirm_discard");
-        return ui.shell.nativeAction(id, label, enabled, () -> projector("dialog.confirm_help"))
+        return ui.shell.nativeAction(id, label, enabled, () -> "")
             .onMousePressed(button -> {
                 if (button != 0 || !enabled.getAsBoolean() || desired() != kind) return true;
+                if (kind == Kind.DISCARD && ui.library.projectionDiscardReview()) {
+                    NBTTagCompound reviewed = ui.library.sourceSwitchProposal();
+                    HologramScreen owner = ui.host.parent();
+                    owner.deferNativeCommand(() -> {
+                        if (owner.ui != ui || !dialog.isOpen() || desired() != kind || !enabled.getAsBoolean()
+                            || !reviewed.equals(ui.library.sourceSwitchProposal())) return;
+                        // Run outside MUI's mouse dispatch. Close the actual modal before the local/synchronous
+                        // workspace change can pause its graph; a subsequent refresh of this graph may never run.
+                        handingOffProjection = true;
+                        try {
+                            dialog.closeIfOpen();
+                        } finally {
+                            handingOffProjection = false;
+                        }
+                        if (!dialog.isOpen()) ui.router.activate(id);
+                    });
+                    return true;
+                }
                 if (kind == Kind.PRESET) ui.processing.processingPresetField()
                     .setText(presetName.getStringValue());
                 ui.router.activate(id);

@@ -85,6 +85,14 @@ final class HologramEditorWorkspaces {
         activate(Mode.BLUEPRINT);
     }
 
+    /** A lesson mounts an already isolated directory, not the live player's CUT workspace. */
+    void activateCutLesson(HologramEditorCutWorkspace workspace) {
+        if (!ui.session.isTutorial() || workspace == null)
+            throw new IllegalStateException("A CUT lesson requires an isolated editor and directory");
+        ui.shell.cutOverride(workspace);
+        cut = true;
+    }
+
     void activateCut() {
         tryActivateCut();
     }

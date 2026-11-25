@@ -258,12 +258,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         if (worldCourse()) sandbox.shell.sceneOverride(worldStage.nativeWidget(sandbox, this));
         try (HologramMuiCanvasScreen.FieldGraph ignored = ui.host.parent()
             .fieldGraph(sandbox)) {
-            if (cutListLesson != null) {
-                sandbox.shell.cutOverride(cutListLesson.prepareWorkspace(sandbox));
-                sandbox.workspaces.activateCut();
-                if (!sandbox.workspaces.isCut())
-                    throw new IllegalStateException("Isolated cut workspace was not admitted");
-            }
+            if (cutListLesson != null) sandbox.workspaces.activateCutLesson(cutListLesson.prepareWorkspace(sandbox));
             scenePanel.child(sandbox.shell.build(scenePanel));
             if (worldCourse()) worldStage.prepare(sandbox, scenePanel);
         }

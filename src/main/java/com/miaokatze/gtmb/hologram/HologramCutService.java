@@ -234,6 +234,7 @@ public final class HologramCutService {
         if (HologramDemolitionProtocol.handles(request.getString("action"))) return executeDemolition(player, request);
         HologramCutStorage storage = null;
         NBTTagCompound state = null;
+        String loggedAction = "unvalidated", phase = "admission";
         try {
             if (HologramDemolition.active(player)) throw new IOException("拆除正在进行，请等待完成或按 Esc 取消");
             for (Object key : request.func_150296_c()) {
@@ -287,6 +288,7 @@ public final class HologramCutService {
             String action = request.getString("action");
             if (!java.util.Arrays.asList("list", "preview", "cut", "paste", "undo", "openWorkspace")
                 .contains(action)) throw new IOException("未知剪切操作");
+            loggedAction = action;
             if ("preview".equals(action)) {
                 // Retired raw-preview queries do not load, traverse, transform, or recover a journal.
                 response.setBoolean("success", false);
@@ -382,6 +384,7 @@ public final class HologramCutService {
                         dimension = player.dimension;
                         NBTTagCompound shape = selectionShape(selection, box);
                         coordinateRights(permit, shape, x, y, z);
+                        phase = "bind-source";
                         edit = new HologramCutWorld.Edit(editWorld, shape, x, y, z);
                         permit.require();
                         entry = edit.before;
@@ -414,9 +417,11 @@ public final class HologramCutService {
                             entry.getInteger("sizeY"),
                             entry.getInteger("sizeZ"));
                         coordinateRights(permit, entry, x, y, z);
+                        phase = "bind-destination";
                         edit = new HologramCutWorld.Edit(editWorld, entry, x, y, z);
                         permit.require();
                     }
+                    phase = "protect";
                     authorizeBreaks(permit, edit);
                     // Refused validation has no recovery-ticket side effect, just like it has no durable nonce.
                     if (capability != null) capability.lastOperation = requestId;
@@ -443,11 +448,13 @@ public final class HologramCutService {
                     pending.setBoolean("air", cut);
                     if (consumeId != null) pending.setString("consumeId", consumeId);
                     if (!cut) pending.setTag("before", edit.before.copy());
+                    phase = "journal";
                     storage.markPending(pending, action, requestId, true);
                     state.setTag("pending", pending);
                     requireWriteBacking(permit, edit);
                     storage.save(state);
                     // Once durable, this is settlement of existing authority, not admission by a new holder/world.
+                    phase = "settle";
                     recover(storage, state, edit.world);
                     if (cut) response.setString("id", entry.getString("id"));
                     response.setString(
@@ -470,7 +477,9 @@ public final class HologramCutService {
                     response, durable.getCompoundTag("pending"), failure.getMessage());
                 else directory(response, durable);
             } catch (IOException ignored) {}
-            com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Cut clipboard request failed", failure);
+            com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn(
+                "Cut clipboard request failed: operation={} phase={} code={}", loggedAction, phase,
+                response.getString("code"), failure);
         }
         return response;
     }

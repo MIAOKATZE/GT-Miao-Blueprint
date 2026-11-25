@@ -49,6 +49,20 @@ final class HologramState {
     private int minWorldX, maxWorldX, minWorldY, maxWorldY, minWorldZ, maxWorldZ;
 
     HologramNativeViewport nativeViewport;
+    private HologramState installedSite;
+
+    HologramState controllerView(int view) {
+        return view == 1 && installedSite != null ? installedSite : this;
+    }
+
+    /** Translate display hits by exact coordinate rather than accidentally reusing a different cell index. */
+    int matchingIndex(HologramState other, int index) {
+        if (index < 0 || index >= cells.size()) return -1;
+        if (other == this) return index;
+        Cell cell = cells.get(index);
+        Cell match = other.regions.at(cell.x, cell.y, cell.z);
+        return match == null ? -1 : match.index;
+    }
     HologramState(NBTTagCompound metadata,HologramNativeViewport viewport){
         this(metadata,viewport,null);
     }
@@ -133,6 +147,7 @@ final class HologramState {
 
     private HologramState(Preparation ready) {
         controllerMaterialCounts = ready.controllerMaterialCounts;
+        installedSite = ready.sitePreparation == null ? null : ready.sitePreparation.result();
         localMaterialIndex = ready.materialIndex == null ? null : ready.materialIndex.seal();
         fullBaseline = ready.fullBaseline;
         controllerTargetIdentity = null;
@@ -228,6 +243,7 @@ final class HologramState {
 
     private HologramState(ControllerDetails ready) {
         HologramState geometry = ready.geometry;
+        installedSite = geometry.installedSite;
         controllerMaterialCounts = geometry.controllerMaterialCounts;
         localMaterialIndex = geometry.localMaterialIndex;
         data = ready.data;
@@ -345,6 +361,7 @@ final class HologramState {
     /** Metadata decorators share geometry; preserve the incoming publication's renderer and selection obligations. */
     private HologramState(HologramState decorated, HologramState publication) {
         nativeViewport = decorated.nativeViewport;
+        installedSite = decorated.installedSite;
         controllerMaterialCounts = decorated.controllerMaterialCounts;
         localMaterialIndex = decorated.localMaterialIndex;
         data = decorated.data;
@@ -445,6 +462,7 @@ final class HologramState {
         private int stage, cellPosition, materialPosition, memberPosition;
         private int minY, maxY, minWorldX, maxWorldX, minWorldY, maxWorldY, minWorldZ, maxWorldZ;
         private HologramState result;
+        private Preparation sitePreparation;
         private final boolean displayRows;
         private final boolean showMeOutputCapacity;
         private final boolean anonymousCompact;
@@ -481,6 +499,11 @@ final class HologramState {
 
         Preparation(HologramControllerTarget.Projection target) {
             this(target.metadata(), false, null, target.cells(), target.materialCounts());
+            if (target.installedSite() != null) {
+                NBTTagCompound display = (NBTTagCompound) target.metadata().copy();
+                display.setBoolean("controllerSiteDisplay", true);
+                sitePreparation = new Preparation(display, false, null, target.installedSite(), null);
+            }
         }
 
         private Preparation(NBTTagCompound source, boolean displayRows,
@@ -497,7 +520,7 @@ final class HologramState {
             anonymousCompact = compactCells != null && !compactCells.editorRows();
             this.controllerCells = controllerCells;
             this.controllerMaterialCounts = controllerMaterialCounts;
-            materialIndex = source.getBoolean("localStandardController")
+            materialIndex = source.getBoolean("localStandardController") && !source.getBoolean("controllerSiteDisplay")
                 ? new HologramLocalMaterialIndex.Builder(source) : null;
             regions = new HologramRegionCache.Builder(compactCells != null || controllerCells != null);
             compactMaterials = compactCells == null ? null : new DescriptorTemplate[compactCells.materialCount()];
@@ -519,7 +542,15 @@ final class HologramState {
 
         boolean step(int maxWork, long maxNanos) {
             checkClientOwner();
-            return stepOwned(maxWork, maxNanos);
+            long start = System.nanoTime();
+            if (!stepOwned(maxWork, maxNanos)) return false;
+            if (sitePreparation == null) return true;
+            int left = maxWork - lastStepWork;
+            long remaining = maxNanos == Long.MAX_VALUE ? maxNanos : maxNanos - (System.nanoTime() - start);
+            if (left <= 0 || remaining <= 0) return false;
+            boolean complete = sitePreparation.stepOwned(left, remaining);
+            lastStepWork += sitePreparation.lastStepWork;
+            return complete;
         }
 
         private void checkClientOwner() {
@@ -803,6 +834,7 @@ final class HologramState {
 
     private HologramState(HologramState base, NBTTagCompound patch, boolean decoration) {
         nativeViewport = base.nativeViewport;
+        installedSite = base.installedSite;
         if (nativeViewport != null && (patch.getBoolean("topology") || patch.getTagList("cells",10).tagCount()!=0))
             throw new IllegalArgumentException("Native geometry can only change with its source revision");
         fullBaseline = decoration && base.fullBaseline;

@@ -135,6 +135,37 @@ public final class HologramClientSavedPlacementRegression {
             }finally{gate.countDown();owner.cancelQuickPlacement();try(var paths=Files.walk(root)){for(Path path:(Iterable<Path>)paths.sorted(Comparator.reverseOrder())::iterator)Files.deleteIfExists(path);}}
         }
 
+        /** No GL wrapper: exercise the actual frozen-ticket button predicate and deferred voucher action. */
+        boolean savedVoucherChoice(HologramLocalPlacement.Submission frozen) throws Exception {
+            var screen=(HologramLibraryMaterialReviewScreen)unsafe.allocateInstance(HologramLibraryMaterialReviewScreen.class);
+            var deferred=new HologramUiDeferredAction();
+            field(HologramMuiScreen.class,"deferredAction").set(screen,deferred);
+            field(HologramLibraryMaterialReviewScreen.class,"ticket").set(screen,
+                new HologramLibraryMaterialReviewScreen.Ticket(placement,frozen,client,screen));
+            var config=HologramLibraryClient.INSTANCE.config();
+            var before=config.getTag("nativeDecorationVoucher");
+            var prev=client.currentScreen;
+            try {
+                client.currentScreen=screen;
+                field(HologramLibraryMaterialReviewScreen.class,"availability").set(screen,HologramLibraryClient.PlainAvailability.BUSY);
+                config.setBoolean("nativeDecorationVoucher",true);
+                SimpleAssert.that(screen.localVoucherAvailable()&&!screen.localSubmitAvailable(),
+                    "payment choice is independent of construction readiness");
+                config.setBoolean("nativeDecorationVoucher",false);
+                SimpleAssert.that(!screen.localVoucherAvailable()&&screen.localVoucherBlocker().contains("停用"),"server switch is authoritative");
+                config.setBoolean("nativeDecorationVoucher",true);
+                screen.localAction(LocalAction.VOUCHER);deferred.run(true);
+                SimpleAssert.that(screen.localVoucherSelected(),"formal voucher action selected");
+                player.capabilities.isCreativeMode=true;
+                SimpleAssert.that(!screen.localVoucherSelected(),"creative never forwards a stale voucher selection");
+                player.capabilities.isCreativeMode=false;
+                return screen.localVoucherSelected();
+            }finally{
+                if(before==null)config.removeTag("nativeDecorationVoucher");else config.setTag("nativeDecorationVoucher",before);
+                player.capabilities.isCreativeMode=false;client.currentScreen=prev;
+            }
+        }
+
         void nativeRemote(ConnectedWorld server)throws Exception{
             var actor=server.nativeActor();
             actor.getHeldItem().getTagCompound().setString("gtitHologramToolId",HologramLibraryClient.projectorId(player.getHeldItem()));
@@ -176,8 +207,9 @@ public final class HologramClientSavedPlacementRegression {
                     placement.install(src);field(HologramLocalPlacement.class,"locked").setBoolean(placement,true);
                     field(HologramLocalPlacement.class,"anchor").set(placement,new int[]{8,64,8+round});
                     int[] requestedBindings=round==0?new int[]{2,7*64+3}:new int[0];
+                    var frozen=placement.freeze(HologramLocalPlacement.reviewOptions());
                     var confirmed=HologramLibraryMaterialReviewScreen.paymentChoice(
-                        placement.freeze(HologramLocalPlacement.reviewOptions()),false,requestedBindings);
+                        frozen,round==0 && savedVoucherChoice(frozen),requestedBindings);
                     SimpleAssert.that(confirmed!=null&&!HologramLibraryMaterialReviewScreen.dispatchRefused(LocalAction.SUBMIT,()->confirmed,owner::prepareLocalPlacement),
                         "real remote saved-source material submit is enabled");
                     field(HologramLocalPlacement.class,"submitting").setBoolean(placement,true);
@@ -205,10 +237,41 @@ public final class HologramClientSavedPlacementRegression {
                         "cold transfer exact native source only; same actor hot transfer zero, no PNG/old frame");
                     if(round==0){
                         SimpleAssert.that(expected>2*24576&&bridge.frames==(expected+24575)/24576,"multi-frame saved source crosses actual FML handler");
+                        bridge.checkVoucher(true); // Stone is not decorative: same exact stock debits without a voucher.
                         bridge.checkBindings(requestedBindings);
                         bridge.replayLast();
                     }
                 }
+                // Reopen the currently saved generation. This time the REAL material-page submit must be
+                // admitted by both the client and the dedicated handler despite no stock and no selected providers.
+                for(boolean serverCreative : new boolean[]{false,true}){
+                    player.capabilities.isCreativeMode=true;
+                    actor.capabilities.isCreativeMode=serverCreative;
+                    var noSources=com.miaokatze.gtmb.hologram.HologramMaterials.read(actor.getHeldItem());
+                    noSources.main=noSources.containers=noSources.me=false;
+                    com.miaokatze.gtmb.hologram.HologramMaterials.write(actor.getHeldItem(),noSources);
+                    com.miaokatze.gtmb.hologram.HologramMaterials.write(player.getHeldItem(),noSources);
+                    placement.install(owner.readSavedDisplaySource(id,lib.savedDisplayPath(id),false,0,0));
+                    field(HologramLocalPlacement.class,"locked").setBoolean(placement,true);
+                    field(HologramLocalPlacement.class,"anchor").set(placement,new int[]{9,64,8});
+                    var free=HologramLibraryMaterialReviewScreen.paymentChoice(placement.freeze(HologramLocalPlacement.reviewOptions()),true);
+                    SimpleAssert.that(!HologramLibraryMaterialReviewScreen.dispatchRefused(LocalAction.SUBMIT,()->free,owner::prepareLocalPlacement),
+                        "creative material-page submit uses the same dedicated protocol");
+                    field(HologramLocalPlacement.class,"submitting").setBoolean(placement,true);
+                    long until=System.nanoTime()+TimeUnit.SECONDS.toNanos(8);
+                    while(HologramBackgroundTasks.busy()&&System.nanoTime()<until){
+                        client.drain();server.serverQueue();bridge.tick();HologramClientRemoteNativePlacement.tick(client);
+                        server.serverQueue();server.nativeWorld();bridge.tick();HologramClientRemoteNativePlacement.tick(client);Thread.sleep(1);
+                    }
+                    server.serverQueue();bridge.tick();client.drain();
+                    SimpleAssert.that(!HologramBackgroundTasks.busy() && server.stock()==0 && !server.pendingPayment()
+                        && bridge.complete==(serverCreative?4:3) && server.writes()==(serverCreative?12:9)
+                        && server.at(8,64,8,serverCreative?Blocks.stone:Blocks.air)
+                        && server.at(10,64,8,serverCreative?Blocks.stone:Blocks.air),
+                        "only authentic server creative can build without providers or vouchers; world and balances verified: "
+                        +serverCreative+" "+HologramBackgroundTasks.status());
+                }
+                System.out.println("[GTMB-NATIVE-REMOTE] creative=3 real placements zero stock/zero voucher; server survival rejects mismatched client mode");
                 System.out.println("[GTMB-NATIVE-REMOTE] coldSourceBytes="+expected+" hotSourceBytes=0 FML-server-handler terminal-sink-fault recovered editedSameIdLayoutVerified actualWrites=9 actualDebits=9 commits=3 cancels=1 authorizationRefusals=1 shortageRefusals=1 staleDuringMissNoBody=1");
             }finally{field(HologramClientRemoteNativePlacement.class,"wire").set(null,prior);try(var files=Files.walk(root)){for(Path path:(Iterable<Path>)files.sorted(Comparator.reverseOrder())::iterator)Files.deleteIfExists(path);}}
         }
