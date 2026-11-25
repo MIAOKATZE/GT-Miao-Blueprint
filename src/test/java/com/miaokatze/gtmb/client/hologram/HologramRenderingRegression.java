@@ -1237,14 +1237,14 @@ public final class HologramRenderingRegression {
         java.lang.reflect.Field tutorialSandbox = field(HologramEditorTutorial.class, "sandbox");
         String[] names = { "previewPreparation", "previewState", "visibleState", "cachedFaces", "cachedOutlines",
             "cachedMarkers", "projectedFrame", "previewKey", "boundsState", "previewSubmitted", "presentedState",
-            "presentedFrame", "presentedRequest", "previewSubmission", "hoverFaces" };
+            "presentedFrame", "presentedRequest", "previewSubmission", "hoverFaces", "visibleCellCount" };
         Object[] saved = new Object[names.length];
         for (int i = 0; i < names.length; i++)
             saved[i] = field(MiaoVisonLiteRenderer.class, names[i]).get(HologramRenderer.editor());
         java.util.Map<Object, Object> regions = (java.util.Map<Object, Object>) field(
             MiaoVisonLiteRenderer.class,
             "previewRegions").get(HologramRenderer.editor()), savedRegions = new java.util.LinkedHashMap<>(regions);
-        String[] listNames = { "nativePreviewCells", "linkedPreviewCells", "visibleCells" };
+        String[] listNames = { "nativePreviewCells", "linkedPreviewCells" };
         List<?>[] savedLists = new List<?>[listNames.length];
         for (int i = 0; i < listNames.length; i++) savedLists[i] = new java.util.ArrayList<>(
             (List<?>) field(MiaoVisonLiteRenderer.class, listNames[i]).get(HologramRenderer.editor()));
@@ -1267,7 +1267,7 @@ public final class HologramRenderingRegression {
                 "the isolated viewport publishes actual stone faces");
             SimpleAssert.eq(
                 1,
-                ((List<?>) field(MiaoVisonLiteRenderer.class, "visibleCells").get(HologramRenderer.editor())).size(),
+                field(MiaoVisonLiteRenderer.class, "visibleCellCount").getInt(HologramRenderer.editor()),
                 "the isolated viewport publishes the visible stone cell");
             tutorialSandbox.set(ui.tutorial, null);
             SimpleAssert
@@ -1401,7 +1401,7 @@ public final class HologramRenderingRegression {
             MiaoVisonLiteRenderer.class,
             "previewRegions").get(HologramRenderer.editor());
         java.util.Map<Object, Object> savedRegions = new java.util.LinkedHashMap<>(regions);
-        String[] listNames = { "nativePreviewCells", "linkedPreviewCells", "visibleCells" };
+        String[] listNames = { "nativePreviewCells", "linkedPreviewCells" };
         List<?>[] lists = new List<?>[listNames.length];
         for (int i = 0; i < lists.length; i++) lists[i] = new java.util.ArrayList<>(
             (List<?>) field(MiaoVisonLiteRenderer.class, listNames[i]).get(HologramRenderer.editor()));

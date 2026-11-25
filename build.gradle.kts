@@ -385,3 +385,12 @@ tasks.named("check") { dependsOn("runTestlabContracts", "runProductionTestlabIso
 
 // Package and verify the project-specific code and independent-asset licenses.
 apply(from = "gradle/licensing.gradle.kts")
+
+// Standalone data codec: no Minecraft bootstrap or testlab renderer is needed.
+tasks.register<JavaExec>("runNativeBlueprintCodecTest") {
+    group = "verification"
+    mainClass = "com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintCodecRegression"
+    classpath = sourceSets.test.get().runtimeClasspath
+    dependsOn(tasks.named("testClasses"))
+    systemProperty("java.awt.headless", "true")
+}

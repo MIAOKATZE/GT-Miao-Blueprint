@@ -1639,6 +1639,7 @@ public final class HologramClient {
     static void rememberLocalDocument(com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument document,
         HologramState accepted, boolean idle) {
         Minecraft mc = Minecraft.getMinecraft();
+        if(localWorkspaceDraft!=null&&localWorkspaceDraft!=document)localWorkspaceDraft.closeNative();
         localWorkspaceDraft = document;
         localDraftWorld = document == null ? null : mc.theWorld;
         localDraftConnection = document == null ? null : mc.getNetHandler();

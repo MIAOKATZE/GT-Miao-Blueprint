@@ -18,6 +18,7 @@ import java.util.Map;
 import java.util.Properties;
 
 import com.google.gson.JsonObject;
+import com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintPairStore;
 
 /** Physical names are presentation only. Logical IDs and old share aliases live in a bounded local index. */
 public final class HologramBlueprintFiles {
@@ -32,8 +33,33 @@ public final class HologramBlueprintFiles {
         validId(id);
         Path root = directory.toAbsolutePath()
             .normalize();
+        NativeBlueprintPairStore.Receipt nativeEntry =
+            id.startsWith("public_") ? null : NativeBlueprintPairStore.receipt(root, id);
+        if (nativeEntry != null) return nativeEntry.source;
         String member = index(root).getProperty(id);
-        return member == null ? child(root, id + ".json") : child(root, member);
+        Path selected = child(root, member == null ? id + ".json" : member);
+        if (!id.startsWith("public_") && NativeBlueprintPairStore.inactive(root, selected))
+            return child(root, ".gtmb-native-vacant-" +
+                HologramBlueprintArtifact.hash(id.getBytes(StandardCharsets.UTF_8)) + ".json");
+        return selected;
+    }
+
+    /** Keep all existing private names pointing at this exact source when format changes. */
+    static synchronized String[] nativePublicationAliases(Path directory,Path source,String lookup) throws IOException {
+        java.util.Set<String> result=new java.util.LinkedHashSet<>();
+        result.add(lookup);
+        String member=source.getFileName().toString();
+        if(member.endsWith(".json")){
+            java.util.Set<String> names=new java.util.LinkedHashSet<>();
+            names.add(member.substring(0,member.length()-5));
+            Properties old=index(directory);
+            for(String key:old.stringPropertyNames())if(member.equals(old.getProperty(key)))names.add(key);
+            for(String name:names){
+                if(name.startsWith("public_")||name.equalsIgnoreCase("hologram-presets"))continue;
+                try{validId(name);result.add(name);}catch(IOException invalid){/* No unsafe physical aliases. */}
+            }
+        }
+        return result.toArray(new String[0]);
     }
 
     /** Existing durable mapping only; no portable catalogue adoption and no legacy filename fallback. */
@@ -41,8 +67,13 @@ public final class HologramBlueprintFiles {
         validId(id);
         Path root = directory.toAbsolutePath()
             .normalize();
+        NativeBlueprintPairStore.Receipt nativeEntry =
+            id.startsWith("public_") ? null : NativeBlueprintPairStore.receipt(root, id);
+        if (nativeEntry != null) return nativeEntry.source;
         String member = index(root).getProperty(id);
-        return member == null ? null : child(root, member);
+        Path selected = member == null ? null : child(root, member);
+        return selected != null && !id.startsWith("public_") && NativeBlueprintPairStore.inactive(root, selected)
+            ? null : selected;
     }
 
     /** Pre-pair shares can be exported as exact JSON under their requested local name. */
@@ -183,6 +214,7 @@ public final class HologramBlueprintFiles {
                 String name = path.getFileName()
                     .toString();
                 if (name.equals("hologram-presets.json") || known.contains(path)
+                    || NativeBlueprintPairStore.inactive(root, path)
                     || name.matches("public_[a-fA-F0-9-]{36}\\.json")
                     || !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)
                     || !Files.isRegularFile(HologramBlueprintArtifact.previewPath(path), LinkOption.NOFOLLOW_LINKS))
@@ -203,6 +235,8 @@ public final class HologramBlueprintFiles {
     private static String displayId(Path root, Path source, String nativeId, Properties mappings) throws IOException {
         String member = source.getFileName()
             .toString();
+        for (Map.Entry<String, Path> entry : NativeBlueprintPairStore.active(root).entrySet())
+            if (source.equals(entry.getValue())) return entry.getKey();
         for (String key : mappings.stringPropertyNames())
             if (key.matches("local_[a-fA-F0-9-]{36}") && member.equals(mappings.getProperty(key))) return key;
         String basename = member.substring(0, member.length() - 5);
@@ -215,12 +249,13 @@ public final class HologramBlueprintFiles {
         }
         String existing = mappings.getProperty(candidate);
         Path legacy = child(root, candidate + ".json");
-        if (existing != null && !member.equals(existing)
+        if (NativeBlueprintPairStore.receipt(root, candidate) != null || existing != null && !member.equals(existing)
             || existing == null && !source.equals(legacy) && Files.exists(legacy, LinkOption.NOFOLLOW_LINKS)) {
             candidate = "local_"
                 + java.util.UUID.nameUUIDFromBytes(("gtmb-portable:" + basename).getBytes(StandardCharsets.UTF_8));
             existing = mappings.getProperty(candidate);
-            if (existing != null && !member.equals(existing))
+            if (NativeBlueprintPairStore.receipt(root, candidate) != null || existing != null && !member.equals(existing)
+                || !source.equals(child(root,candidate+".json")) && Files.exists(child(root,candidate+".json"),LinkOption.NOFOLLOW_LINKS))
                 throw new IOException("Blueprint logical identity conflict");
         }
         return candidate;
@@ -235,9 +270,12 @@ public final class HologramBlueprintFiles {
             .normalize();
         Files.createDirectories(root);
         Map<String, Path> result = new LinkedHashMap<>();
+        if ("local_".equals(prefix)) for (Map.Entry<String, Path> nativeEntry : NativeBlueprintPairStore.active(root).entrySet())
+            if (nativeEntry.getKey().matches(prefix + "[a-fA-F0-9-]{36}")) result.put(nativeEntry.getKey(), nativeEntry.getValue());
         Properties index = index(root);
         for (String id : index.stringPropertyNames()) if (id.matches(prefix + "[a-fA-F0-9-]{36}")) {
             Path path = child(root, index.getProperty(id));
+            if (result.containsKey(id) || NativeBlueprintPairStore.inactive(root, path)) continue;
             if (result.containsValue(path)) throw new IOException("Duplicate blueprint filename mapping");
             result.put(id, path);
         }
@@ -246,7 +284,8 @@ public final class HologramBlueprintFiles {
                 String name = file.getFileName()
                     .toString();
                 String id = name.substring(0, name.length() - 5);
-                if (id.matches(prefix + "[a-fA-F0-9-]{36}")) result.putIfAbsent(id, file);
+                if (id.matches(prefix + "[a-fA-F0-9-]{36}")
+                    && !NativeBlueprintPairStore.inactive(root, file)) result.putIfAbsent(id, file);
             }
         }
         return result;
@@ -297,7 +336,7 @@ public final class HologramBlueprintFiles {
         for (String key : index.stringPropertyNames()) if (!key.equals(id) && target.getFileName()
             .toString()
             .equals(index.getProperty(key))) occupied = true;
-        if (occupied && !target.getFileName()
+        if (local && NativeBlueprintPairStore.inactive(root, target) || occupied && !target.getFileName()
             .toString()
             .equals(current) || Files.exists(target, LinkOption.NOFOLLOW_LINKS)
                 && !target.getFileName()
@@ -314,6 +353,8 @@ public final class HologramBlueprintFiles {
                     .toString()
                     .equals(index.getProperty(key)))
                 throw new IOException("Blueprint filename identity collision");
+            if (local && NativeBlueprintPairStore.inactive(root, target))
+                throw new IOException("A retained blueprint original owns this filename");
             if (Files.exists(target, LinkOption.NOFOLLOW_LINKS) && !target.getFileName()
                 .toString()
                 .equals(current)) throw new IOException("Blueprint filename already exists outside this logical entry");
@@ -356,6 +397,8 @@ public final class HologramBlueprintFiles {
             : upgradeSource;
         if (upgradeSource != null && previous != null && !old.equals(child(root, previous)))
             throw new IOException("升级期间蓝图映射已变更");
+        boolean retained = NativeBlueprintPairStore.inactive(root, old);
+        if(retained&&upgradeSource!=null)throw new IOException("原生蓝图的旧原件已留档，不能就地修改");
         String oldJsonHash = upgradeSource != null ? sourceJsonHash
             : old.equals(target) ? null : memberHashOrAbsent(old, HologramBlueprintLimits.LOCAL_FILE_BYTES);
         String oldPngHash = upgradeSource != null ? (detachedPng == null ? sourcePngHash : null)
@@ -378,13 +421,13 @@ public final class HologramBlueprintFiles {
                 changes.put(alias, existing);
             }
         }
-        for (String key : before.stringPropertyNames()) if (old.getFileName()
+        for (String key : before.stringPropertyNames()) if (!retained && old.getFileName()
             .toString()
             .equals(before.getProperty(key))) changes.put(key, before.getProperty(key));
         // Install recovery first, without holding the filename-index monitor while acquiring a receipt lock.
         boolean[] publishing = { false };
         receipt.onCompletion(() -> {
-            if (!old.equals(target)) {
+            if (!retained && !old.equals(target)) {
                 synchronized (HologramBlueprintFiles.class) {
                     if (!member.equals(index(root).getProperty(id))) throw new IOException("蓝图映射已由较新的保存替换，保留旧文件");
                 }
@@ -419,6 +462,8 @@ public final class HologramBlueprintFiles {
             }
         });
         synchronized (HologramBlueprintFiles.class) {
+            if(!id.startsWith("public_")&&NativeBlueprintPairStore.receipt(root,id)!=null)
+                throw new IOException("保存位置已切换为原生蓝图，不能提交旧格式");
             Properties actual = index(root);
             for (Map.Entry<String, String> change : changes.entrySet())
                 if (!java.util.Objects.equals(change.getValue(), actual.getProperty(change.getKey())))
@@ -437,11 +482,30 @@ public final class HologramBlueprintFiles {
 
     /** Remove a logical entry and its pair; a failed pair deletion restores every old filename alias. */
     public static void delete(Path directory, String id) throws IOException {
+        delete(directory,id,null);
+    }
+
+    public static void deleteLegacySelection(Path directory,String id,Path expected) throws IOException {
+        if(expected==null||!expected.getFileName().toString().endsWith(".json"))
+            throw new IOException("Invalid legacy delete selection");
+        delete(directory,id,expected);
+    }
+
+    private static void delete(Path directory, String id, Path legacySelection) throws IOException {
         Path root = directory.toAbsolutePath()
             .normalize();
         synchronized (HologramBlueprintArtifact.class) {
             synchronized (HologramBlueprintFiles.class) {
+                NativeBlueprintPairStore.Receipt owned = id.startsWith("public_")
+                    ? null : NativeBlueprintPairStore.receipt(root,id);
+                if(owned!=null){
+                    if(legacySelection!=null)throw new IOException("删除前蓝图格式已变化，请刷新");
+                    NativeBlueprintPairStore.delete(root,owned,stage -> {});
+                    return;
+                }
                 Path file = resolve(root, id);
+                if(legacySelection!=null&&!legacySelection.equals(file))
+                    throw new IOException("删除前蓝图位置已变化，请刷新");
                 Properties actual = index(root);
                 Map<String, String> removed = new LinkedHashMap<>();
                 for (String key : actual.stringPropertyNames()) if (file.getFileName()
@@ -482,8 +546,10 @@ public final class HologramBlueprintFiles {
             for (Path file : files) {
                 String name = file.getFileName()
                     .toString();
-                if (name.endsWith(".json")) jsonFiles.add(file);
-                else if (name.endsWith(".png")) pngFiles.add(file);
+                if (name.endsWith(".json")&&!NativeBlueprintPairStore.inactive(root,file)) jsonFiles.add(file);
+                else if (name.endsWith(".png")&&!NativeBlueprintPairStore.inactive(root,previewOwner(file))
+                    &&!Files.exists(root.resolve(name.substring(0,name.length()-4)+".gtnb"),LinkOption.NOFOLLOW_LINKS))
+                    pngFiles.add(file);
                 if (jsonFiles.size() > 4096 || pngFiles.size() > 4096) throw new IOException("蓝图升级目录超过4096组文件上限，请分批整理");
             }
         }
@@ -613,6 +679,7 @@ public final class HologramBlueprintFiles {
     private static UpgradeSource readUpgradeSource(Path root, Path source) throws IOException {
         synchronized (HologramBlueprintArtifact.class) {
             synchronized (HologramBlueprintFiles.class) {
+                if (NativeBlueprintPairStore.inactive(root,source))throw new IOException("原生蓝图的旧原件已留档");
                 if (HologramBlueprintArtifact.hasPendingWrite(source)) throw new IOException("蓝图仍有待确认的保存");
                 return new UpgradeSource(read(source, HologramBlueprintArtifact.MAX_JSON_BYTES), index(root));
             }
@@ -706,7 +773,8 @@ public final class HologramBlueprintFiles {
             for (Path file : files) {
                 String name = file.getFileName()
                     .toString();
-                if (name.equals("hologram-presets.json") || name.matches("local_[a-fA-F0-9-]{36}\\.json")) continue;
+                if (name.equals("hologram-presets.json") || name.matches("local_[a-fA-F0-9-]{36}\\.json")
+                    || NativeBlueprintPairStore.inactive(root, file)) continue;
                 boolean known = false;
                 for (String key : mappings.stringPropertyNames())
                     if (key.matches("local_[a-fA-F0-9-]{36}") && name.equals(mappings.getProperty(key))) known = true;
@@ -744,7 +812,7 @@ public final class HologramBlueprintFiles {
         }
         String existing = mappings.getProperty(candidate);
         Path legacy = child(root, candidate + ".json");
-        if (existing != null && !member.equals(existing)
+        if (NativeBlueprintPairStore.receipt(root, candidate) != null || existing != null && !member.equals(existing)
             || existing == null && !source.equals(legacy) && Files.exists(legacy, LinkOption.NOFOLLOW_LINKS)) {
             candidate = "local_"
                 + java.util.UUID.nameUUIDFromBytes(("gtmb-portable:" + basename).getBytes(StandardCharsets.UTF_8));
@@ -766,24 +834,7 @@ public final class HologramBlueprintFiles {
     }
 
     private static String safeName(String value) {
-        StringBuilder name = new StringBuilder();
-        int bytes = 0;
-        for (int offset = 0; offset < value.length();) {
-            int character = value.codePointAt(offset);
-            offset += Character.charCount(character);
-            if (character < 32 || character == 127 || "<>:\"/\\|?*".indexOf(character) >= 0) character = '_';
-            String part = new String(Character.toChars(character));
-            int width = part.getBytes(StandardCharsets.UTF_8).length;
-            if (bytes + width > 80) break;
-            name.append(part);
-            bytes += width;
-        }
-        String result = name.toString()
-            .trim()
-            .replaceAll("[. ]+$", "");
-        if (result.isEmpty()) result = "蓝图";
-        if (result.matches("(?i)(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\\..*)?")) result = "_" + result;
-        return result;
+        return NativeBlueprintPairStore.portableStem(value);
     }
 
     private static void validId(String id) throws IOException {

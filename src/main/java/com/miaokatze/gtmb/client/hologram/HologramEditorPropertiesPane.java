@@ -346,6 +346,7 @@ final class HologramEditorPropertiesPane {
 
     private String constructionActionLabel() {
         NBTTagCompound state = ui.session.state().data;
+        if(ui.session.state().nativeViewport!=null)return "查看蓝图材料";
         return ui.review.placementReviewActive() ? "继续放置预检"
             : state.getBoolean("virtual") && !state.getBoolean("virtualPlacement") ? "从蓝图库放置"
                 : state.getBoolean("virtual") && !state.getBoolean("virtualLocked") ? "世界右键确定位置"
@@ -365,6 +366,7 @@ final class HologramEditorPropertiesPane {
     }
 
     private String constructionReason() {
+        if(ui.session.state().nativeViewport!=null)return "按当前蓝图版本查看材料，不提交施工。";
         if (ui.review.nativeMaterialInspectionReady()) return "可先查看原生结构材料；仍需完成核验再确认施工。";
         NBTTagCompound state = ui.session.state().data;
         if (!ui.session.editable()) return ui.session.editingReason();

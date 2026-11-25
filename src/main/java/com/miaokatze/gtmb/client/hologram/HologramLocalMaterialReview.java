@@ -50,7 +50,10 @@ final class HologramLocalMaterialReview {
         layer = settings.getInteger("layer");
         selection = this.settings.getIntArray("selectedIndices");
         captured = detailed && !source.data.getBoolean("capturePending") ? null : capturedCounts();
-        if (captured != null) description = description(captured, null);
+        if(source.nativeViewport!=null){
+            var result=scope==2&&selection.length>1&&selectedMaterials!=null?selectedMaterials.materialResult(source):source.nativeViewport.material(scope,layer,selected,selection);
+            if(result!=null){theory=result.theory();targetCount=result.targets();unaccounted=theory.getInteger("unaccounted");}
+        }else if (captured != null) description = description(captured, null);
         else if (source.localMaterialIndex != null && source.localMaterialIndex.current()) {
             HologramLocalMaterialIndex.Result result = source.localMaterialIndex
                 .select(source.cells, scope, layer, selected, selection,
@@ -69,6 +72,7 @@ final class HologramLocalMaterialReview {
     }
 
     boolean current(HologramState state, int layer) {
+        if(source.nativeViewport!=null)return !closed&&source==state&&this.layer==layer&&source.nativeViewport.currentProviders();
         return !closed && (captured == null ? source.localMaterialIndex == state.localMaterialIndex
             && state.localMaterialIndex != null && state.localMaterialIndex.current() && !state.data.getBoolean("capturePending")
             : source.controllerMaterialCounts == state.controllerMaterialCounts) && source.session.equals(state.session)
@@ -107,6 +111,7 @@ final class HologramLocalMaterialReview {
         if (captured != null) return captured.total() + " 个目标格"
             + (captured.unlisted() == 0 ? "" : " · " + captured.unlisted() + " 格基材未列明")
             + " · 施工用量未核算";
+        if (!ready()&&source.nativeViewport!=null)return "此范围尚未核算，不能作为零用量";
         if (!ready()) return "当前来源尚未提供材料汇总，请重新读取结构";
         String status = targetCount + " 个目标格";
         if (unaccounted > 0) status += " · " + unaccounted + " 格未核算";

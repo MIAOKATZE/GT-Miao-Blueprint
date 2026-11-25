@@ -327,8 +327,7 @@ public final class HologramBlueprintArtifact {
         if (jsonPath == null || jsonPath.getFileName() == null) throw new IOException("Missing blueprint JSON path");
         String name = jsonPath.getFileName()
             .toString();
-        if (name.length() <= 5 || !name.toLowerCase(Locale.ROOT)
-            .endsWith(".json")) throw new IOException("Blueprint artifact path must end in .json");
+        if (name.length() <= 5 || !(name.toLowerCase(Locale.ROOT).endsWith(".json") || name.toLowerCase(Locale.ROOT).endsWith(".gtnb"))) throw new IOException("Blueprint artifact path must end in .json");
         return jsonPath.resolveSibling(name.substring(0, name.length() - 5) + ".png");
     }
 

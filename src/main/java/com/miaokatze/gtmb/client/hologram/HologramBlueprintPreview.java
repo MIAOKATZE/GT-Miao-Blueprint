@@ -497,6 +497,13 @@ public final class HologramBlueprintPreview {
         return queue(new Request(exactSnapshot, hash, yaw, pitch, current, done, failure, trace));
     }
 
+    static Request captureNative(HologramState view,double yaw,double pitch,BooleanSupplier current,
+        Consumer<BufferedImage> done,Consumer<Throwable> failure){
+        if(view.nativeViewport==null)throw new IllegalArgumentException("Native render revision required");
+        Request request=new Request(view.data,"",yaw,pitch,current,done,failure);request.nativeView=view;
+        return queue(request);
+    }
+
     private static Request queue(Request request) {
         if (!REQUESTS.offer(request)) {
             request.fail(new IOException("Blueprint preview queue is full"));
@@ -614,6 +621,7 @@ public final class HologramBlueprintPreview {
         private int preexistingErrorCount;
         private boolean nativeRendering, readbackSucceeded;
         private volatile boolean cancelled;
+        private HologramState nativeView;
 
         Request(NBTTagCompound snapshot, String ownedSourceHash, double yaw, double pitch, BooleanSupplier current,
             Consumer<BufferedImage> done, Consumer<Throwable> failure) {
@@ -667,7 +675,7 @@ public final class HologramBlueprintPreview {
             && !request.sourceJsonSha256.isEmpty();
         if (witness) request.preexistingErrorCount = clearPreexistingErrors();
         if (!OpenGlHelper.isFramebufferEnabled()) throw new IOException("Native framebuffer previews are unavailable");
-        HologramState state = completeSnapshot(request.snapshot);
+        HologramState state = request.nativeView!=null?request.nativeView:completeSnapshot(request.snapshot);
         mark(request.saveTrace, Stage.RENDER_STATE_READY);
         MiaoVisonLiteRenderer viewport = new MiaoVisonLiteRenderer(
             new HologramPreviewAssets(),

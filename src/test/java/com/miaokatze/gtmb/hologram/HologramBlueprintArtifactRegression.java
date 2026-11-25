@@ -728,7 +728,7 @@ public final class HologramBlueprintArtifactRegression {
         return bytes.toByteArray();
     }
 
-    private static byte[] idat(byte[] png) throws IOException {
+    public static byte[] idat(byte[] png) throws IOException {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         for (int offset = 8; offset < png.length;) {
             int length = integer(png, offset);

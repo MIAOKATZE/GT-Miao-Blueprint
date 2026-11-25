@@ -48,6 +48,31 @@ final class HologramState {
     int minY = 0, maxY = 0;
     private int minWorldX, maxWorldX, minWorldY, maxWorldY, minWorldZ, maxWorldZ;
 
+    HologramNativeViewport nativeViewport;
+    HologramState(NBTTagCompound metadata,HologramNativeViewport viewport){
+        this(metadata,viewport,null);
+    }
+    HologramState(NBTTagCompound metadata,HologramNativeViewport viewport,HologramState previous){
+        nativeViewport=viewport;data=metadata(metadata);session=data.getString("session");
+        cells=viewport.cells;regions=viewport.regions;structureMembers=viewport.memberships;
+        materials=Collections.emptyList();plainDisplayExamples=viewport.ordinaryExamples;
+        controllerMaterialCounts=null;localMaterialIndex=null;controllerTargetIdentity=null;
+        boolean same=previous!=null&&previous.nativeViewport!=null&&previous.nativeViewport.geometry==viewport.geometry
+            && previouslySameProviders(previous,viewport);
+        parentIdentity=same?previous.identity:null;
+        changedIndices=same?java.util.Arrays.stream(viewport.draft.revision().changedSince(previous.nativeViewport.draft.revision())).distinct().toArray():new int[0];
+        if(same&&changedIndices.length!=0){
+            changedPreviousCells=new ArrayList<>(changedIndices.length);
+            for(int rank:changedIndices)changedPreviousCells.add(previous.cells.get(rank));
+        }
+        fullBaseline=!same;parsedCells=0;
+        int[] bounds=viewport.bounds;minY=minWorldY=bounds[1];maxY=maxWorldY=bounds[4];
+        minWorldX=bounds[0];maxWorldX=bounds[3];minWorldZ=bounds[2];maxWorldZ=bounds[5];
+    }
+
+    private static boolean previouslySameProviders(HologramState previous,HologramNativeViewport viewport){
+        return previous.nativeViewport.currentProviders()&&viewport.currentProviders();
+    }
     HologramState(NBTTagCompound source) {
         controllerMaterialCounts = null;
         HologramLocalMaterialIndex.Builder materialIndex = source.getBoolean("localStandardController")
@@ -319,6 +344,7 @@ final class HologramState {
 
     /** Metadata decorators share geometry; preserve the incoming publication's renderer and selection obligations. */
     private HologramState(HologramState decorated, HologramState publication) {
+        nativeViewport = decorated.nativeViewport;
         controllerMaterialCounts = decorated.controllerMaterialCounts;
         localMaterialIndex = decorated.localMaterialIndex;
         data = decorated.data;
@@ -776,6 +802,9 @@ final class HologramState {
     }
 
     private HologramState(HologramState base, NBTTagCompound patch, boolean decoration) {
+        nativeViewport = base.nativeViewport;
+        if (nativeViewport != null && (patch.getBoolean("topology") || patch.getTagList("cells",10).tagCount()!=0))
+            throw new IllegalArgumentException("Native geometry can only change with its source revision");
         fullBaseline = decoration && base.fullBaseline;
         controllerTargetIdentity = null;
         plainDisplayExamples = decoration ? base.plainDisplayExamples : Collections.emptyList();
@@ -1187,7 +1216,7 @@ final class HologramState {
     }
 
     /** The unpublished prototype is sealed by ownership: no caller receives its stacks, arrays or raw NBT. */
-    private static final class DescriptorTemplate {
+    static final class DescriptorTemplate {
 
         private final Cell values;
         private final ItemStack actualStack, targetStack;
@@ -1206,6 +1235,8 @@ final class HologramState {
             plainRenderExample = withoutPayload && plainTarget();
             compactPlain = anonymous && plainRenderExample;
         }
+
+        boolean plainRenderExample(){return plainRenderExample;}
 
         boolean plainTarget() {
             return !values.targetDisplay.hasKey("nativeTile", 10)
@@ -1362,7 +1393,7 @@ final class HologramState {
                 positions.getInteger("dz"));
         }
 
-        private Cell(int index, DescriptorTemplate template, NBTTagCompound positions, boolean local, int x, int y,
+        Cell(int index, DescriptorTemplate template, NBTTagCompound positions, boolean local, int x, int y,
             int z, int dx, int dy, int dz) {
             Cell value = template.values;
             boolean compactPlain = template.compactPlain;

@@ -269,6 +269,13 @@ final class HologramBlueprintNbt {
         }
     }
 
+    static NBTTagCompound resolveNativePayload(NBTTagCompound source)throws IOException{
+        if(source==null)return null;
+        NBTTagCompound copy=(NBTTagCompound)source.copy();
+        try{stableItems(copy,false);return copy;}
+        catch(RuntimeException invalid){throw new IOException("原生蓝图 NBT 材料无法解析",invalid);}
+    }
+
     /** First admission resolves identities on the owner; later reads use only that task's frozen numeric IDs. */
     static NBTTagCompound decodeSnapshot(String value, Map<String, Integer> itemIds, boolean freeze)
         throws IOException {

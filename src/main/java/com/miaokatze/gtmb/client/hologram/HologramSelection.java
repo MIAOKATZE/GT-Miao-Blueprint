@@ -12,6 +12,8 @@ import java.util.Set;
 public final class HologramSelection {
 
     private HologramState materialState;
+    private HologramNativeViewport nativeOwner;
+    private HologramNativeViewport.Selection nativeMaterials;
     private HologramLocalMaterialIndex materialIndex;
     private HologramLocalMaterialIndex.Selection materialSelection;
     private HologramLocalMaterialIndex.Result materialResult;
@@ -34,6 +36,7 @@ public final class HologramSelection {
         public void clear() {
             super.clear();
             if (materialSelection != null) materialSelection.clear();
+            if(nativeMaterials!=null)nativeMaterials.clear();
         }
 
         @Override
@@ -61,7 +64,9 @@ public final class HologramSelection {
 
     void bindMaterials(HologramState state) {
         materialState = state;
-        if (materialIndex == state.localMaterialIndex) return;
+        if (materialIndex == state.localMaterialIndex && nativeOwner==state.nativeViewport) return;
+        nativeOwner=state.nativeViewport;nativeMaterials=nativeOwner==null?null:nativeOwner.new Selection();
+        if(nativeMaterials!=null)for(int index:indices)if(index>=0&&index<state.cells.size())nativeMaterials.change(index,1);
         materialIndex = state.localMaterialIndex;
         materialSelection = materialIndex == null ? null : materialIndex.new Selection();
         if (materialSelection != null)
@@ -71,16 +76,17 @@ public final class HologramSelection {
     }
 
     private void changeMaterial(int index, int delta) {
+        if(nativeMaterials!=null&&index>=0&&index<materialState.cells.size())nativeMaterials.change(index,delta);
         if (materialSelection != null && index >= 0 && index < materialState.cells.size())
             materialSelection.change(materialState.cells.get(index), delta);
     }
 
     private void finishMaterials() {
-        materialResult = materialSelection == null ? null : materialSelection.result();
+        materialResult = nativeMaterials!=null?nativeMaterials.result():materialSelection == null ? null : materialSelection.result();
     }
 
     HologramLocalMaterialIndex.Result materialResult(HologramState state) {
-        return materialIndex != null && materialIndex == state.localMaterialIndex && materialIndex.current()
+        return (nativeOwner!=null&&nativeOwner==state.nativeViewport&&nativeOwner.currentProviders()||materialIndex != null && materialIndex == state.localMaterialIndex && materialIndex.current())
             ? materialResult : null;
     }
     private final java.util.BitSet selectedBits = new java.util.BitSet();

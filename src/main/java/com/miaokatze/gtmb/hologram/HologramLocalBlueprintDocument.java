@@ -4,6 +4,8 @@
 package com.miaokatze.gtmb.hologram;
 
 import java.io.IOException;
+import com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintDefinition;
+import com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintEdits;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -160,6 +162,97 @@ public final class HologramLocalBlueprintDocument {
         explicitRetention = codec.explicitRetention();
     }
 
+    private volatile com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintPairStore.Receipt nativeReceipt;
+    public com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintPairStore.Receipt nativeReceipt(){return nativeReceipt;}
+    private volatile HologramNativeBlueprintDraft nativeDraft;
+    private final Deque<HologramNativeBlueprintDraft> nativeUndo=new ArrayDeque<>(), nativeRedo=new ArrayDeque<>();
+    public HologramNativeBlueprintDraft nativeDraft(){return nativeDraft;}
+    public static HologramLocalBlueprintDocument openNative(NativeBlueprintDefinition def,String id,LocalEditorOrigin origin)throws IOException{
+        return openNative(def,id,origin,null);
+    }
+    public static HologramLocalBlueprintDocument openNative(NativeBlueprintDefinition def,String id,LocalEditorOrigin origin,
+        com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintPairStore.Receipt receipt)throws IOException{
+        try{
+            var nativeDraft=new HologramNativeBlueprintDraft(new NativeBlueprintEdits(def));
+            var doc=new HologramLocalBlueprintDocument(nativeDraft.header(),null,new HologramLocalBlueprintCodec());
+            doc.fileId=id==null?"":HologramLibraryService.localId(id,true);
+            doc.editorOrigin=origin;doc.nativeDraft=nativeDraft;doc.nativeReceipt=receipt;
+            doc.content=nativeDraft;doc.savedContent=doc.fileId.isEmpty()?null:nativeDraft;
+            return doc;
+        }catch(IOException|RuntimeException failure){def.close();throw failure;}
+    }
+    public void closeNative(){if(nativeDraft!=null)try{nativeDraft.revision().source().close();}catch(IOException ignored){}}
+    public NBTTagCompound nativeEditorMetadata()throws IOException{
+        if(nativeDraft==null)throw new IOException("Not a native document");
+        NBTTagCompound data=editorMetadata();data.setBoolean("nativeBlueprintDocument",true);
+        data.setBoolean("editCanUndo",!nativeUndo.isEmpty());data.setBoolean("editCanRedo",!nativeRedo.isEmpty());return data;
+    }
+    public NativeBlueprintEdits nativeSaveRevision(NBTTagCompound options,String actor,UUID uuid,String id,LocalSaveIntent intent)throws IOException{
+        if(nativeDraft==null)throw new IOException("Not a native document");
+        String name=options.getString("name").trim();if(name.isEmpty())name=text(document.name);
+        if(name.isEmpty()||name.length()>48||viewCellCount()==0)throw new IOException("请填写蓝图名称并保留至少一个方块");
+        if(options.hasKey("retainNbt",1)&&options.getBoolean("retainNbt")!=document.retainNbt||
+            options.hasKey("retainCovers",1)&&options.getBoolean("retainCovers")!=document.retainCovers||
+            options.hasKey("deidentificationLevel",3)&&options.getInteger("deidentificationLevel")!=document.deidentificationLevel||
+            options.hasKey("retainAllNbt",1)&&(options.getBoolean("retainAllNbt")!=(document.retainedNbtKeys==null)||
+                !options.getBoolean("retainAllNbt")&&!java.util.Objects.equals(document.retainedNbtKeys,
+                    HologramAuthoringQueries.selectedNbtKeys(options.getTagList("retainedNbtKeys",8)))))
+            throw new IOException("此原生版本尚不支持更改保留策略；未保存");
+        String author=text(document.authorName),owner=text(document.authorUuid);
+        if(author.isEmpty()&&owner.isEmpty()&&uuid!=null&&actor!=null){author=actor.trim();owner=uuid.toString();}
+        boolean incomplete=!author.isEmpty()&&owner.isEmpty()&&(intent==LocalSaveIntent.SAVE_AS_NEW&&editorOrigin==LocalEditorOrigin.NAMED_IMPORT&&fileId.isEmpty()||
+            intent==LocalSaveIntent.SAVE_CURRENT&&id.equals(fileId)&&editorOrigin==LocalEditorOrigin.TRACKED_PRIVATE);
+        if(author.isEmpty()||owner.isEmpty()&&!incomplete)throw new IOException("蓝图缺少完整作者信息");
+        return nativeDraft.revision().author(HologramLibraryService.localId(id,false),name,author,owner.isEmpty()?null:owner,
+            document.createdAt>0?document.createdAt:incomplete?0:System.currentTimeMillis());
+    }
+    public void nativeSaved(long expectedRevision,NativeBlueprintEdits edits,String id,
+        com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintPairStore.Receipt receipt)throws IOException{
+        if(revision!=expectedRevision||nativeDraft==null||nativeDraft.revision().source()!=edits.source())throw new IOException("蓝图已修改，请重新保存");
+        nativeDraft=new HologramNativeBlueprintDraft(edits);document=nativeDraft.header();fileId=HologramLibraryService.localId(id,false);
+        nativeReceipt=receipt;savedContent=content=nativeDraft;nativeUndo.clear();nativeRedo.clear();editorOrigin=LocalEditorOrigin.TRACKED_PRIVATE;revision++;status="原生蓝图已保存到客户端";
+    }
+    private boolean applyNative(String op,NBTTagCompound request)throws IOException{
+        switch(op){
+            case "selectCell" -> {setSelection(request.getInteger("selected"),request.getIntArray("selectedIndices"));return true;}
+            case "selectStructure" -> {selectStructure(request.getString("structureId"));return true;}
+            case "configure" -> {
+                NBTTagCompound saved=new NBTTagCompound();writeStructureSettings(saved);
+                if(request.hasKey("channels")&&(!request.hasKey("channels",10)||!saved.getCompoundTag("channels").equals(request.getCompoundTag("channels")))
+                    ||request.hasKey("main")&&(!request.hasKey("main",3)||request.getInteger("main")!=saved.getInteger("main"))
+                    ||request.hasKey("noHatches")&&(!request.hasKey("noHatches",1)||request.getBoolean("noHatches")!=saved.getBoolean("noHatches")))
+                    throw new IOException("原生蓝图保留保存时的结构，不根据机器定义重新生成");
+                if(request.hasKey("selected",3)||request.hasKey("selectedIndices",11))setSelection(
+                    request.hasKey("selected",3)?request.getInteger("selected"):selected,
+                    request.hasKey("selectedIndices",11)?request.getIntArray("selectedIndices"):selection);
+                viewConfiguration(request);return true;
+            }
+            case "editUndo","editRedo" -> {Deque<HologramNativeBlueprintDraft> from=op.equals("editUndo")?nativeUndo:nativeRedo,to=op.equals("editUndo")?nativeRedo:nativeUndo;
+                if(!from.isEmpty()){to.push(nativeDraft);nativeDraft=from.pop();document=nativeDraft.header();content=nativeDraft;revision++;}return true;}
+        }
+        NativeBlueprintEdits edits=nativeDraft.revision();
+        if("editBlueprintPrompt".equals(op))edits=edits.prompt(HologramSessionPolicy.boundedPrompt(request.getString("prompt")));
+        else if("editCellFlags".equals(op)){
+            int[] ranks=request.getIntArray("indices");if(ranks.length==0)ranks=request.getIntArray("selectedIndices");
+            if(ranks.length==0)ranks=new int[]{request.hasKey("selected",3)?request.getInteger("selected"):selected};
+            if(ranks.length>HologramCapture.LIMIT)throw new IOException("选择数量超过上限");
+            if(request.hasKey("structureId",8)&&!activeStructure.equals(request.getString("structureId")))throw new IOException("结构选择已变化");
+            for(int rank:ranks){if(rank<0||rank>=viewCellCount())throw new IOException("无效的位置选择");
+                if(!activeStructure.isEmpty()&&!nativeDraft.cell(rank).belongsTo(activeStructure))throw new IOException("选择不属于当前结构");}
+            edits=edits.annotate(ranks,request.hasKey("prompt",8)?HologramSessionPolicy.boundedPrompt(request.getString("prompt")):null,
+                request.hasKey("excluded",1)?Boolean.valueOf(request.getBoolean("excluded")):null);
+        }else throw new IOException("此原生蓝图编辑操作尚未接入，已保留原件："+op);
+        var next=new HologramNativeBlueprintDraft(edits,nativeDraft);nativeUndo.push(nativeDraft);if(nativeUndo.size()>HISTORY_LIMIT)nativeUndo.removeLast();
+        nativeRedo.clear();nativeDraft=next;content=next;document=next.header();revision++;return true;
+    }
+    static NBTTagCompound nativeDisplayDescriptor(Cell cell,NBTTagCompound tile,NBTTagCompound item){
+        NBTTagCompound row=cellRow(cell,new VisualPayloads(),false);
+        if(!row.getBoolean("missingBlock")){
+            if(tile!=null)row.setTag("previewTile",tile.copy());
+            if(item!=null)row.setTag("previewItemTag",item.copy());
+        }
+        return row;
+    }
     public static HologramLocalBlueprintDocument open(byte[] exactJson) throws IOException {
         return open(exactJson, null);
     }
@@ -318,11 +411,13 @@ public final class HologramLocalBlueprintDocument {
     }
 
     private int viewCellCount() {
+        if(nativeDraft!=null)return nativeDraft.space().size();
         var root = packed;
         return root == null ? document.cells.size() : root.size();
     }
 
     private Cell viewCell(int ordinal) {
+        if(nativeDraft!=null)try{return nativeDraft.cell(ordinal);}catch(IOException invalid){throw new IllegalStateException(invalid);}
         var root = packed;
         return root == null ? document.cells.get(ordinal) : root.read(ordinal);
     }
@@ -347,6 +442,7 @@ public final class HologramLocalBlueprintDocument {
     }
 
     public byte[] artifact() throws IOException {
+        if(nativeDraft!=null)throw new IOException("原生蓝图不是旧 JSON");
         if (viewCellCount() == 0) throw new IOException("蓝图没有方块");
         if (encoded == null) {
             // An unencoded packed revision has no current artifact. Ordinary Save/Place own the worker conversion.
@@ -357,6 +453,7 @@ public final class HologramLocalBlueprintDocument {
     }
 
     public FrozenDraft freeze() {
+        if(nativeDraft!=null)throw new IllegalStateException("原生蓝图施工未启用，不使用旧施工协议");
         HologramPackedAuthoring sourcePacked = packed;
         return new FrozenDraft(
             document,
@@ -700,6 +797,7 @@ public final class HologramLocalBlueprintDocument {
         throws IOException {
         if (!handles(op)) return false;
         checkRevision(request);
+        if(nativeDraft!=null)return applyNative(op,request);
         if (!supportsPackedCommand(op)) requireMaterialized();
         if (processingCommand(op)) {
             process(op, request, current);
@@ -746,7 +844,7 @@ public final class HologramLocalBlueprintDocument {
 
     /** Native callbacks belong to the client tick. The resulting portable rows commit on the existing editor worker. */
     public StructureTask beginStructureCommand(String op, NBTTagCompound request) throws IOException {
-        if (!"selectStructure".equals(op) && !"configure".equals(op)) return null;
+        if (nativeDraft!=null||!"selectStructure".equals(op) && !"configure".equals(op)) return null;
         checkRevision(request);
         if (!supportsPackedCommand(op)) requireMaterialized();
         if ("selectStructure".equals(op)) {
