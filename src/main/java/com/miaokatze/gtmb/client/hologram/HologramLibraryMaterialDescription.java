@@ -47,9 +47,7 @@ final class HologramLibraryMaterialDescription {
                 .size());
         for (HologramLibraryMaterialForecast.Need need : forecast.candidates()) {
             var identity = need.identity();
-            Long observed = STONE.equals(identity.registry()) && identity.damage() == 0
-                ? visibleStone(mainInventory, projectorSlot)
-                : null;
+            Long observed = visiblePlain(identity, mainInventory, projectorSlot);
             rows.add(new Row(identity, need.cells(), observed));
         }
         return new Description(
@@ -59,18 +57,31 @@ final class HologramLibraryMaterialDescription {
             forecast.airCells());
     }
 
-    private static Long visibleStone(ItemStack[] mainInventory, int projectorSlot) {
+    private static Long visiblePlain(HologramLibraryMaterialForecast.Identity identity, ItemStack[] mainInventory,
+        int projectorSlot) {
+        if (identity.damage() != 0) return null;
+        String registry = identity.registry();
+        Block block = switch (registry) {
+            case "minecraft:stone" -> Blocks.stone;
+            case "minecraft:cobblestone" -> Blocks.cobblestone;
+            case "minecraft:glass" -> Blocks.glass;
+            case "minecraft:stonebrick" -> Blocks.stonebrick;
+            case "minecraft:quartz_block" -> Blocks.quartz_block;
+            case "minecraft:glowstone" -> Blocks.glowstone;
+            default -> null;
+        };
         if (mainInventory == null || projectorSlot < 0
             || projectorSlot >= InventoryPlayer.getHotbarSize()
             || projectorSlot >= mainInventory.length) return null;
-        Block block = Blocks.stone;
-        if (block == null || block.getClass() != BlockStone.class
-            || Block.blockRegistry.getObject(STONE) != block
-            || !STONE.equals(Block.blockRegistry.getNameForObject(block))) return null;
+        if (block == null || STONE.equals(registry) && block.getClass() != BlockStone.class
+            || Block.blockRegistry.getObject(registry) != block
+            || !registry.equals(Block.blockRegistry.getNameForObject(block))) return null;
         Item item = Item.getItemFromBlock(block);
-        if (item == null || item.getClass() != ItemBlock.class
-            || Item.itemRegistry.getObject(STONE) != item
-            || !STONE.equals(Item.itemRegistry.getNameForObject(item))
+        if (item == null || !(item.getClass() == ItemBlock.class
+            || (block == Blocks.stonebrick || block == Blocks.quartz_block)
+                && item.getClass() == net.minecraft.item.ItemMultiTexture.class)
+            || Item.itemRegistry.getObject(registry) != item
+            || !registry.equals(Item.itemRegistry.getNameForObject(item))
             || Block.getBlockFromItem(item) != block) return null;
         ItemStack sample = new ItemStack(item, 1, 0);
         if (sample.getItem() != item) return null; // Do not count against a changed Forge delegate.

@@ -23,6 +23,7 @@ public final class HologramSourceRegistryFixtureTransformer implements IClassTra
 
     @Override
     public byte[] transform(String name, String transformedName, byte[] bytes) {
+        if ("appeng.util.item.AEStack".equals(transformedName) && bytes != null) return withoutPatternIcon(bytes);
         if (!"appeng.core.Api".equals(transformedName) || bytes == null) return bytes;
         ClassNode type = new ClassNode();
         new ClassReader(bytes).accept(type, 0);
@@ -48,5 +49,30 @@ public final class HologramSourceRegistryFixtureTransformer implements IClassTra
             }
         }
         throw new AssertionError("Native source registry fixture could not isolate optional block definitions");
+    }
+    // AEStack's unrelated craft-pattern rendering icon reads the detached block/item definitions.
+    private static byte[] withoutPatternIcon(byte[] bytes) {
+        ClassNode type = new ClassNode();
+        new ClassReader(bytes).accept(type, 0);
+        for (MethodNode method : type.methods) {
+            if (!"<clinit>".equals(method.name)) continue;
+            AbstractInsnNode api = null;
+            for (AbstractInsnNode insn = method.instructions.getFirst(); insn != null; insn = insn.getNext()) {
+                if (insn instanceof org.objectweb.asm.tree.MethodInsnNode call
+                    && "appeng/api/AEApi".equals(call.owner) && "instance".equals(call.name)) api = insn;
+                if (!(insn instanceof FieldInsnNode field) || field.getOpcode() != Opcodes.PUTSTATIC
+                    || !"PATTERN".equals(field.name) || api == null) continue;
+                for (AbstractInsnNode cursor = api; cursor != insn;) {
+                    AbstractInsnNode next = cursor.getNext();
+                    method.instructions.remove(cursor);
+                    cursor = next;
+                }
+                method.instructions.insertBefore(insn, new org.objectweb.asm.tree.InsnNode(Opcodes.ACONST_NULL));
+                ClassWriter output = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+                type.accept(output);
+                return output.toByteArray();
+            }
+        }
+        throw new AssertionError("Native AE stack fixture could not isolate the optional pattern icon");
     }
 }

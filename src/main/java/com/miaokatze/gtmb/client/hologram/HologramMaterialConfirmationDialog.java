@@ -46,7 +46,8 @@ final class HologramMaterialConfirmationDialog {
         BACK,
         REFRESH,
         SUBMIT,
-        DETAILS
+        DETAILS,
+        VOUCHER
     }
 
     /** The port lends its current detached rows for read-only rendering. */
@@ -84,6 +85,22 @@ final class HologramMaterialConfirmationDialog {
 
         default String localSubmitLabel() {
             return "提交施工并核验…";
+        }
+
+        default boolean localVoucherAvailable() {
+            return false;
+        }
+
+        default boolean localVoucherSelected() {
+            return false;
+        }
+
+        default String localSourcesLabel() {
+            return "材料来源：执行时由服务端核验";
+        }
+
+        default String localVoucherLabel() {
+            return "猫猫装饰抵用券：本次来源不支持";
         }
 
         void localAction(LocalAction action); // Revalidate deferred callbacks before using local or server data.
@@ -215,6 +232,11 @@ final class HologramMaterialConfirmationDialog {
         result.setInteger(
             "firstRowIdentity",
             System.identityHashCode(descriptive() ? descriptionRow(0) : materials.row(0)));
+        if (local) {
+            result.setBoolean("voucherSelected", localView.localVoucherSelected());
+            result.setBoolean("voucherEnabled", localView.localVoucherAvailable());
+            result.setString("materialSources", localView.localSourcesLabel());
+        }
         if (graph != null) {
             HologramState state = graph.session.state();
             result.setBoolean(
@@ -400,6 +422,22 @@ final class HologramMaterialConfirmationDialog {
                 () -> localView.localAction(LocalAction.DETAILS),
                 localView::localDetailsAvailable,
                 () -> 0).tooltipBuilder(t -> t.addLine("仅本地统计指定结构，不请求或开始施工。")));
+            panel.child(HologramMuiTheme.label(localView::localSourcesLabel, 14, 340, 210, 16,
+                HologramMuiTheme.MUTED).tooltipBuilder(t -> {
+                    t.addLine(localView.localSourcesLabel());
+                    t.addLine("主物品栏观察只是本机数量；背包适配器、无线 AE、权限和实际缺料由服务端核验。");
+                    t.addLine("AE 补单、设备资源及去标识设置未接入本地提交，不将其伪装成可用功能。");
+                }));
+            panel.child(button(162, () -> "AE 补单：本地模式未接入", 234, 340, 160,
+                () -> {}, () -> false, () -> 0).tooltipBuilder(t ->
+                    t.addLine("无线 AE 直接取料按工具设置执行；这不是 AE 自动合成订单。")));
+            panel.child(button(245, localView::localVoucherLabel, 400, 340, 218,
+                () -> { if (localView.localVoucherAvailable()) localView.localAction(LocalAction.VOUCHER); },
+                localView::localVoucherAvailable,
+                () -> localView.localVoucherSelected() ? HologramUiAccent.SUGGESTION : 0).tooltipBuilder(t -> {
+                    t.addLine("仅明确勾选才请求抵扣；服务端按当前规则确认可抵扣装饰材料。");
+                    t.addLine("首个成功抵扣才消耗主物品栏中一张券；失败和重发不重复扣券。");
+                }));
             panel.child(
                 button(
                     247,
@@ -653,7 +691,12 @@ final class HologramMaterialConfirmationDialog {
     }
 
     private String unavailableReason(int id) {
-        if (local) return id == 55 ? "明确提交后才核验当前现场、权限和库存；仍需最终确认。" : "";
+        if (local) {
+            if (id == 55) return "明确提交本次选择后，服务端核验当前现场、权限、料源和抵扣规则。";
+            if (id == 245 && !localView.localVoucherAvailable()) return "本次来源或施工入口尚不支持装饰抵扣。";
+            if (id == 162) return "此入口尚无 AE 自动合成订单；无线 AE 直接取料仍按工具设置执行。";
+            return "";
+        }
         if (id == 168 && !ui.nbt.hasPlacementNbtChoices()) return "本次蓝图没有可调整的 NBT 条目。";
         if (id == 196 && ui.bindings.networkGroups()
             .tagCount() == 0) return "本图没有需要绑定的量子网络。";

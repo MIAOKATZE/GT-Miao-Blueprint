@@ -127,6 +127,23 @@ public final class HologramMaterialReviewRegression {
         detachedNativeScope();
         staleNativeOwner();
         graphlessLocalViewControls();
+        explicitLocalPaymentChoice();
+    }
+
+    private static void explicitLocalPaymentChoice() {
+        NBTTagCompound original = new NBTTagCompound();
+        original.setInteger("placementX", 17);
+        var source = new HologramLocalPlacement.Submission(null, null, 42, original);
+        var selected = HologramLibraryMaterialReviewScreen.paymentChoice(source, true);
+        var plain = HologramLibraryMaterialReviewScreen.paymentChoice(source, false);
+        SimpleAssert.that(selected.intent().getBoolean("voucherRequested")
+            && !plain.intent().getBoolean("voucherRequested") && !original.hasKey("voucherRequested")
+            && !source.intent().hasKey("voucherRequested")
+            && selected.lockGeneration() == source.lockGeneration()
+            && selected.intent().getInteger("placementX") == 17,
+            "a local voucher choice is explicit and preserves exact frozen source/placement without mutating either");
+        SimpleAssert.that(HologramLibraryMaterialReviewScreen.paymentChoice(null, true) == null,
+            "expired local tickets cannot create a new payment intent");
     }
 
     private static void detachedBackpackEstimate() {
@@ -459,8 +476,8 @@ public final class HologramMaterialReviewRegression {
                 .collect(java.util.stream.Collectors.toList());
             SimpleAssert.that(
                 controls.keySet()
-                    .equals(new java.util.HashSet<>(java.util.Arrays.asList(247, 54, 55))) && buttons.size() == 3,
-                "local review retains only Refresh/Back/Submit with their existing ids, no AE/quote controls");
+                    .equals(new java.util.HashSet<>(java.util.Arrays.asList(162, 245, 247, 54, 55))) && buttons.size() == 5,
+                "one local review tree retains shared voucher/order control ids with unavailable capabilities disabled");
             SimpleAssert.that(
                 dialog.consumeKey(org.lwjgl.input.Keyboard.KEY_RETURN) && actions.isEmpty(),
                 "Enter still does not act on a local estimate");
