@@ -895,6 +895,7 @@ final class HologramLibraryClient {
         work(() -> {
             NBTTagList labels = new NBTTagList();
             java.util.List<HologramClientLibrary.Entry> entries = store.list();
+            java.util.Set<String> nativePairs = store.availableNativePairs(entries);
             try {
                 entries.addAll(store.listLegacy());
             } catch (java.io.IOException | RuntimeException unavailable) {
@@ -916,7 +917,14 @@ final class HologramLibraryClient {
                 row.setInteger("schema", 2);
                 row.setLong("bytes", entry.bytes);
                 row.setBoolean("nativeFile", entry.nativeFile);
+                row.setBoolean("nativePairAvailable", nativePairs.contains(entry.id));
                 row.setBoolean("convertiblePair", entry.convertiblePair);
+                String id = entry.id;
+                if (id.startsWith("legacy:")) {
+                    String logical = com.miaokatze.gtmb.hologram.gtnb.LegacyBlueprintMirror
+                        .logicalId(id.substring("legacy:".length()));
+                    if (nativePairs.contains(logical)) row.setString("nativeCounterpart", logical);
+                }
                 row.setBoolean("mine", !entry.id.startsWith("legacy:"));
                 labels.appendTag(row);
             }
@@ -1124,6 +1132,24 @@ final class HologramLibraryClient {
 
     NBTTagList rows(boolean publicLibrary) {
         return publicLibrary ? server : local;
+    }
+
+    /**
+     * The captured gallery row can outlive a refresh. Resolve by stable local ID, never by title,
+     * and choose only a native pair seen in the latest worker-built snapshot.
+     */
+    NBTTagCompound availableNativeRow(String displayedId) {
+        String logical = displayedId.startsWith("legacy:")
+            ? com.miaokatze.gtmb.hologram.gtnb.LegacyBlueprintMirror.logicalId(
+                displayedId.substring("legacy:".length()))
+            : displayedId;
+        if (logical.isEmpty()) return null;
+        for (int i = 0; i < local.tagCount(); i++) {
+            NBTTagCompound row = local.getCompoundTagAt(i);
+            if (logical.equals(row.getString("id")) && row.getBoolean("nativePairAvailable"))
+                return (NBTTagCompound) row.copy();
+        }
+        return null;
     }
 
     String selected(boolean publicLibrary) {

@@ -65,6 +65,62 @@ public final class NativeBlueprintSpatialView {
         int x=(int)(frame.minX+p%frame.sizeX),z=(int)(frame.minZ+p/frame.sizeX),el=d.ids[r];
         return new Point(x,y,z,ordinal,descriptor(el,definition.extraIdAt(x,y,z,el)));
     }
+    /** Forward work cursor. Keeps one bounded page, does not allocate per cell, and may pause between ticks. */
+    public Cursor cursor(){return new Cursor();}
+
+    public final class Cursor {
+        private final Iterator<Map.Entry<NativeBlueprintDefinition.Position,Integer>> overrides =
+            definition.overrides.entrySet().iterator();
+        private final int maxX = (int)((long)frame.minX + frame.sizeX - 1);
+        private Map.Entry<NativeBlueprintDefinition.Position,Integer> nextOverride;
+        private long overridePosition;
+        private Decoded decoded;
+        private int pageIndex=-1, runIndex;
+        private long position, end, defaultDescriptor, activeDescriptor;
+        private int rank, x, y, z;
+
+        private Cursor(){ loadOverride(); }
+        public boolean hasNext(){return rank < size();}
+        public int x(){return x;}
+        public int y(){return y;}
+        public int z(){return z;}
+        public long descriptor(){return activeDescriptor;}
+
+        private void loadOverride(){
+            nextOverride=overrides.hasNext()?overrides.next():null;
+            if(nextOverride!=null){
+                var key=nextOverride.getKey();
+                overridePosition=frame.position(key.x,key.z);
+            }
+        }
+
+        public void advance() throws IOException {
+            if(!hasNext())throw new NoSuchElementException();
+            if(position==end){
+                if(decoded==null||runIndex==decoded.ids.length){
+                    decoded=page(++pageIndex);
+                    y=pageYs[pageIndex];
+                    runIndex=0;
+                }
+                position=decoded.starts[runIndex];
+                end=position+decoded.ranks[runIndex+1]-decoded.ranks[runIndex];
+                int element=decoded.ids[runIndex++];
+                defaultDescriptor=NativeBlueprintSpatialView.descriptor(element,definition.defaults.getOrDefault(element,0));
+                x=(int)(frame.minX+position%frame.sizeX);
+                z=(int)(frame.minZ+position/frame.sizeX);
+            }else if(x==maxX){
+                x=frame.minX;z++;
+            }else x++;
+            activeDescriptor=defaultDescriptor;
+            if(nextOverride!=null&&nextOverride.getKey().y==y&&overridePosition==position){
+                activeDescriptor=NativeBlueprintSpatialView.descriptor(element(defaultDescriptor),nextOverride.getValue());
+                loadOverride();
+            }
+            position++;
+            rank++;
+        }
+    }
+
     public Point atPosition(int x,int y,int z)throws IOException{
         if(!frame.contains(x,y,z))return null;var l=definition.findLayer(y);if(l==null)return null;
         long p=frame.position(x,z);int lo=l.first,hi=l.first+l.pages-1;

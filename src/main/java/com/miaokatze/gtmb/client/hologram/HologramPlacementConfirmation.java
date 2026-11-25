@@ -3,6 +3,8 @@
 
 package com.miaokatze.gtmb.client.hologram;
 
+import static com.miaokatze.gtmb.client.hologram.HologramUiText.projectorOr;
+
 import java.math.BigDecimal;
 import java.math.BigInteger;
 
@@ -18,10 +20,10 @@ final class HologramPlacementConfirmation {
     static String localStructureReviewBlocker(HologramState state) {
         NBTTagCompound data = state.data;
         if (!data.getBoolean("localStandardController")) return "";
-        if (data.getBoolean("localStructureUnavailable") || !data.getBoolean("supported")) return "当前控制器没有可用于施工的原生结构。";
-        if (data.getBoolean("capturePending") || !data.getBoolean("projectionDataComplete")) return "正在采集结构，请稍候。";
-        if (data.getBoolean("localPlanPending")) return "施工计划正在更新，请稍候。";
-        if (state.cells.isEmpty()) return "当前控制器没有可用于施工的结构格。";
+        if (data.getBoolean("localStructureUnavailable") || !data.getBoolean("supported")) return projectorOr("stock.unavailable", "当前控制器没有可用于施工的原生结构。");
+        if (data.getBoolean("capturePending") || !data.getBoolean("projectionDataComplete")) return projectorOr("stock.reading_structure", "正在采集结构，请稍候。");
+        if (data.getBoolean("localPlanPending")) return projectorOr("stock.updating_plan", "施工计划正在更新，请稍候。");
+        if (state.cells.isEmpty()) return projectorOr("stock.no_structure_cells", "当前控制器没有可用于施工的结构格。");
         return "";
     }
 

@@ -127,7 +127,9 @@ final class HologramDeclaredNativeConstruction {
         interpretations = HologramDeclarationAdapters.generation();
         trigger = HologramSessionPolicy.trigger(session);
         for (Hatch edit : selection.hatches()) edits.put(edit.position(), edit);
-        stock = creative ? null : new HologramMaterials.Context(session.player, session.materialSettings, session.slot);
+        stock = new HologramMaterials.Context(session.player, session.materialSettings, session.slot);
+        // Retain the same source from funding to the scoped world transaction, not one discovery per cell.
+        if (selection.operation() == 0) session.materialContext = stock;
         demolition = selection.operation() == 2
             ? HologramDemolition.recoveryContext(session.player, session.slot, selection.destination()) : null;
     }

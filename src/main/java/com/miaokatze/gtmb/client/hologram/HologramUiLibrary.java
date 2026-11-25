@@ -535,7 +535,12 @@ final class HologramUiLibrary {
             ui.session.notice("请联系管理员处理旧格式公库蓝图；此操作不会修改服务器公库");
             return;
         }
-        if (requestConversion(nativeSelectedRow())) return;
+        NBTTagCompound selected = nativeSelectedRow();
+        if (!selected.getBoolean("nativeFile") && currentActivationRow((NBTTagCompound) selected.copy()).getBoolean("nativeFile")) {
+            ui.session.notice(projector("library.historical_native_help"));
+            return;
+        }
+        if (requestConversion(selected)) return;
         ui.session.notice(projector("library.convert_before_place"));
         if (ui.shell.built()) ui.shell.showLibraryMaintenance();
     }
@@ -554,6 +559,7 @@ final class HologramUiLibrary {
         if (publicLibrary) return projector("library.convert_private_only");
         NBTTagCompound row = nativeSelectedRow();
         if (row.getBoolean("nativeFile")) return projector("library.convert_already_native");
+        if (!row.getString("nativeCounterpart").isEmpty()) return projector("library.historical_native_help");
         if (!row.getString("id").isEmpty() && !row.getBoolean("convertiblePair"))
             return projector("library.convert_unpaired");
         return projector("library.convert_selected_help");
@@ -564,7 +570,22 @@ final class HologramUiLibrary {
     boolean conversionRequired(NBTTagCompound row) {
         String id = row.getString("id");
         return !ui.session.isTutorial() && !publicLibrary && (id.startsWith("local_") || id.startsWith("legacy:"))
-            && !row.getBoolean("nativeFile");
+            && !row.getBoolean("nativeFile") && row.getString("nativeCounterpart").isEmpty();
+    }
+
+    String libraryRowTitle(NBTTagCompound row) {
+        return row.getString("nativeCounterpart").isEmpty() ? row.getString("name")
+            : projector("library.historical_native_row", row.getString("name"));
+    }
+
+    private NBTTagCompound currentActivationRow(NBTTagCompound captured) {
+        if (publicLibrary || ui.session.isTutorial()) return captured;
+        String id = captured.getString("id");
+        if (id.isEmpty() || captured.getBoolean("nativeFile")) return captured;
+        NBTTagCompound nativeRow = HologramLibraryClient.INSTANCE.availableNativeRow(id);
+        if (nativeRow != null) return nativeRow;
+        captured.removeTag("nativeCounterpart"); // Never trust an alternate cached by a superseded listing.
+        return captured;
     }
 
     boolean conversionPromptOpen() { return conversionPrompt != null; }
@@ -588,6 +609,7 @@ final class HologramUiLibrary {
     }
 
     private boolean requestConversion(NBTTagCompound row) {
+        row = currentActivationRow(row);
         if (!conversionRequired(row)) return false;
         conversionPrompt = (NBTTagCompound) row.copy(); // freeze the clicked identity, not the writable name/search field
         return true; // do not select, open, parse or render a legacy source
@@ -1598,6 +1620,10 @@ final class HologramUiLibrary {
             ui.session.send(operation, request, true);
             return;
         }
+        if (!publicLibrary && target.startsWith("legacy:")) {
+            NBTTagCompound nativeRow = HologramLibraryClient.INSTANCE.availableNativeRow(target);
+            if (nativeRow != null) target = nativeRow.getString("id");
+        }
         if ("previewPreset".equals(operation)) {
             browsePreset(target, target.startsWith("public_"));
             return;
@@ -1662,7 +1688,10 @@ final class HologramUiLibrary {
         boolean rowSelection = id >= 14000 && id < 15000;
         if (rowSelection && !ui.session.editable()) return true;
         NBTTagCompound clickedRow = rowSelection ? visibleLibraryRow(id) : null;
-        if (!overwriteMode && rowSelection && requestConversion(clickedRow)) return true;
+        if (!overwriteMode && rowSelection) {
+            clickedRow = currentActivationRow(clickedRow);
+            if (requestConversion(clickedRow)) return true;
+        }
         if (!overwriteMode && (id == 139 || id == 141) && requestConversion(nativeSelectedRow())) return true;
         if (rowSelection && (clickedRow.getString("id")
             .isEmpty() || !this.overwriteMode && currentEditablePreset(clickedRow.getString("id")))) return true;

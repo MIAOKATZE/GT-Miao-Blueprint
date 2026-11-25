@@ -495,6 +495,10 @@ final class HologramStockNativeEntry {
             target.channels = intent.declaration.channelTag();
             target.mode = intent.declaration.operation();
             target.materialSettings = submission.sources();
+            if (submission.creative) {
+                // The private execution view is free; the held-tool settings remain confirmation authority.
+                target.materialSettings.main = target.materialSettings.containers = target.materialSettings.me = false;
+            }
             var job = new HologramDeclaredNativeConstruction(endpoint, gate, lease, target, intent.declaration,
                 submission.creative, () -> submission.current() && prior.unchanged());
             var owned = new HologramStockNativeEntry(submission, prior, target, null, null, job);

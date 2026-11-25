@@ -16,46 +16,49 @@ final class HologramPlacementLoadingScreen extends HologramMuiScreen {
 
     private final HologramOwnedPlacementProgress.Ticket owned;
 
-    HologramPlacementLoadingScreen() {
-        this(null);
-    }
 
     HologramPlacementLoadingScreen(HologramOwnedPlacementProgress.Ticket owned) {
         super("placement_validation", 430, 164);
-        this.owned = owned;
+        this.owned = java.util.Objects.requireNonNull(owned);
     }
 
     @Override
     protected boolean muiKey(char character, int key) {
         if (key != Keyboard.KEY_ESCAPE) return false;
-        if(owned==null)return false;
-        else if (!HologramBackgroundTasks.cancelOwnedPlacement(owned)) HologramBackgroundTasks.leaveOwnedPlacement(owned);
+        if (!HologramBackgroundTasks.cancelOwnedPlacement(owned)) HologramBackgroundTasks.leaveOwnedPlacement(owned);
         Minecraft.getMinecraft()
             .displayGuiScreen(null);
         return true;
     }
 
+    private String placementStatus() {
+        String result = HologramBackgroundTasks.ownedPlacementResult(owned);
+        if (!result.isEmpty()) return result;
+        String progress = HologramBackgroundTasks.ownedPlacementStatus(owned);
+        return progress.isEmpty() ? HologramUiText.projector("library.placement_status_unavailable") : progress;
+    }
+
     @Override
     protected void buildPanel() {
-        HologramMuiTheme.header(panel(), () -> "蓝图放置 · 正在核对", 430);
+        HologramMuiTheme.header(panel(), () -> HologramUiText.projector("library.placement_title"), 430);
         panel().child(
             HologramMuiTheme
                 .label(
-                    () -> owned == null ? HologramLibraryClient.INSTANCE.status()
-                        : HologramBackgroundTasks.ownedPlacementStatus(owned),
+                    this::placementStatus,
                     14, 42, 402, 32, HologramMuiTheme.TEXT));
         panel().child(
             new Progress().pos(14, 82)
                 .size(402, 38));
         panel().child(
             HologramMuiTheme.button(
-                () -> "返回世界，后台继续",
+                () -> HologramUiText.projector(HologramBackgroundTasks.ownedPlacementContinuing(owned)
+                    ? "library.placement_background" : "library.placement_return"),
                 112,
                 128,
                 206,
                 20,
                 () -> {
-                    if (owned != null) HologramBackgroundTasks.leaveOwnedPlacement(owned);
+                    HologramBackgroundTasks.leaveOwnedPlacement(owned);
                     Minecraft.getMinecraft().displayGuiScreen(null);
                 }));
     }
@@ -64,8 +67,7 @@ final class HologramPlacementLoadingScreen extends HologramMuiScreen {
 
         @Override
         public void draw(ModularGuiContext context, WidgetThemeEntry<?> theme) {
-            HologramProgress progress = owned == null ? HologramBackgroundTasks.progress()
-                : HologramBackgroundTasks.ownedPlacementView(owned);
+            HologramProgress progress = HologramBackgroundTasks.ownedPlacementView(owned);
             if (progress == null) return;
             HologramProgressView.draw(Minecraft.getMinecraft().fontRenderer, progress, 0, 0, 402, 7, false);
             Minecraft.getMinecraft().fontRenderer
