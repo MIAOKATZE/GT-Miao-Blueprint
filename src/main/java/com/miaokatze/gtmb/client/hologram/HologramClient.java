@@ -243,11 +243,8 @@ public final class HologramClient {
                     HologramLibraryClient.INSTANCE.projectedPlacementProgress(nbt);
                     return;
                 }
-                if ("nativePlacement".equals(nbt.getString("scope"))) {
-                    if (minecraft.currentScreen instanceof HologramScreen screen)
-                        screen.receiveNativePlacementProgress(nbt);
-                    return;
-                }
+                // The modern native short command has its own typed receipts. No legacy progress owns a local view.
+                if ("nativePlacement".equals(nbt.getString("scope"))) return;
                 HologramClientProgress.receive(nbt);
                 if ("rejected".equals(nbt.getString("outcome")) && pendingPositionLock.rejected(nbt))
                     positionLockNotice(
@@ -283,8 +280,6 @@ public final class HologramClient {
             minecraft.func_152344_a(() -> {
                 if (connection != minecraft.getNetHandler()) return;
                 if (world == null || world != minecraft.theWorld) return;
-                if (minecraft.currentScreen instanceof HologramScreen screen && screen.receiveLocalMaterialCheck(nbt))
-                    return;
                 receive(nbt);
             });
         });
@@ -2346,10 +2341,7 @@ public final class HologramClient {
         Minecraft mc = Minecraft.getMinecraft();
         snapshotWorld = mc.theWorld;
         if (HologramBackgroundTasks.detached()) return;
-        if (mc.currentScreen instanceof HologramScreen screen && screen.localWorkspaceView()) {
-            screen.acceptsLocalExecution(next);
-            return;
-        }
+        if (mc.currentScreen instanceof HologramScreen screen && screen.localWorkspaceView()) return;
         if (rootCloseFence
             .suppress(next.session, nbt.getLong("uiSequence"), nbt.getBoolean("open"), nbt.getBoolean("areaImporting")))
             return;

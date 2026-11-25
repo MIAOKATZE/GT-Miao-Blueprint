@@ -256,16 +256,35 @@ public final class HologramBlueprintFiles {
         return target(directory, id, json, null);
     }
 
+    /** Client-owned pair identity; large files use an exact-byte filename digest, never an expanded semantic hash. */
+    public static synchronized Path targetLocal(Path directory, String id, byte[] json) throws IOException {
+        return target(directory, id, json, null, true);
+    }
+
     private static synchronized Path target(Path directory, String id, byte[] json, Path upgradeSource)
+        throws IOException {
+        return target(directory, id, json, upgradeSource, false);
+    }
+
+    private static synchronized Path target(Path directory, String id, byte[] json, Path upgradeSource, boolean local)
         throws IOException {
         validId(id);
         Path root = directory.toAbsolutePath()
             .normalize();
-        JsonObject document = HologramBlueprintCompactCodec.parse(json);
+        JsonObject document;
+        boolean exactLocalIdentity = false;
+        try {
+            document = HologramBlueprintCompactCodec.parse(json);
+        } catch (IOException strictBudget) {
+            if (!local) throw strictBudget;
+            document = HologramBlueprintCompactCodec.localMetadata(json);
+            exactLocalIdentity = true;
+        }
         JsonObject blueprint = document.has("blueprint") ? document.getAsJsonObject("blueprint") : document;
         String name = blueprint.has("name") ? blueprint.get("name")
             .getAsString() : "蓝图";
-        String hash = HologramBlueprintContentHash.ofExpandedTarget(blueprint);
+        String hash = exactLocalIdentity
+            ? HologramBlueprintArtifact.hash(json) : HologramBlueprintContentHash.ofExpandedTarget(blueprint);
         String stem = safeName(name) + "_" + hash;
         Path target = child(root, stem + ".json");
         Properties index = index(root);
@@ -338,7 +357,7 @@ public final class HologramBlueprintFiles {
         if (upgradeSource != null && previous != null && !old.equals(child(root, previous)))
             throw new IOException("升级期间蓝图映射已变更");
         String oldJsonHash = upgradeSource != null ? sourceJsonHash
-            : old.equals(target) ? null : memberHashOrAbsent(old, HologramBlueprintArtifact.MAX_JSON_BYTES);
+            : old.equals(target) ? null : memberHashOrAbsent(old, HologramBlueprintLimits.LOCAL_FILE_BYTES);
         String oldPngHash = upgradeSource != null ? (detachedPng == null ? sourcePngHash : null)
             : old.equals(target) ? null
                 : memberHashOrAbsent(
@@ -370,7 +389,7 @@ public final class HologramBlueprintFiles {
                     if (!member.equals(index(root).getProperty(id))) throw new IOException("蓝图映射已由较新的保存替换，保留旧文件");
                 }
                 if (!java.util.Objects
-                    .equals(oldJsonHash, memberHashOrAbsent(old, HologramBlueprintArtifact.MAX_JSON_BYTES))
+                    .equals(oldJsonHash, memberHashOrAbsent(old, HologramBlueprintLimits.LOCAL_FILE_BYTES))
                     || !java.util.Objects.equals(
                         oldPngHash,
                         memberHashOrAbsent(
@@ -693,8 +712,8 @@ public final class HologramBlueprintFiles {
                     if (key.matches("local_[a-fA-F0-9-]{36}") && name.equals(mappings.getProperty(key))) known = true;
                 if (known) continue;
                 try {
-                    HologramBlueprintArtifact.Artifact pair = HologramBlueprintArtifact.readPair(file);
-                    adopt(root, file, HologramBlueprintCompactCodec.parse(pair.json));
+                    HologramBlueprintArtifact.Artifact pair = HologramBlueprintArtifact.readLocalPair(file);
+                    adopt(root, file, HologramBlueprintCompactCodec.localMetadata(pair.json));
                     mappings = index(root);
                 } catch (IOException | RuntimeException invalid) {
                     // Displaying the library cannot rewrite or remove an invalid transferred pair.

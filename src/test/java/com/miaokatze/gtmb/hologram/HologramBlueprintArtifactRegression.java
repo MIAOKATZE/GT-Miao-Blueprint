@@ -316,7 +316,7 @@ public final class HologramBlueprintArtifactRegression {
             Files.write(file, bound);
             localError(file, "Blueprint artifact member exceeds byte limit", "mandatory PNG enforces disk limit");
             try (RandomAccessFile large = new RandomAccessFile(file.toFile(), "rw")) {
-                large.setLength(1L + HologramBlueprintArtifact.MAX_JSON_BYTES);
+                large.setLength(1L + HologramBlueprintLimits.LOCAL_FILE_BYTES);
             }
             localError(file, "Blueprint artifact member exceeds byte limit", "local JSON enforces disk limit");
         } finally {

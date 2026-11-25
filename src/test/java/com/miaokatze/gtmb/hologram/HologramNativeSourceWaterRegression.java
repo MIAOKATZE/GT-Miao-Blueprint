@@ -5,8 +5,6 @@ package com.miaokatze.gtmb.hologram;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.util.Collections;
-import java.util.UUID;
 
 import net.minecraft.block.Block;
 import net.minecraft.init.Blocks;
@@ -26,8 +24,6 @@ import gregtech.common.tileentities.machines.multi.steam.MTESteamWasher;
 
 final class HologramNativeSourceWaterRegression {
 
-    private static final int[] ANCHOR = { 10, 64, 20 };
-
     private HologramNativeSourceWaterRegression() {}
 
     static void run() {
@@ -37,10 +33,6 @@ final class HologramNativeSourceWaterRegression {
             editableRoundTrip();
         } catch (IOException failure) {
             throw new AssertionError("native generated water fixture", failure);
-        } catch (InterruptedException failure) {
-            Thread.currentThread()
-                .interrupt();
-            throw new AssertionError("native generated water fixture interrupted", failure);
         }
     }
 
@@ -84,77 +76,25 @@ final class HologramNativeSourceWaterRegression {
             "only stationary source metadata is valid");
     }
 
-    private static void placementAndMaterialQuote() throws IOException, InterruptedException {
-        UUID id = UUID.randomUUID();
-        // The actual world observation can be solid. This plan must never touch that slot.
+    private static void placementAndMaterialQuote() {
         HologramControllerTarget.Cell captured = waterTarget(
-            Blocks.stone,
-            HologramControllerTarget.TargetKind.MACHINE_SOURCE_WATER);
-        NBTTagCompound water = captured.tag(), stone = new NBTTagCompound();
-        stone.setInteger("x", 12);
-        stone.setInteger("y", 64);
-        stone.setInteger("z", 20);
-        stone.setString("wantId", "minecraft:stone");
-        stone.setTag("targetStack", new ItemStack(Blocks.stone).writeToNBT(new NBTTagCompound()));
-        NBTTagCompound state = snapshot(water, stone);
-        state.setBoolean("supported", true);
-        var plan = HologramProjectedPlacement
-            .compileDisplayed(state, ANCHOR, 256, () -> true, index -> index == 0 ? captured : null);
-        SimpleAssert.eq(
-            1,
-            plan.cells()
-                .size(),
-            "the solid-obstructed generated slot never enters the placement plan");
-        SimpleAssert.eq(
-            "minecraft:stone",
-            plan.cells()
-                .get(0)
-                .block(),
-            "unrelated shell placement remains ordinary");
-        SimpleAssert.eq(
-            2,
-            plan.cells()
-                .get(0)
-                .x(),
-            "only the casing coordinate is transmitted");
-        SimpleAssert.eq(
-            1,
-            plan.needs()
-                .size(),
-            "no material for generated water");
-        SimpleAssert.eq(
-            "minecraft:stone",
-            plan.needs()
-                .get(0)
-                .item(),
-            "no bucket or fluid amount in the quote");
-        NBTTagCompound wire = HologramPlacementRequest.encode(id, ANCHOR, plan, state);
-        var decoded = HologramPlacementRequest.decode(HologramPlacementRequest.header(wire), wire, 256);
-        SimpleAssert.eq(1, decoded.size(), "the server wire contains only the casing operation");
-        var standalone = HologramPlacementRequest
-            .materialCheck(HologramPlacementRequest.encodeMaterialCheck(id, state));
-        SimpleAssert.eq(
-            Collections.singletonMap(new HologramPlacementRequest.Material("minecraft:stone", 0), 1),
-            standalone,
-            "the ordinary material-only quote also has no water");
-        requireRejection(() -> HologramProjectedPlacement.compileDisplayed(state, ANCHOR, 256, () -> true));
-        requireRejection(
-            () -> HologramProjectedPlacement.compileDisplayed(
-                state,
-                ANCHOR,
-                256,
-                () -> true,
-                index -> waterTarget(Blocks.water, HologramControllerTarget.TargetKind.MATERIAL)));
-        requireRejection(
-            () -> HologramProjectedPlacement
-                .compileDisplayed(state, new int[] { 9, 64, 20 }, 256, () -> true, index -> captured));
-        water.setInteger("y", 256);
-        requireRejection(
-            () -> HologramProjectedPlacement.compileDisplayed(state, ANCHOR, 256, () -> true, index -> captured));
-        water.setInteger("y", 64);
-        water.setString("wantId", "minecraft:flowing_water");
-        requireRejection(
-            () -> HologramProjectedPlacement.compileDisplayed(state, ANCHOR, 256, () -> true, index -> captured));
+            Blocks.stone, HologramControllerTarget.TargetKind.MACHINE_SOURCE_WATER);
+        NBTTagCompound row = captured.tag();
+        SimpleAssert.that(HologramNativeSourceWater.matches(captured, row),
+            "typed native source-water proof retains an occupied generated position without demanding an item");
+        SimpleAssert.that(captured.targetStack() == null, "native generated water never mints a bucket or item");
+        SimpleAssert.that(!HologramNativeSourceWater.matches(null, row),
+            "a presentation tag alone cannot authorize generated water");
+        SimpleAssert.that(!HologramNativeSourceWater.matches(
+            waterTarget(Blocks.water, HologramControllerTarget.TargetKind.MATERIAL), row),
+            "an ordinary target with water appearance does not acquire a source exemption");
+        row.setInteger("x", row.getInteger("x") + 1);
+        SimpleAssert.that(!HologramNativeSourceWater.matches(captured, row),
+            "typed source proof is bound to the exact position");
+        row = captured.tag();
+        row.setString("wantId", "minecraft:flowing_water");
+        SimpleAssert.that(!HologramNativeSourceWater.matches(captured, row),
+            "flowing water does not acquire an automatic-generation exemption");
     }
 
     private static void editableRoundTrip() throws IOException {
@@ -176,7 +116,6 @@ final class HologramNativeSourceWaterRegression {
             + "{\"x\":2,\"y\":0,\"z\":0,\"block\":\"minecraft:water\",\"metadata\":0,\"nativeSourceWaterPreview\":true},"
             + "{\"x\":3,\"y\":0,\"z\":0,\"block\":\"minecraft:stone\",\"item\":\"minecraft:stone\",\"metadata\":0}]}}")
                 .getBytes(StandardCharsets.UTF_8);
-        requireRejection(() -> HologramProjectedPlacement.compile(incoming, ANCHOR, new int[0], 256, () -> true));
         var document = HologramLocalBlueprintDocument.open(incoming, "");
         var rows = document.snapshot()
             .getTagList("cells", 10);
@@ -217,13 +156,6 @@ final class HologramNativeSourceWaterRegression {
                 .getCompoundTagAt(0)
                 .getString("wantId"),
             "the unaffected casing survives save and reopen");
-        var plan = HologramProjectedPlacement
-            .compile(HologramBlueprintCompactCodec.portableDocument(saved), ANCHOR, new int[0], 256, () -> true);
-        SimpleAssert.eq(
-            1,
-            plan.cells()
-                .size(),
-            "the old-file workaround still compiles the unaffected casing");
     }
 
     private static HologramControllerTarget.Cell waterTarget(Block actual, HologramControllerTarget.TargetKind kind) {
@@ -270,18 +202,4 @@ final class HologramNativeSourceWaterRegression {
         return result;
     }
 
-    private static void requireRejection(Checked operation) throws IOException {
-        try {
-            operation.run();
-        } catch (IOException expected) {
-            return;
-        }
-        throw new AssertionError("Unproven or out-of-world water was accepted for placement");
-    }
-
-    @FunctionalInterface
-    private interface Checked {
-
-        void run() throws IOException;
-    }
 }

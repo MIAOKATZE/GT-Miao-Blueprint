@@ -33,6 +33,7 @@ final class HologramSnapshotMetadataSource {
     private final HologramSnapshotDataContext dataContext;
     private final HologramPresets.Preset original;
     private final boolean project;
+    private final CurrentPlacementRow currentPlacement;
     private final boolean draftOnly;
     private final boolean publishSource;
     final HologramPresets.Preset result = new HologramPresets.Preset();
@@ -43,14 +44,22 @@ final class HologramSnapshotMetadataSource {
     private Iterator<? extends Map.Entry<String, String>> map;
     private Iterator<HologramArea.Structure> areaStructures;
 
-    HologramSnapshotMetadataSource(HologramSession s, HologramSnapshotDataContext dataContext) {
-        this(s, dataContext, false);
+    @FunctionalInterface
+    interface CurrentPlacementRow {
+
+        void prepare(HologramPresets.Preset draft, int index, HologramPresets.Cell cell) throws IOException;
     }
 
-    HologramSnapshotMetadataSource(HologramSession s, HologramSnapshotDataContext dataContext, boolean currentCapture) {
+    HologramSnapshotMetadataSource(HologramSession s, HologramSnapshotDataContext dataContext) {
+        this(s, dataContext, null);
+    }
+
+    HologramSnapshotMetadataSource(HologramSession s, HologramSnapshotDataContext dataContext,
+        CurrentPlacementRow currentPlacement) {
         this.s = s;
         this.dataContext = dataContext;
-        project = currentCapture || s.processingSource == null;
+        this.currentPlacement = currentPlacement;
+        project = currentPlacement != null || s.processingSource == null;
         draftOnly = s.localPlanPending && !s.localPlanError.isEmpty();
         publishSource = project || draftOnly;
         original = project ? s.virtualPreset : s.processingSource;
@@ -138,6 +147,7 @@ final class HologramSnapshotMetadataSource {
                         if (authoring != null) cell.facing = HologramBlockIdentity.front(
                             s.facingPins.getOrDefault(HologramValues.position(authoring), authoring.actualFacing));
                     }
+                    if (currentPlacement != null) currentPlacement.prepare(result, cursor - 1, cell);
                     freezeBlock(cell, dataContext);
                     if (hasPayload(cell.tileNbt) || hasPayload(cell.itemNbt))
                         payloadCells.put(cell.x + "," + cell.y + "," + cell.z, cell);

@@ -92,7 +92,7 @@ final class HologramBusyReplies {
                         || "checkPlacementMaterials".equals(proof.getString("action")))
                     && proof.getString("placementRequestId")
                         .length() == 36) {
-                            HologramProjectedPlacementService
+                            HologramConstructionReceipts
                                 .reply(player, proof.getString("placementRequestId"), false, "服务器请求繁忙，请稍后重试");
                         } else {
                             proof.setString("scope", kind == Kind.CUT ? "cut" : "server");

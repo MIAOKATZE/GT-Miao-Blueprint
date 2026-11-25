@@ -113,14 +113,14 @@ public final class HologramStockEbfConstructionRegression {
             SimpleAssert.that(job.owns(HologramWorkspace.find(endpoint.actor)) && world.writes().isEmpty()
                 && !job.stop(endpoint, request(3)), "same owner gate privately reserves only the exact EBF request; wrong STOP inert");
             var firstCasing = coordinate(controller, facing, -1, -3, 0);
-            SimpleAssert.eq(State.ACTIVE, job.tick(Long.MAX_VALUE, 32, 1), "real first permit commits only one casing");
+            SimpleAssert.eq(State.ACTIVE, tickPrefix(job, 1), "real first permit commits only one casing");
             SimpleAssert.that(job.placed() == 1 && world.writes().size() == 1
                 && world.getBlock(firstCasing[0], firstCasing[1], firstCasing[2]) == GregTechAPI.sBlockCasings1
                 && world.getBlockMetadata(firstCasing[0], firstCasing[1], firstCasing[2]) == 11
                 && main[1].stackSize == 11 && main[2].stackSize == 16,
                 "sealed source order gives the first native heatproof world write and one exact debit");
             var firstCoil = coordinate(controller, facing, -1, -2, 0);
-            for (int i = 0; i < 12 && main[2].stackSize == 16; i++) job.tick(Long.MAX_VALUE, 32, 1);
+            for (int i = 0; i < 12 && main[2].stackSize == 16; i++) tickPrefix(job, 1);
             SimpleAssert.that(world.getBlock(firstCoil[0], firstCoil[1], firstCoil[2]) == GregTechAPI.sBlockCasings5
                 && world.getBlockMetadata(firstCoil[0], firstCoil[1], firstCoil[2]) == 9 && main[2].stackSize == 15,
                 "real stock coil setter uses selected LuV meta and deducts one coil, never another stock");
@@ -128,7 +128,7 @@ public final class HologramStockEbfConstructionRegression {
             int casingPrefix = 12 - main[1].stackSize;
             int coilPrefix = 16 - main[2].stackSize;
             int previousWrites = world.writes().size();
-            SimpleAssert.that(job.stop(endpoint, firstRequest) && job.tick(Long.MAX_VALUE, 32, 8) == State.STOPPED
+            SimpleAssert.that(job.stop(endpoint, firstRequest) && job.tick(Long.MAX_VALUE) == State.STOPPED
                 && gate.query(endpoint.constructionScope, firstRequest).outcome.committedTransactions == prefix
                 && world.writes().size() == previousWrites && HologramWorkspace.find(endpoint.actor) == null,
                 "exact owner STOP retires the job, retains only the committed prefix, and prevents another permit");
@@ -162,7 +162,7 @@ public final class HologramStockEbfConstructionRegression {
                 }
             });
             try {
-                SimpleAssert.eq(State.STOPPED, rolledBack.tick(Long.MAX_VALUE, 32, 1),
+                SimpleAssert.eq(State.STOPPED, tickPrefix(rolledBack, 1),
                     "late mixed coil causes rollback and no new permits");
             } finally {
                 unsafe.putObjectVolatile(eventBase, eventOffset, previousBus);
@@ -176,16 +176,43 @@ public final class HologramStockEbfConstructionRegression {
             world.setBlock(otherCoil[0], otherCoil[1], otherCoil[2], Blocks.air, 0, 3);
 
             var finalRequest = request(5);
-            var complete = HologramStockNativeEntry.begin(
-                typed(endpoint, controller, facing, id, finalRequest, configuration));
-            State state = State.ACTIVE;
-            for (int i = 0; i < 16 && state == State.ACTIVE; i++) state = complete.tick(Long.MAX_VALUE, 32, 8);
-            SimpleAssert.that(state == State.COMPLETE && prefix + complete.placed() == 28
+            var declaration = confirmation(endpoint, controller, facing, id, finalRequest, configuration);
+            var observed = HologramStockNativeWire.observedEbfHatches(world, controller);
+            SimpleAssert.that(observed.size() == 5 && observed.containsAll(declaration.ebfHatches()),
+                "formal client profile observes exactly the five configured physical hatches");
+            var replies = new ArrayList<HologramStockNativeWire.Reply>();
+            var server = new HologramStockNativeServer((origin, reply) -> {
+                SimpleAssert.that(origin == endpoint, "only the authenticated origin receives the construction receipt");
+                var roundTrip = HologramStockNativeWire.readReply(HologramStockNativeWire.writeReply(reply));
+                SimpleAssert.that(reply.equals(roundTrip), "v2 wire decodes the complete EBF progress range");
+                replies.add(roundTrip);
+            });
+            var probe = HologramStockNativeWire.probe(declaration.forGeneration(0));
+            var malformed = (NBTTagCompound) probe.copy();
+            int[] duplicate = malformed.getIntArray("installedHatches");
+            System.arraycopy(duplicate, 0, duplicate, 5, 5);
+            malformed.setIntArray("installedHatches", duplicate);
+            SimpleAssert.that(HologramStockNativeWire.readRequest(malformed) == null,
+                "duplicate physical hatches are refused before any native command enters the server queue");
+            int writesBeforeProof = world.writes().size();
+            SimpleAssert.that(server.enqueue(endpoint, HologramStockNativeWire.readRequest(probe)),
+                "formal EBF capability probe is queued");
+            server.tick(Long.MAX_VALUE);
+            SimpleAssert.that(replies.stream().anyMatch(reply -> reply.key().equals(declaration.key())
+                && reply.phase() == HologramStockNativeWire.Phase.CAPABLE && reply.placed() == 0)
+                && world.writes().size() == writesBeforeProof && main[1].stackSize == 12 && main[2].stackSize == 16,
+                "proof is read-only; it preserves both materials and world state");
+            SimpleAssert.that(server.enqueue(endpoint, HologramStockNativeWire.readRequest(
+                HologramStockNativeWire.confirmAfterProbe(declaration))), "exact EBF confirmation is queued");
+            server.tick(Long.MAX_VALUE);
+            var complete = replies.stream().filter(reply -> reply.key().equals(declaration.key())
+                && reply.phase() == HologramStockNativeWire.Phase.COMPLETE).findFirst().orElseThrow(() -> new AssertionError("No EBF completion receipt: " + replies));
+            SimpleAssert.that(prefix + complete.placed() == 28
                 && casingPrefix + 12 - (main[1] == null ? 0 : main[1].stackSize) == 12
                 && coilPrefix + 16 - (main[2] == null ? 0 : main[2].stackSize) == 16
                 && gate.query(endpoint.constructionScope, finalRequest).outcome.committedTransactions == complete.placed()
                 && HologramWorkspace.find(endpoint.actor) == null && !HologramConstructionJournal.pending(player),
-                "new deliberate request completes exactly the remaining shell, all 28 debits and no stray journal");
+                "production short-command server queue completes remaining EBF work in one drain with exact debits");
             var lastCoilRead = coordinate(controller, facing, 1, -1, 2);
             var changedCoil = coordinate(controller, facing, -1, -2, 0);
             verifyLateRawReentry(unsafe, world, controller, facing, endpoint, id, configuration, request(6), firstCasing,
@@ -274,7 +301,7 @@ public final class HologramStockEbfConstructionRegression {
         });
         try {
             SimpleAssert.eq(contestedCandidate ? State.RECOVERY_PENDING : State.STOPPED,
-                owned.tick(Long.MAX_VALUE, 32, 1),
+                tickPrefix(owned, 1),
                 "late change after the full virtual dependency read is settled only with exact ownership");
         } finally {
             unsafe.putObjectVolatile(base, offset, previous);
@@ -324,7 +351,7 @@ public final class HologramStockEbfConstructionRegression {
             }
         });
         try {
-            SimpleAssert.eq(State.STOPPED, owned.tick(Long.MAX_VALUE, 32, 1), "Forge veto stops exact EBF without debit");
+            SimpleAssert.eq(State.STOPPED, tickPrefix(owned, 1), "Forge veto stops exact EBF without debit");
         } finally {
             world.forbidVirtualCandidate = null;
             unsafe.putObjectVolatile(base, offset, previous);
@@ -365,11 +392,27 @@ public final class HologramStockEbfConstructionRegression {
     private static HologramStockNativeEntry.Submission typed(HologramWorkspace.ActionEndpoint endpoint,
         BaseMetaTileEntity controller, ExtendedFacing facing, String tool, HologramConstructionTaskGate.Request request,
         HologramStockNativeEntry.EbfConfig configuration) {
-        var submitted = HologramStockNativeEntry.ebfIngress(endpoint, request, endpoint.constructionScope.generation,
-            controller.xCoord, controller.yCoord, controller.zCoord, 2, 0, facing.ordinal(), 1, false, false,
-            configuration, tool);
-        SimpleAssert.that(submitted != null, "closed EBF request admits current typed #1000 intent");
+        var confirmation = confirmation(endpoint, controller, facing, tool, request, configuration);
+        var encoded = HologramStockNativeWire.confirm(confirmation);
+        var decoded = HologramStockNativeWire.readRequest(encoded);
+        SimpleAssert.that(decoded != null && confirmation.equals(decoded.confirmation()) && !encoded.hasKey("cells"),
+            "official stock native codec round trips exact EBF hatches and coil without geometry");
+        var submitted = HologramStockNativeEntry.ingress(endpoint, decoded.confirmation().intent(), tool);
+        SimpleAssert.that(submitted != null, "production EBF wire admits the current typed #1000 intent");
         return submitted;
+    }
+
+    private static HologramStockNativeWire.Confirmation confirmation(HologramWorkspace.ActionEndpoint endpoint,
+        BaseMetaTileEntity controller, ExtendedFacing facing, String tool, HologramConstructionTaskGate.Request request,
+        HologramStockNativeEntry.EbfConfig configuration) {
+        var hatches = new ArrayList<HologramStockNativeWire.EbfHatch>();
+        for (var hatch : configuration.installed())
+            hatches.add(new HologramStockNativeWire.EbfHatch(hatch.a(), hatch.b(), hatch.c(), hatch.id(), hatch.facing()));
+        return HologramStockNativeWire.Confirmation.ebf(
+            new HologramStockNativeWire.Key(request.id, request.sequence, endpoint.constructionScope.generation),
+            endpoint.player.dimension, UUID.fromString(tool), controller.xCoord, controller.yCoord, controller.zCoord,
+            2, 0, facing.ordinal(), 1, false, false, 0, configuration.coil(), hatches);
+
     }
 
     private static HologramConstructionTaskGate.Request request(long sequence) {
@@ -517,5 +560,12 @@ public final class HologramStockEbfConstructionRegression {
 
         @Override
         public void playSoundEffect(double x, double y, double z, String sound, float volume, float pitch) {}
+    }
+
+    /** Test-only interposition for cancellation/rollback at a committed prefix, not a production speed limit. */
+    private static HologramStockNativeConstruction.State tickPrefix(HologramStockNativeEntry entry, int count) {
+        int stopAt = entry.placed() + count;
+        return entry.tick(Long.MAX_VALUE,
+            (gate, lease) -> entry.placed() >= stopAt ? null : gate.beginTransaction(lease));
     }
 }

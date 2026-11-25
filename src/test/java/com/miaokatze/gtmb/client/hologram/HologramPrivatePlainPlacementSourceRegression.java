@@ -67,9 +67,12 @@ public final class HologramPrivatePlainPlacementSourceRegression {
             var pose = new HologramPreviewPose();
             for (int turn : recipe) pose = pose.turn(turn == 1);
             List<String> expected = new ArrayList<>();
+            int[] expectedHeights = new int[256];
             for (int[] item : COORDINATES) {
                 int[] position = pose.apply(item[0], item[1], item[2]);
-                expected.add(key(position[0] + ANCHOR[0], position[1] + ANCHOR[1], position[2] + ANCHOR[2]));
+                int worldY = position[1] + ANCHOR[1];
+                expectedHeights[worldY]++;
+                expected.add(key(position[0] + ANCHOR[0], worldY, position[2] + ANCHOR[2]));
             }
             Collections.sort(expected);
             SimpleAssert.eq(expected, walk(source, false),
@@ -77,7 +80,10 @@ public final class HologramPrivatePlainPlacementSourceRegression {
             Collections.reverse(expected);
             SimpleAssert.eq(expected, walk(source, true),
                 "reverse traversal yields identical cells across negative regions and skipped empty chunks");
-            SimpleAssert.eq(source.cells(), source.count(Plain.STONE), "exact certified palette counts");
+            SimpleAssert.eq(source.cells(), evidence.count(Plain.STONE), "exact certified palette counts");
+            for (int y = 0; y < expectedHeights.length; y++)
+                SimpleAssert.eq(expectedHeights[y], source.layout().atY(y),
+                    "captured axis histogram maps to every world Y, including empty levels");
         }
         try {
             new HologramPrivatePlainPlacementSource(evidence, captured.clone(), regions, ANCHOR, new int[0], 256,

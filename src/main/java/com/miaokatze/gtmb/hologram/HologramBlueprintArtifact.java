@@ -91,11 +91,14 @@ public final class HologramBlueprintArtifact {
 
         private final Path oldJson, oldPng;
         private final PairWrite previousOwner;
+        private final int jsonLimit;
         private volatile Outcome outcome = Outcome.OPEN;
         private Completion accepted = () -> {}, rejected = () -> {};
         private String cleanupWarning = "";
 
-        private PairWrite(Path path, byte[] json, byte[] png, Path oldJson, Path oldPng, PairWrite previousOwner) {
+        private PairWrite(Path path, byte[] json, byte[] png, Path oldJson, Path oldPng, PairWrite previousOwner,
+            int jsonLimit) {
+            this.jsonLimit = jsonLimit;
             this.path = path;
             jsonSha256 = hash(json);
             pngSha256 = hash(png);
@@ -138,14 +141,14 @@ public final class HologramBlueprintArtifact {
                     throw new IOException("Pending blueprint write no longer owns the artifact pair");
                 Artifact actual;
                 try {
-                    actual = readPair(path);
+                    actual = readPair(path, jsonLimit);
                 } catch (IOException | RuntimeException failure) {
                     throw new IOException("Pending blueprint artifact pair changed before rollback", failure);
                 }
                 if (!jsonSha256.equals(actual.jsonSha256) || !pngSha256.equals(actual.pngSha256))
                     throw new IOException("Pending blueprint artifact digests changed before rollback");
                 IOException failure = new IOException("Pending blueprint artifact rollback failed");
-                boolean restored = restoreKeepingBackup(path, oldJson, MAX_JSON_BYTES, failure)
+                boolean restored = restoreKeepingBackup(path, oldJson, jsonLimit, failure)
                     & restoreKeepingBackup(previewPath(path), oldPng, MAX_PNG_BYTES, failure);
                 if (!restored) throw failure;
                 outcome = Outcome.ROLLED_BACK;
@@ -195,11 +198,20 @@ public final class HologramBlueprintArtifact {
 
     /** Explicit fresh-save boundary. Reads, transfers and legacy loads never manufacture this metadata. */
     public static Artifact prepareSave(byte[] json, byte[] freshlyCapturedPng) throws IOException {
-        jsonBounds(json);
+        return prepareSave(json, freshlyCapturedPng, MAX_JSON_BYTES);
+    }
+
+    /** Local disk saves retain their independent larger budget; wire encoders remain unchanged. */
+    public static Artifact prepareLocalSave(byte[] json, byte[] freshlyCapturedPng) throws IOException {
+        return prepareSave(json, freshlyCapturedPng, HologramBlueprintLimits.LOCAL_FILE_BYTES);
+    }
+
+    private static Artifact prepareSave(byte[] json, byte[] freshlyCapturedPng, int limit) throws IOException {
+        jsonBounds(json, limit);
         json = json.clone();
-        byte[] source = HologramBlueprintPreviewBinding.sourceJson(json);
-        byte[] png = bindPreview(source, freshlyCapturedPng);
-        byte[] boundJson = HologramBlueprintPreviewBinding.bind(source, hash(png));
+        byte[] source = HologramBlueprintPreviewBinding.sourceJson(json, limit);
+        byte[] png = bindPreview(source, freshlyCapturedPng, limit);
+        byte[] boundJson = HologramBlueprintPreviewBinding.bind(source, hash(png), limit);
         return new Artifact(boundJson, png);
     }
 
@@ -210,19 +222,29 @@ public final class HologramBlueprintArtifact {
         return new Artifact(json.clone(), bindPreview(json, original.png));
     }
 
+    public static Artifact transferLocal(byte[] json, Artifact original) throws IOException {
+        if (!HologramBlueprintPreviewBinding.localPngSha256(original.json).isEmpty())
+            return prepareLocalSave(json, original.png);
+        return new Artifact(json.clone(), bindPreview(json, original.png, HologramBlueprintLimits.LOCAL_FILE_BYTES));
+    }
+
     public static boolean previewHasBinding(byte[] png) throws IOException {
         return inspectPng(png).source != null;
     }
 
     /** Rebinding changes only the source-digest text chunk; compressed pixel bytes are untouched. */
     public static byte[] bindPreview(byte[] json, byte[] png) throws IOException {
-        jsonBounds(json);
+        return bindPreview(json, png, MAX_JSON_BYTES);
+    }
+
+    private static byte[] bindPreview(byte[] json, byte[] png, int limit) throws IOException {
+        jsonBounds(json, limit);
         json = json.clone();
         if (png == null || png.length > MAX_PNG_BYTES) throw new IOException("Invalid blueprint PNG size");
         png = png.clone();
         Png info = inspectPng(png);
-        String source = hash(HologramBlueprintPreviewBinding.sourceJson(json));
-        String pngHash = HologramBlueprintPreviewBinding.pngSha256(json);
+        HologramBlueprintPreviewBinding.LocalBinding binding = HologramBlueprintPreviewBinding.inspectLocalJson(json);
+        String source = binding.sourceSha256(), pngHash = binding.pngSha256;
         if (!pngHash.isEmpty() && (!source.equals(info.source) || !pngHash.equals(hash(png))))
             throw new IOException("Blueprint PNG differs from its saved JSON binding; save the blueprint again");
         if (source.equals(info.source)) return png.clone();
@@ -315,17 +337,25 @@ public final class HologramBlueprintArtifact {
     }
 
     public static synchronized Artifact readPair(Path jsonPath) throws IOException {
+        return readPair(jsonPath, MAX_JSON_BYTES);
+    }
+
+    public static synchronized Artifact readLocalPair(Path jsonPath) throws IOException {
+        return readPair(jsonPath, HologramBlueprintLimits.LOCAL_FILE_BYTES);
+    }
+
+    private static Artifact readPair(Path jsonPath, int limit) throws IOException {
         Path pngPath = previewPath(jsonPath);
-        byte[] json = readBounded(jsonPath, MAX_JSON_BYTES);
+        byte[] json = readBounded(jsonPath, limit);
         byte[] png = readBounded(pngPath, MAX_PNG_BYTES);
-        jsonBounds(json);
+        jsonBounds(json, limit);
         requireSource(json, png, inspectPng(png));
         return new Artifact(json, png);
     }
 
     /** Historical client documents may predate paired PNGs and their digest fields. */
     public static synchronized byte[] readLocalJson(Path jsonPath) throws IOException {
-        byte[] json = readBounded(jsonPath, MAX_JSON_BYTES);
+        byte[] json = readBounded(jsonPath, HologramBlueprintLimits.LOCAL_FILE_BYTES);
         Path pngPath = previewPath(jsonPath);
         HologramBlueprintPreviewBinding.LocalBinding binding = HologramBlueprintPreviewBinding.inspectLocalJson(json);
         boolean bound = !binding.pngSha256.isEmpty();
@@ -363,6 +393,18 @@ public final class HologramBlueprintArtifact {
         return writePair(jsonPath, json, png, stillCurrent, HologramBlueprintArtifact::atomicReplace, true);
     }
 
+    public static synchronized void writeLocalPair(Path jsonPath, byte[] json, byte[] png,
+        BooleanSupplier stillCurrent) throws IOException {
+        writePair(jsonPath, json, png, stillCurrent, HologramBlueprintArtifact::atomicReplace, false,
+            HologramBlueprintLimits.LOCAL_FILE_BYTES);
+    }
+
+    public static synchronized PairWrite writeLocalPairPending(Path jsonPath, byte[] json, byte[] png,
+        BooleanSupplier stillCurrent) throws IOException {
+        return writePair(jsonPath, json, png, stillCurrent, HologramBlueprintArtifact::atomicReplace, true,
+            HologramBlueprintLimits.LOCAL_FILE_BYTES);
+    }
+
     /** Package-private move injection exercises rollback after one member has already been replaced. */
     interface MoveOperation {
 
@@ -375,10 +417,15 @@ public final class HologramBlueprintArtifact {
 
     private static PairWrite writePair(Path jsonPath, byte[] json, byte[] png, BooleanSupplier stillCurrent,
         MoveOperation move, boolean pending) throws IOException {
+        return writePair(jsonPath, json, png, stillCurrent, move, pending, MAX_JSON_BYTES);
+    }
+
+    private static PairWrite writePair(Path jsonPath, byte[] json, byte[] png, BooleanSupplier stillCurrent,
+        MoveOperation move, boolean pending, int limit) throws IOException {
         requireCurrent(stillCurrent);
-        jsonBounds(json);
+        jsonBounds(json, limit);
         json = json.clone();
-        byte[] bound = bindPreview(json, png);
+        byte[] bound = bindPreview(json, png, limit);
         Path jsonFile = absolute(jsonPath), pngFile = previewPath(jsonFile), parent = jsonFile.getParent();
         Files.createDirectories(parent);
         regularOrAbsent(jsonFile);
@@ -387,7 +434,7 @@ public final class HologramBlueprintArtifact {
         boolean touched = false, recovered = true, retainBackups = false;
         PairWrite receipt = null;
         try {
-            oldJson = backup(jsonFile, MAX_JSON_BYTES);
+            oldJson = backup(jsonFile, limit);
             oldPng = backup(pngFile, MAX_PNG_BYTES);
             requireCurrent(stillCurrent);
             newJson = stage(parent, json);
@@ -399,7 +446,7 @@ public final class HologramBlueprintArtifact {
             move.move(newJson, jsonFile);
             requireCurrent(stillCurrent);
             if (pending) {
-                receipt = new PairWrite(jsonFile, json, bound, oldJson, oldPng, PENDING_WRITES.get(jsonFile));
+                receipt = new PairWrite(jsonFile, json, bound, oldJson, oldPng, PENDING_WRITES.get(jsonFile), limit);
                 PENDING_WRITES.put(jsonFile, receipt);
                 retainBackups = true;
             } else PENDING_WRITES.remove(jsonFile);
@@ -473,8 +520,12 @@ public final class HologramBlueprintArtifact {
     }
 
     private static void jsonBounds(byte[] json) throws IOException {
-        if (json == null || json.length == 0 || json.length > MAX_JSON_BYTES) throw new IOException(
-            "Blueprint JSON must contain 1 byte through " + MAX_JSON_BYTES / (1024 * 1024) + " MiB");
+        jsonBounds(json, MAX_JSON_BYTES);
+    }
+
+    private static void jsonBounds(byte[] json, int limit) throws IOException {
+        if (json == null || json.length == 0 || json.length > limit) throw new IOException(
+            "Blueprint JSON must contain 1 byte through " + limit / (1024 * 1024) + " MiB");
     }
 
     private static void requireCurrent(BooleanSupplier stillCurrent) throws IOException {
@@ -483,8 +534,9 @@ public final class HologramBlueprintArtifact {
     }
 
     private static void requireSource(byte[] json, byte[] pngBytes, Png png) throws IOException {
-        requireSourceDigest(hash(HologramBlueprintPreviewBinding.sourceJson(json)), png);
-        requirePngDigest(HologramBlueprintPreviewBinding.pngSha256(json), pngBytes);
+        HologramBlueprintPreviewBinding.LocalBinding binding = HologramBlueprintPreviewBinding.inspectLocalJson(json);
+        requireSourceDigest(binding.sourceSha256(), png);
+        requirePngDigest(binding.pngSha256, pngBytes);
     }
 
     private static void requireSourceDigest(String source, Png png) throws IOException {

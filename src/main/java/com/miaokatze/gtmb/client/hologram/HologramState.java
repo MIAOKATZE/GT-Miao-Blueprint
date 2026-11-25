@@ -33,6 +33,7 @@ final class HologramState {
     final List<Cell> cells;
     final List<Material> materials;
     final HologramControllerMaterialCounts controllerMaterialCounts;
+    final HologramLocalMaterialIndex localMaterialIndex;
     final HologramRegionCache regions;
     final Object identity = new Object();
     final Object parentIdentity;
@@ -49,6 +50,8 @@ final class HologramState {
 
     HologramState(NBTTagCompound source) {
         controllerMaterialCounts = null;
+        HologramLocalMaterialIndex.Builder materialIndex = source.getBoolean("localStandardController")
+            ? new HologramLocalMaterialIndex.Builder(source) : null;
         fullBaseline = fullBaseline(source);
         controllerTargetIdentity = null;
         plainDisplayExamples = Collections.emptyList();
@@ -82,6 +85,7 @@ final class HologramState {
                     true)
                 : new Cell(i, row);
             parsed.add(cell);
+            if (materialIndex != null) materialIndex.add(cell);
             minWorldX = Math.min(minWorldX, cell.x);
             maxWorldX = Math.max(maxWorldX, cell.x);
             minWorldY = Math.min(minWorldY, cell.y);
@@ -96,6 +100,7 @@ final class HologramState {
             maxY = Math.max(maxY, cell.dy);
         }
         cells = new CellPages(parsed);
+        localMaterialIndex = materialIndex == null ? null : materialIndex.seal();
         regions = new HologramRegionCache(cells);
         structureMembers = memberships(cells);
         materials = readMaterials(data);
@@ -103,6 +108,7 @@ final class HologramState {
 
     private HologramState(Preparation ready) {
         controllerMaterialCounts = ready.controllerMaterialCounts;
+        localMaterialIndex = ready.materialIndex == null ? null : ready.materialIndex.seal();
         fullBaseline = ready.fullBaseline;
         controllerTargetIdentity = null;
         plainDisplayExamples = Collections.unmodifiableList(ready.plainDisplayExamples);
@@ -173,6 +179,7 @@ final class HologramState {
     /** A new local presentation, retaining only sealed CPU geometry and no old publication lineage. */
     private HologramState(NBTTagCompound fresh, LocalGeometry geometry) {
         controllerMaterialCounts = null;
+        localMaterialIndex = null;
         data = metadata(fresh);
         session = data.getString("session");
         cells = geometry.cells;
@@ -197,6 +204,7 @@ final class HologramState {
     private HologramState(ControllerDetails ready) {
         HologramState geometry = ready.geometry;
         controllerMaterialCounts = geometry.controllerMaterialCounts;
+        localMaterialIndex = geometry.localMaterialIndex;
         data = ready.data;
         session = geometry.session;
         cells = ready.enriched;
@@ -312,6 +320,7 @@ final class HologramState {
     /** Metadata decorators share geometry; preserve the incoming publication's renderer and selection obligations. */
     private HologramState(HologramState decorated, HologramState publication) {
         controllerMaterialCounts = decorated.controllerMaterialCounts;
+        localMaterialIndex = decorated.localMaterialIndex;
         data = decorated.data;
         session = decorated.session;
         cells = decorated.cells;
@@ -339,6 +348,7 @@ final class HologramState {
     /** One bounded early view shares completed cells and owns its small spatial index. */
     private HologramState(Preparation ready, int count) {
         controllerMaterialCounts = null;
+        localMaterialIndex = null;
         fullBaseline = false;
         controllerTargetIdentity = null;
         plainDisplayExamples = Collections.emptyList();
@@ -415,6 +425,7 @@ final class HologramState {
         private final HologramBlueprintPreview.CompactCells compactCells;
         private final List<HologramControllerTarget.Cell> controllerCells;
         private final HologramControllerMaterialCounts controllerMaterialCounts;
+        private final HologramLocalMaterialIndex.Builder materialIndex;
         private final DescriptorTemplate[] compactMaterials;
         private final boolean[] seenCompactMaterials;
         private int compactDescriptorCursor;
@@ -460,6 +471,8 @@ final class HologramState {
             anonymousCompact = compactCells != null && !compactCells.editorRows();
             this.controllerCells = controllerCells;
             this.controllerMaterialCounts = controllerMaterialCounts;
+            materialIndex = source.getBoolean("localStandardController")
+                ? new HologramLocalMaterialIndex.Builder(source) : null;
             regions = new HologramRegionCache.Builder(compactCells != null || controllerCells != null);
             compactMaterials = compactCells == null ? null : new DescriptorTemplate[compactCells.materialCount()];
             seenCompactMaterials = compactCells == null ? null : new boolean[compactCells.materialCount()];
@@ -468,7 +481,9 @@ final class HologramState {
             rows = source.getTagList("cells", 10);
             cellCount = controllerCells != null ? controllerCells.size()
                 : compactCells == null ? rows.tagCount() : compactCells.size();
-            if (!HologramBlueprintLimits.accepts(cellCount))
+            // Packed private geometry has a bounded local decoder, not the legacy NBT/wire admission.
+            if (!(compactCells == null ? HologramBlueprintLimits.accepts(cellCount)
+                : HologramBlueprintLimits.acceptsLocal(cellCount)))
                 throw new IllegalArgumentException("Blueprint cell count exceeds limit");
             materialRows = source.getTagList("materials", 10);
             minWorldX = maxWorldX = data.getInteger("x");
@@ -503,6 +518,7 @@ final class HologramState {
                     if ((cellPosition & 255) == 0) pages.add(new Cell[Math.min(256, cellCount - cellPosition)]);
                     pages.get(cellPosition >> 8)[cellPosition & 255] = cell;
                     regions.add(cell);
+                    if (materialIndex != null) materialIndex.add(cell);
                     if (!anonymousCompact) {
                         for (String id : membershipIds(cell)) members.computeIfAbsent(id, unused -> new ArrayList<>())
                             .add(cell.index);
@@ -840,6 +856,13 @@ final class HologramState {
         changedPreviousCells = Collections.unmodifiableList(before);
         cells = pages == null ? base.cells : pages;
         controllerMaterialCounts = updateControllerMaterialCounts(base, patch);
+        localMaterialIndex = base.localMaterialIndex == null || patch.getBoolean("capturePending")
+            || !base.data.getString("generation").equals(data.getString("generation"))
+            || base.data.getInteger("x") != data.getInteger("x")
+            || base.data.getInteger("y") != data.getInteger("y")
+            || base.data.getInteger("z") != data.getInteger("z") ? null
+                : before.isEmpty() && changedIndices.length == 0 ? base.localMaterialIndex
+                    : base.localMaterialIndex.edited(before, cells, changedIndices);
         regions = before.isEmpty() && changedIndices.length == 0 ? base.regions
             : new HologramRegionCache(base.regions, cells, changedIndices, before, topologyChanged);
         if (topologyChanged) for (int index : changedIndices) {

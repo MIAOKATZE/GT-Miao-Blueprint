@@ -8,18 +8,15 @@ import static com.miaokatze.gtmb.hologram.HologramProjectedLayerPlan.Offer.CLOSE
 import static com.miaokatze.gtmb.hologram.HologramProjectedLayerPlan.Offer.OUT_OF_ORDER;
 import static com.miaokatze.gtmb.hologram.HologramProjectedLayerPlan.Offer.REPLAY;
 import static com.miaokatze.gtmb.hologram.HologramProjectedLayerPlan.Offer.STALE;
-import static com.miaokatze.gtmb.hologram.HologramProjectedLayerWire.commitment;
 import static com.miaokatze.gtmb.hologram.HologramProjectedLayerWire.decodeAck;
 import static com.miaokatze.gtmb.hologram.HologramProjectedLayerWire.decodeManifest;
 import static com.miaokatze.gtmb.hologram.HologramProjectedLayerWire.decodeSlice;
 import static com.miaokatze.gtmb.hologram.HologramProjectedLayerWire.encodeAck;
 import static com.miaokatze.gtmb.hologram.HologramProjectedLayerWire.encodeManifest;
 import static com.miaokatze.gtmb.hologram.HologramProjectedLayerWire.encodeSlice;
-import static com.miaokatze.gtmb.hologram.HologramProjectedLayerWire.end;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -48,6 +45,7 @@ public final class HologramProjectedLayerRegression {
 
     public static void run() throws Exception {
         orderedTransfer();
+        boundedWindowAndCumulativeStop();
         malformedAndTruncated();
         manifestBoundaries();
         largeSynthetic();
@@ -55,10 +53,19 @@ public final class HologramProjectedLayerRegression {
 
     private static void orderedTransfer() throws IOException {
         Header h = header(0, 4, 3, Arrays.asList(variant("stone", 2), variant("glass", 2)));
-        byte[] last = encodeSlice(slice(2, 65, end(), 0, 0, 0));
-        byte[] middle = encodeSlice(slice(1, 64, commitment(h, last), 1, 1, 1));
-        byte[] first = encodeSlice(slice(0, 64, commitment(h, middle), 0, 0, 0, 1, 0, 1));
-        byte[] wire = encodeManifest(new Manifest(h, commitment(h, first)));
+        byte[] last = encodeSlice(slice(2, 65, 0, 0, 0));
+        byte[] middle = encodeSlice(slice(1, 64, 1, 1, 1));
+        byte[] first = encodeSlice(slice(0, 64, 0, 0, 0, 1, 0, 1));
+        byte[] wire = encodeManifest(new Manifest(h));
+        require(first.length == 32 + 2 * 3 * Integer.BYTES,
+            "slice bytes contain only identity, sequence, layer, count and operations, no fingerprint");
+        byte[] obsoleteManifest = wire.clone();
+        ByteBuffer.wrap(obsoleteManifest).putInt(0, 0x47544d11);
+        invalid(() -> decodeManifest(obsoleteManifest));
+        byte[] obsoleteSlice = first.clone();
+        ByteBuffer.wrap(obsoleteSlice).putInt(0, 0x47544d12);
+        invalid(() -> decodeSlice(obsoleteSlice));
+        invalid(() -> decodeSlice(Arrays.copyOf(first, first.length + 32)));
         Manifest offer = decodeManifest(wire);
         require(Arrays.equals(wire, encodeManifest(offer)), "canonical manifest bytes");
         Receiver receiver = new Receiver(offer);
@@ -69,18 +76,24 @@ public final class HologramProjectedLayerRegression {
         require(sender.accept(receipt(receiver)) && sender.claim(firstSlice), "admitted first credit");
         require(receiver.offer(first) == ACCEPTED, "first authorized before the tail arrives");
         Ticket staged = receiver.pending();
+        byte[] sameSequenceDifferentBody = encodeSlice(slice(0, 64, 0, 0, 1));
+        require(receiver.offer(sameSequenceDifferentBody) == REPLAY && receiver.pending() == staged
+            && staged.slice.size() == 2 && staged.slice.variant(0) == 0,
+            "same task/sequence replay cannot replace queued work even with changed body");
         require(staged.slice.size() == 2 && staged.slice.variant(1) == 1, "exact first slice exposed");
-        require(!receiver.finished() && receipt(receiver).nextSlice == 0 && receipt(receiver).credit == 0,
-            "receipt does not acknowledge incomplete settlement");
+        require(!receiver.finished() && receipt(receiver).nextSlice == 0 && receipt(receiver).credit == 1,
+            "window credit does not acknowledge incomplete settlement");
         require(receiver.offer(first) == REPLAY && receiver.pending() == staged, "in-flight duplicate is idempotent");
-        require(sender.accept(receipt(receiver)) && !sender.claim(decodeSlice(middle)), "replay grants no credit");
+        require(sender.accept(receipt(receiver)) && !sender.claim(firstSlice), "replay never duplicates a frame");
         require(!new Receiver(offer).settle(staged), "ticket cannot transfer between owners");
         require(receiver.settle(staged) && !receiver.settle(staged), "settled exactly once before EOF");
         require(receiver.offer(first) == REPLAY && receiver.pending() == null, "latest completed duplicate");
+        require(receiver.offer(sameSequenceDifferentBody) == REPLAY && receiver.pending() == null,
+            "changed-body replay after settlement cannot create another execution ticket");
         require(sender.accept(receipt(receiver)) && sender.claim(decodeSlice(middle)), "second credit");
         require(receiver.offer(middle) == ACCEPTED && receiver.settle(receiver.pending()), "second slice");
         require(receiver.offer(first) == STALE, "older slice classified stale without retaining history");
-        require(receiver.offer(encodeSlice(new Slice(OTHER, 2, 65, new int[] { 0, 0, 0 }, end()))) == STALE,
+        require(receiver.offer(encodeSlice(new Slice(OTHER, 2, 65, new int[] { 0, 0, 0 }))) == STALE,
             "wrong request cannot affect current credit");
         require(sender.accept(receipt(receiver)) && sender.claim(decodeSlice(last)), "terminal slice can be sent");
         require(receiver.offer(last) == ACCEPTED && receiver.settle(receiver.pending()), "terminal slice settles");
@@ -88,21 +101,57 @@ public final class HologramProjectedLayerRegression {
         require(terminal.complete && terminal.settledCells == 4 && terminal.nextSlice == 3 && terminal.credit == 0,
             "exact cumulative terminal receipt");
         require(sender.accept(terminal) && !sender.claim(decodeSlice(last)), "terminal stays closed");
-        require(receiver.offer(encodeSlice(slice(3, 66, end(), 0, 0, 0))) == CLOSED, "post-EOF rejected");
+        require(receiver.offer(encodeSlice(slice(3, 66, 0, 0, 0))) == CLOSED, "post-EOF rejected");
+    }
+
+    private static void boundedWindowAndCumulativeStop() throws IOException {
+        int window = HologramProjectedLayerWire.WINDOW, count = window + 1;
+        Header h = header(0, count, count, Collections.singletonList(variant("stone", count)));
+        byte[][] frames = new byte[count][];
+        for (int i = count - 1; i >= 0; i--) {
+            frames[i] = encodeSlice(slice(i, 64, i, 0, 0));
+        }
+        Receiver receiver = new Receiver(new Manifest(h));
+        Sender sender = new Sender(h);
+        Ack initial = receipt(receiver);
+        require(sender.accept(initial), "window opens only after admitted ACK");
+        for (int i = 0; i < window; i++) {
+            require(sender.claim(decodeSlice(frames[i])) && receiver.offer(frames[i]) == ACCEPTED,
+                "bounded ordered window may arrive before any world settlement");
+        }
+        require(!sender.claim(decodeSlice(frames[window])) && receiver.offer(frames[window]) == OUT_OF_ORDER,
+            "both sender and receiver reject a ninth outstanding frame");
+        require(sender.accept(initial) && !sender.claim(decodeSlice(frames[window])),
+            "replayed credit cannot add to a full window");
+        Ticket head = receiver.pending();
+        require(receiver.offer(frames[window - 1]) == REPLAY && receiver.pending() == head,
+            "buffered duplicate cannot replace active cursor");
+        for (int i = 0; i < 4; i++) require(receiver.settle(receiver.pending()), "ordered paid settlement");
+        invalid(() -> new Ack(REQUEST, 4, 3, 1, false, false)); // Fewer cells than slices is invalid wire shape.
+        require(!sender.accept(new Ack(REQUEST, 4, 5, 1, false, false)), "bad cumulative count cannot free credits");
+        require(sender.accept(receipt(receiver)) && sender.claim(decodeSlice(frames[window]))
+            && receiver.offer(frames[window]) == ACCEPTED, "one cumulative receipt restores bounded capacity");
+        receiver.abort();
+        Ack stopped = receipt(receiver);
+        require(stopped.nextSlice == 4 && stopped.settledCells == 4 && stopped.aborted
+            && receiver.pending() == null && receiver.offer(frames[window]) == CLOSED,
+            "STOP discards all uncommitted buffered frames and retains exact paid prefix");
+        require(sender.accept(stopped) && !sender.canSend(), "STOP closes the client window permanently");
     }
 
     private static void malformedAndTruncated() throws IOException {
         Header h = header(0, 3, 2, Arrays.asList(variant("stone", 2), variant("glass", 1)));
-        byte[] last = encodeSlice(slice(1, 65, end(), 0, 0, 1));
-        byte[] first = encodeSlice(slice(0, 64, commitment(h, last), 0, 0, 0, 1, 0, 0));
-        Manifest manifest = new Manifest(h, commitment(h, first));
+        byte[] last = encodeSlice(slice(1, 65, 0, 0, 1));
+        byte[] first = encodeSlice(slice(0, 64, 0, 0, 0, 1, 0, 0));
+        Manifest manifest = new Manifest(h);
         Receiver receiver = new Receiver(manifest);
         byte[] corrupt = first.clone();
-        ByteBuffer.wrap(corrupt).putInt(44, 2); // Still canonical and in bounds, but not the promised cell.
+        ByteBuffer.wrap(corrupt).putInt(40, 512); // Out-of-palette variant is rejected without a fingerprint.
         invalid(() -> receiver.offer(corrupt));
         require(receiver.pending() == null && receipt(receiver).nextSlice == 0, "corruption cannot stage work");
         Header otherAnchor = header(1, 3, 2, Arrays.asList(variant("stone", 2), variant("glass", 1)));
-        invalid(() -> new Receiver(new Manifest(otherAnchor, manifest.root())).offer(first));
+        require(new Receiver(new Manifest(otherAnchor)).offer(first) == ACCEPTED,
+            "wire coordinates do not cryptographically bind an anchor; owner/world authority is checked by service");
         require(receiver.offer(first) == ACCEPTED && receiver.settle(receiver.pending()), "first survives retry");
         require(!receiver.finished() && receipt(receiver).credit == 1, "missing final slice is not success");
         receiver.abort(); // Actual owner timeout/stop invokes this; no timeout or world behavior is mocked here.
@@ -110,19 +159,20 @@ public final class HologramProjectedLayerRegression {
         require(stopped.aborted && !stopped.complete && stopped.settledCells == 2 && stopped.credit == 0
             && receiver.offer(last) == CLOSED, "truncated stream retains settled prefix but cannot revive");
 
-        byte[] earlyEnd = encodeSlice(slice(0, 64, end(), 0, 0, 0, 1, 0, 0));
-        invalid(() -> new Receiver(new Manifest(h, commitment(h, earlyEnd))).offer(earlyEnd));
-        byte[] badInventory = encodeSlice(slice(0, 64, commitment(h, last), 0, 0, 1, 1, 0, 1));
-        invalid(() -> new Receiver(new Manifest(h, commitment(h, badInventory))).offer(badInventory));
-        byte[] badBounds = encodeSlice(slice(0, 64, commitment(h, last), -1, 0, 0, 1, 0, 0));
-        invalid(() -> new Receiver(new Manifest(h, commitment(h, badBounds))).offer(badBounds));
-        byte[] badOrder = encodeSlice(slice(1, 64, end(), 1, 0, 1)); // Duplicate position at a slice boundary.
-        byte[] preceding = encodeSlice(slice(0, 64, commitment(h, badOrder), 0, 0, 0, 1, 0, 0));
-        Receiver overlap = new Receiver(new Manifest(h, commitment(h, preceding)));
+        byte[] earlyEnd = encodeSlice(slice(0, 64, 0, 0, 0, 1, 0, 0));
+        require(new Receiver(new Manifest(h)).offer(earlyEnd) == ACCEPTED,
+            "a first frame has no suffix promise; completion still requires the declared remaining cells");
+        byte[] badInventory = encodeSlice(slice(0, 64, 0, 0, 1, 1, 0, 1));
+        invalid(() -> new Receiver(new Manifest(h)).offer(badInventory));
+        byte[] badBounds = encodeSlice(slice(0, 64, -1, 0, 0, 1, 0, 0));
+        invalid(() -> new Receiver(new Manifest(h)).offer(badBounds));
+        byte[] badOrder = encodeSlice(slice(1, 64, 1, 0, 1)); // Duplicate position at a slice boundary.
+        byte[] preceding = encodeSlice(slice(0, 64, 0, 0, 0, 1, 0, 0));
+        Receiver overlap = new Receiver(new Manifest(h));
         require(overlap.offer(preceding) == ACCEPTED && overlap.settle(overlap.pending()), "committed prefix");
         invalid(() -> overlap.offer(badOrder));
         require(!overlap.finished() && overlap.pending() == null, "cross-slice overlap never stages twice");
-        invalid(() -> encodeSlice(slice(0, 64, end(), 1, 0, 0, 1, 0, 1)));
+        invalid(() -> encodeSlice(slice(0, 64, 1, 0, 0, 1, 0, 1)));
         invalid(() -> decodeSlice(Arrays.copyOf(first, first.length - 1)));
         invalid(() -> decodeSlice(new byte[HologramProjectedLayerWire.MAX_SLICE_BYTES + 1]));
         invalid(() -> decodeSlice(ByteBuffer.wrap(first.clone()).putInt(28,
@@ -162,9 +212,7 @@ public final class HologramProjectedLayerRegression {
         int occurrences = 700_000;
         Header h = header(0, occurrences, 1 + (occurrences - 1) / HologramProjectedLayerWire.MAX_SLICE_CELLS,
             Collections.singletonList(variant("stone", occurrences)));
-        byte[] digest = new byte[HologramProjectedLayerWire.HASH_BYTES];
-        digest[0] = 1;
-        byte[] manifest = encodeManifest(new Manifest(h, digest));
+        byte[] manifest = encodeManifest(new Manifest(h));
         // 68-byte header; two 4-byte-prefixed ASCII names; then metadata, damage, facing, flags, count.
         int facing = 68 + 2 * (4 + "minecraft:stone".length()) + 3;
         int tileLength = facing + 6;
@@ -195,17 +243,11 @@ public final class HologramProjectedLayerRegression {
         int count = 123_369, cap = HologramProjectedLayerWire.MAX_SLICE_CELLS;
         int partitions = 1 + (count - 1) / cap;
         Header h = header(0, count, partitions, Collections.singletonList(variant("stone", count)));
-        List<byte[]> suffixes = new ArrayList<>(Collections.nCopies(partitions, null));
-        byte[] previous = end();
-        for (int index = partitions - 1; index >= 0; index--) {
-            suffixes.set(index, previous); // Fixture keeps only digests, never the assembled geometry.
-            previous = commitment(h, synthetic(index, count, previous));
-        }
-        byte[] manifest = encodeManifest(new Manifest(h, previous));
+        byte[] manifest = encodeManifest(new Manifest(h));
         require(manifest.length < 256, "a one-variant manifest stays small regardless of cell count");
         Receiver receiver = new Receiver(decodeManifest(manifest));
         for (int index = 0; index < partitions; index++) {
-            byte[] part = synthetic(index, count, suffixes.get(index));
+            byte[] part = synthetic(index, count);
             require(part.length <= HologramProjectedLayerWire.MAX_SLICE_BYTES && receiver.offer(part) == ACCEPTED,
                 "large bounded slice");
             require(receiver.settle(receiver.pending()), "large slice settled exactly once");
@@ -214,12 +256,12 @@ public final class HologramProjectedLayerRegression {
         require(receipt(receiver).settledCells == count, "exact large count");
     }
 
-    private static byte[] synthetic(int index, int cells, byte[] next) throws IOException {
+    private static byte[] synthetic(int index, int cells) throws IOException {
         int first = index * HologramProjectedLayerWire.MAX_SLICE_CELLS;
         int part = Math.min(cells - first, HologramProjectedLayerWire.MAX_SLICE_CELLS);
         int[] operations = new int[part * 3];
         for (int i = 0; i < part; i++) operations[i * 3] = first + i;
-        return encodeSlice(new Slice(REQUEST, index, 64, operations, next));
+        return encodeSlice(new Slice(REQUEST, index, 64, operations));
     }
 
     private static Ack receipt(Receiver receiver) throws IOException {
@@ -236,8 +278,8 @@ public final class HologramProjectedLayerRegression {
         return new Variant("minecraft:" + type, 0, "minecraft:" + type, 0, -1, false, "", "", count);
     }
 
-    private static Slice slice(int sequence, int y, byte[] next, int... ops) throws IOException {
-        return new Slice(REQUEST, sequence, y, ops, next);
+    private static Slice slice(int sequence, int y, int... ops) throws IOException {
+        return new Slice(REQUEST, sequence, y, ops);
     }
 
     private interface Checked {

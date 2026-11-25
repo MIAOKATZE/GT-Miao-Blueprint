@@ -10,6 +10,20 @@ public final class HologramBlueprintLimits {
 
     public static final int MAX_CELLS = 999_999;
 
+    /** Bounded, packed single-file admission; never a per-packet or raw legacy DTO limit. */
+    public static final int LOCAL_CELLS = 4_000_000;
+    public static final int LOCAL_FILE_BYTES = 128 * 1024 * 1024;
+    // Arithmetically counted, never materialized as an expanded JSON tree.
+    static final long LOCAL_LOGICAL_BYTES = 1024L * 1024 * 1024;
+
+    public static boolean acceptsLocal(long cells) {
+        return cells >= 0 && cells <= LOCAL_CELLS;
+    }
+
+    static void requireLocal(long cells) throws IOException {
+        if (!acceptsLocal(cells)) throw new IOException("Local blueprint exceeds four million cells");
+    }
+
     private HologramBlueprintLimits() {}
 
     /** Explicit air and excluded records still own coordinates and retained blueprint data. */

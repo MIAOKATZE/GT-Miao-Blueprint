@@ -3,6 +3,9 @@
 
 package com.miaokatze.gtmb.client.hologram;
 
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
@@ -21,7 +24,7 @@ import com.miaokatze.gtmb.hologram.HologramProjectedLayerTransport.Control;
 import com.miaokatze.gtmb.hologram.HologramProjectedLayerTransport.Reply;
 import com.miaokatze.gtmb.hologram.HologramProjectedLayerTransport.Request;
 
-/** The default confirmed private-file route. One owned worker, one frame in flight, no legacy geometry fallback. */
+/** The default confirmed private-file route. One owned worker, a bounded frame window, no legacy geometry fallback. */
 public final class HologramClientProjectedPlacement {
 
     private static final long RETRY = TimeUnit.SECONDS.toNanos(2), PROBE_LIMIT = TimeUnit.SECONDS.toNanos(8);
@@ -64,8 +67,8 @@ public final class HologramClientProjectedPlacement {
         Task job = active;
         if (job == null || !scoped(job.source.request, job.intent, job.scope, job.connection, reply, inboundHandler))
             return;
-        // Network threads publish at most one owned status. A newer valid credit's successor is only sent after our
-        // next frame; ordinary progress can be coalesced, and a terminal is never evicted by delayed progress.
+        // Network threads publish at most one owned cumulative status. A settlement can cover several frames;
+        // progress may be coalesced, and a terminal is never evicted by delayed progress.
         job.inbox.accumulateAndGet(reply, HologramClientProjectedPlacement::newer);
     }
 
@@ -166,12 +169,24 @@ public final class HologramClientProjectedPlacement {
         Ticket ticket;
         Prepared prepared;
         byte[] manifest;
-        Request inFlight;
+        Request inFlight; // Begin retry only; bounded data frames are acknowledged at the accepted frontier.
+        final ArrayDeque<PendingFrame> pendingFrames = new ArrayDeque<>();
+        Reply pendingCredit;
         long lastProbe, lastSend, lastContact, stopAt, lastStop, lastSequence = -1, shownRows;
-        int nextOrdinal, inFlightOrdinal = -1, placed, satisfied, total;
+        int nextOrdinal, placed, satisfied, total;
         boolean beginAttempted, beginMayHaveQueued, admitted, computing, stopAcknowledged, executing;
         volatile boolean stopping;
         String toolId;
+
+        private static final class PendingFrame {
+            final int ordinal;
+            final Request request;
+
+            PendingFrame(int ordinal, Request request) {
+                this.ordinal = ordinal;
+                this.request = request;
+            }
+        }
 
         Task(HologramLibraryClient owner, PlainPlacementCandidate source, Minecraft client, Wire wire, long intent,
             long now) {
@@ -278,12 +293,16 @@ public final class HologramClientProjectedPlacement {
                     requestStop();
                     stop(now);
                 }
-            } else if (inFlight != null && now - lastSend >= RETRY) send(now, inFlight);
+            } else if (now - lastSend >= RETRY) {
+                if (inFlight != null) send(now, inFlight);
+                else for (PendingFrame frame : pendingFrames) send(now, frame.request);
+            }
+            pumpCredit();
         }
 
         void send(long now, Request message) {
             lastSend = now;
-            boolean begin = message == inFlight && inFlightOrdinal < 0;
+            boolean begin = message == inFlight;
             try {
                 if (wire.send(message) && begin) beginMayHaveQueued = true;
             } catch (RuntimeException | LinkageError disconnected) {
@@ -322,7 +341,9 @@ public final class HologramClientProjectedPlacement {
                 requestStop();
                 return;
             }
-            if (inFlight != null && (inFlightOrdinal < 0 || receipt.acceptedSlices > inFlightOrdinal)) inFlight = null;
+            inFlight = null;
+            while (!pendingFrames.isEmpty() && pendingFrames.peekFirst().ordinal < receipt.acceptedSlices)
+                pendingFrames.removeFirst();
             boolean hasRun = (long) placed + satisfied > 0
                 || receipt.phase == HologramProjectedLayerTransport.Phase.PLACING;
             if (executing || hasRun) {
@@ -330,33 +351,51 @@ public final class HologramClientProjectedPlacement {
                 HologramBackgroundTasks.observeOwnedPlacement(
                     ticket, Phase.EXECUTING, receipt.sequence, (long) placed + satisfied, total);
             }
-            if (stopping || computing || prepared == null || inFlight != null) return;
-            byte[] ack = receipt.acknowledgement();
-            if (ack == null || receipt.acceptedSlices != nextOrdinal || receipt.settledSlices != nextOrdinal) return;
+            if (receipt.acknowledgement() != null) pendingCredit = newer(pendingCredit, receipt);
+            pumpCredit();
+        }
+
+        void pumpCredit() {
+            if (active != this || stopping || computing || prepared == null || inFlight != null
+                || pendingCredit == null) return;
+            byte[] ack = pendingCredit.acknowledgement();
+            pendingCredit = null;
             computing = true;
             Prepared encoding = prepared;
             owner.projectedWork(() -> {
-                var credit = encoding.onAck(ack, () -> !stopping && source.workerCurrent(owner) && active == this);
-                owner.projectedMain(() -> preparedCredit(credit));
+                List<byte[]> frames = new ArrayList<>();
+                for (int i = 0; i < HologramProjectedLayerTransport.FRAME_WINDOW; i++) {
+                    var credit = encoding.onAck(ack, () -> !stopping && source.workerCurrent(owner) && active == this);
+                    if (credit.nextFrame() == null) break;
+                    frames.add(credit.nextFrame());
+                }
+                owner.projectedMain(() -> preparedCredit(frames));
             }, failure -> {
                 computing = false;
                 requestStop();
             });
         }
 
-        void preparedCredit(com.miaokatze.gtmb.hologram.HologramProjectedLayerEncoder.Credit credit) {
+        void preparedCredit(List<byte[]> frames) {
             computing = false;
             Minecraft mc = Minecraft.getMinecraft();
             if (active != this || stopping || !current(mc)) return;
-            if (credit.nextFrame() == null) return; // ACK completion and no-credit status cannot complete a job.
-            try {
-                inFlight = HologramProjectedLayerTransport.slice(source.request, intent, scope, credit.nextFrame());
-            } catch (IllegalArgumentException incompatible) {
-                requestStop();
-                return;
+            for (byte[] bytes : frames) {
+                if (pendingFrames.size() >= HologramProjectedLayerTransport.FRAME_WINDOW) {
+                    requestStop();
+                    return;
+                }
+                Request request;
+                try {
+                    request = HologramProjectedLayerTransport.slice(source.request, intent, scope, bytes);
+                } catch (IllegalArgumentException incompatible) {
+                    requestStop();
+                    return;
+                }
+                pendingFrames.addLast(new PendingFrame(nextOrdinal++, request));
+                send(System.nanoTime(), request);
             }
-            inFlightOrdinal = nextOrdinal++;
-            send(System.nanoTime(), inFlight);
+            pumpCredit(); // A newer receipt may have arrived while the single worker was encoding this window.
         }
 
         void terminalReceipt(Reply nativeResult) {
@@ -398,6 +437,8 @@ public final class HologramClientProjectedPlacement {
             prepared = null;
             manifest = null;
             inFlight = null;
+            pendingFrames.clear();
+            pendingCredit = null;
             owner.projectedPlacementEnded(source.request, completed);
         }
     }

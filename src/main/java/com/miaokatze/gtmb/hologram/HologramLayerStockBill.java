@@ -77,7 +77,7 @@ final class HologramLayerStockBill {
         final int count;
 
         Row(int count, Term... parts) throws IOException {
-            if (count < 1 || count > HologramBlueprintLimits.MAX_CELLS || parts == null || parts.length == 0
+            if (count < 1 || count > HologramBlueprintLimits.LOCAL_CELLS || parts == null || parts.length == 0
                 || parts.length > MAX_TERMS_PER_ROW) throw invalid();
             for (Term part : parts) if (part == null) throw invalid();
             this.count = count;
@@ -135,7 +135,7 @@ final class HologramLayerStockBill {
         long cells = 0;
         for (int row = 0; row < rows.length; row++) {
             Row entry = rows[row];
-            if (entry == null || (cells += entry.count) > HologramBlueprintLimits.MAX_CELLS) throw invalid();
+            if (entry == null || (cells += entry.count) > HologramBlueprintLimits.LOCAL_CELLS) throw invalid();
             columns[row] = new int[entry.parts.length];
             for (int part = 0; part < entry.parts.length; part++) {
                 Term term = entry.parts[part];

@@ -3,20 +3,18 @@
 
 package com.miaokatze.gtmb.hologram;
 
-import static com.miaokatze.gtmb.hologram.HologramProjectedLayerWire.commitment;
 import static com.miaokatze.gtmb.hologram.HologramProjectedLayerWire.fits;
-import static com.miaokatze.gtmb.hologram.HologramProjectedLayerWire.isEnd;
 import static com.miaokatze.gtmb.hologram.HologramProjectedLayerWire.malformed;
 
 import java.io.IOException;
-import java.security.MessageDigest;
+import java.util.ArrayDeque;
 
 import com.miaokatze.gtmb.hologram.HologramProjectedLayerWire.Ack;
 import com.miaokatze.gtmb.hologram.HologramProjectedLayerWire.Header;
 import com.miaokatze.gtmb.hologram.HologramProjectedLayerWire.Manifest;
 import com.miaokatze.gtmb.hologram.HologramProjectedLayerWire.Slice;
 
-/** Single-credit, ordered stream. Not an inventory reservation, player admission, or world transaction. */
+/** Bounded-window ordered stream. Not an inventory reservation, player admission, or world transaction. */
 final class HologramProjectedLayerPlan {
 
     private HologramProjectedLayerPlan() {}
@@ -29,13 +27,9 @@ final class HologramProjectedLayerPlan {
     static final class Ticket {
 
         final Slice slice;
-        private final byte[] digest;
-        private final int[] use;
 
-        private Ticket(Slice slice, byte[] digest, int[] use) {
+        private Ticket(Slice slice) {
             this.slice = slice;
-            this.digest = digest;
-            this.use = use;
         }
     }
 
@@ -43,16 +37,13 @@ final class HologramProjectedLayerPlan {
 
         private final Header header;
         private final int[] remaining;
-        private byte[] expected;
-        private byte[] lastDigest;
-        private int next, settled, lastY, lastZ, lastX;
-        private Ticket pending;
+        private int next, settled, received, receivedCells, lastY, lastZ, lastX;
+        private final ArrayDeque<Ticket> pending = new ArrayDeque<>();
         private boolean closed;
 
         /** Create only after manifest/stock admission; the first ACK grants the initial upload credit. */
         Receiver(Manifest manifest) {
             header = manifest.header;
-            expected = manifest.root();
             remaining = new int[header.palette.size()];
             for (int i = 0; i < remaining.length; i++) remaining[i] = header.palette.get(i).count;
         }
@@ -60,23 +51,26 @@ final class HologramProjectedLayerPlan {
         Offer offer(byte[] encoded) throws IOException {
             Slice slice = HologramProjectedLayerWire.decodeSlice(encoded);
             if (!header.request.equals(slice.request)) return Offer.STALE;
+            // Task+sequence is the idempotency key. Replays never replace accepted work or issue another ticket.
+            // Actual permission, target and payment validation remains in the server execution path.
             if (slice.sequence < next) {
                 if (slice.sequence != next - 1) return Offer.STALE;
-                requireDigest(encoded, lastDigest);
                 return Offer.REPLAY;
             }
             if (finished() || closed) return Offer.CLOSED;
-            if (slice.sequence != next) return Offer.OUT_OF_ORDER;
-            if (pending != null) {
-                requireDigest(encoded, pending.digest);
-                return Offer.REPLAY;
+            if (slice.sequence < received) {
+                for (Ticket ticket : pending) if (ticket.slice.sequence == slice.sequence) {
+                    return Offer.REPLAY;
+                }
+                return Offer.STALE;
             }
-            byte[] digest = requireDigest(encoded, expected);
-            int remainingSlices = header.slices - next - 1;
-            int remainingCells = header.cells - settled - slice.size();
-            if (!fits(remainingCells, remainingSlices) || (remainingSlices == 0) != isEnd(slice.next())
+            if (slice.sequence != received || pending.size() >= HologramProjectedLayerWire.WINDOW)
+                return Offer.OUT_OF_ORDER;
+            int remainingSlices = header.slices - received - 1;
+            int remainingCells = header.cells - receivedCells - slice.size();
+            if (!fits(remainingCells, remainingSlices)
                 || slice.y < header.minY || slice.y > header.maxY
-                || next != 0 && HologramProjectedLayerWire.compare(lastY, lastZ, lastX,
+                || received != 0 && HologramProjectedLayerWire.compare(lastY, lastZ, lastX,
                     slice.y, slice.z(0), slice.x(0)) >= 0) throw malformed();
             int[] use = new int[remaining.length];
             for (int i = 0; i < slice.size(); i++) {
@@ -89,34 +83,27 @@ final class HologramProjectedLayerPlan {
                 for (int kind = 0; kind < remaining.length; kind++)
                     if (use[kind] != remaining[kind]) throw malformed();
             }
-            pending = new Ticket(slice, digest, use);
-            return Offer.ACCEPTED;
-        }
-
-        private byte[] requireDigest(byte[] encoded, byte[] required) throws IOException {
-            byte[] digest = commitment(header, encoded);
-            if (!MessageDigest.isEqual(digest, required)) throw malformed();
-            return digest;
-        }
-
-        Ticket pending() {
-            return pending;
-        }
-
-        /** Advance only when this exact owned slice has been accounted for; never ACK a failed batch as done. */
-        boolean settle(Ticket supplied) {
-            if (supplied == null || supplied != pending || closed) return false;
-            for (int i = 0; i < remaining.length; i++) remaining[i] -= supplied.use[i];
-            Slice slice = supplied.slice;
+            pending.addLast(new Ticket(slice));
+            for (int i = 0; i < remaining.length; i++) remaining[i] -= use[i];
             int last = slice.size() - 1;
             lastY = slice.y;
             lastZ = slice.z(last);
             lastX = slice.x(last);
-            settled += slice.size();
+            receivedCells += slice.size();
+            received++;
+            return Offer.ACCEPTED;
+        }
+
+        Ticket pending() {
+            return pending.peekFirst();
+        }
+
+        /** Advance only when this exact owned slice has been accounted for; never ACK a failed batch as done. */
+        boolean settle(Ticket supplied) {
+            if (supplied == null || supplied != pending.peekFirst() || closed) return false;
+            settled += supplied.slice.size();
             next++;
-            expected = slice.next();
-            lastDigest = supplied.digest;
-            pending = null;
+            pending.removeFirst();
             return true;
         }
 
@@ -124,7 +111,7 @@ final class HologramProjectedLayerPlan {
         void abort() {
             if (finished()) return;
             closed = true;
-            pending = null;
+            pending.clear();
         }
 
         boolean finished() {
@@ -133,15 +120,16 @@ final class HologramProjectedLayerPlan {
 
         Ack ack() throws IOException {
             boolean done = finished();
-            return new Ack(header.request, next, settled, closed || done || pending != null ? 0 : 1, done, closed);
+            return new Ack(header.request, next, settled, closed || done ? 0 : 1, done, closed);
         }
     }
 
-    /** Client-side credit accounting; a replay can never permit a second in-flight slice. */
+    /** Client credit is a fixed window anchored to the settled frontier, never additive on replay. */
     static final class Sender {
 
         private final Header header;
-        private int next, settled, inFlightCells;
+        private final ArrayDeque<Integer> inFlight = new ArrayDeque<>();
+        private int next, sent, settled, sentCells;
         private boolean credit, terminal;
 
         Sender(Header header) {
@@ -149,29 +137,36 @@ final class HologramProjectedLayerPlan {
         }
 
         boolean accept(Ack ack) {
-            if (terminal || !header.request.equals(ack.request) || ack.nextSlice < next || ack.nextSlice > next + 1
+            if (terminal || !header.request.equals(ack.request) || ack.nextSlice < next || ack.nextSlice > sent
                 || ack.nextSlice > header.slices || ack.settledCells > header.cells
                 || ack.complete != (ack.nextSlice == header.slices)
                 || !fits(header.cells - ack.settledCells, header.slices - ack.nextSlice)) return false;
-            if (ack.nextSlice == next) {
-                if (ack.settledCells != settled) return false;
-            } else {
-                if (inFlightCells == 0 || ack.settledCells != settled + inFlightCells) return false;
-                next = ack.nextSlice;
-                settled = ack.settledCells;
-                inFlightCells = 0;
+            int advance = ack.nextSlice - next, expectedCells = settled, seen = 0;
+            for (int count : inFlight) {
+                if (seen++ == advance) break;
+                expectedCells += count;
             }
+            if (ack.settledCells != expectedCells) return false;
+            for (int i = 0; i < advance; i++) inFlight.removeFirst();
+            next = ack.nextSlice;
+            settled = ack.settledCells;
             terminal = ack.complete || ack.aborted;
-            credit = !terminal && inFlightCells == 0 && ack.credit == 1;
+            credit = !terminal && ack.credit == 1;
+            if (terminal) inFlight.clear();
             return true;
         }
 
+        boolean canSend() {
+            return credit && !terminal && inFlight.size() < HologramProjectedLayerWire.WINDOW
+                && sent < header.slices;
+        }
+
         boolean claim(Slice slice) {
-            if (!credit || terminal || inFlightCells != 0 || !header.request.equals(slice.request)
-                || slice.sequence != next || !fits(header.cells - settled - slice.size(), header.slices - next - 1))
-                return false;
-            inFlightCells = slice.size();
-            credit = false;
+            if (!canSend() || !header.request.equals(slice.request) || slice.sequence != sent
+                || !fits(header.cells - sentCells - slice.size(), header.slices - sent - 1)) return false;
+            inFlight.addLast(slice.size());
+            sentCells += slice.size();
+            sent++;
             return true;
         }
     }

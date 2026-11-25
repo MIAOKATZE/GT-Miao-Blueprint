@@ -25,8 +25,6 @@ import com.miaokatze.gtmb.client.hologram.HologramLocalPlacement.Submission;
 import com.miaokatze.gtmb.client.hologram.HologramMaterialConfirmationDialog.LocalAction;
 import com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector;
 import com.miaokatze.gtmb.hologram.HologramMaterials;
-import com.miaokatze.gtmb.hologram.HologramPlacementRequest;
-import com.miaokatze.gtmb.hologram.HologramProjectedPlacement;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
 /** Escrow contract only; does not submit to the real library service or launch a client UI. */
@@ -36,7 +34,6 @@ final class HologramLibrarySecondUseRegression {
 
     public static void main(String[] args) throws IOException {
         requestRouting();
-        legacyCodecDiagnostics();
         supportedModeAndSource();
         System.out.println("Local construction confirmation regression passed.");
     }
@@ -50,8 +47,7 @@ final class HologramLibrarySecondUseRegression {
             calls.add(direct);
             return false;
         };
-        for (var action : new LocalAction[] { LocalAction.REFRESH, LocalAction.BACK, LocalAction.DETAILS,
-            LocalAction.ADVANCED }) SimpleAssert.that(
+        for (var action : new LocalAction[] { LocalAction.REFRESH, LocalAction.BACK, LocalAction.DETAILS }) SimpleAssert.that(
                 !HologramLibraryMaterialReviewScreen.dispatchRefused(
                     action,
                     () -> { throw new AssertionError("Local view and unsupported actions cannot consume a ticket"); },
@@ -65,26 +61,8 @@ final class HologramLibrarySecondUseRegression {
         SimpleAssert.that(
             !HologramLibraryMaterialReviewScreen.dispatchRefused(LocalAction.SUBMIT, () -> pending.getAndSet(null), refuse),
             "a second normal click cannot revive a consumed ticket");
-        pending.set(frozen);
-        SimpleAssert.that(
-            !HologramLibraryMaterialReviewScreen.dispatchRefused(LocalAction.ADVANCED, () -> pending.getAndSet(null), refuse),
-            "unsupported Advanced never transports a request or consumes a still-usable ticket");
-        SimpleAssert.that(pending.get() == frozen && calls.size() == 1, "no old fallback after a refused normal click");
-    }
-
-    /** Old data codec witnesses are offline diagnostics, no longer an action taken by either UI button. */
-    private static void legacyCodecDiagnostics() throws IOException {
-        UUID id = new UUID(89, 73);
-        int[] anchor = { 1, 64, 1 };
-        var cell = new HologramProjectedPlacement.Cell(0, 0, 0, "minecraft:cobblestone", 0,
-            "minecraft:cobblestone", 0, -1);
-        var plan = new HologramProjectedPlacement.Plan(
-            Collections.singletonList(cell),
-            Collections.singletonList(new HologramProjectedPlacement.Need("minecraft:cobblestone", 0, 1)));
-        SimpleAssert.eq(4, HologramPlacementRequest.encodeDirect(id, anchor, plan).getInteger("placementWireVersion"),
-            "legacy direct v4 decoder/encoder remains an offline format fixture");
-        SimpleAssert.eq(2, HologramPlacementRequest.encode(id, anchor, plan).getInteger("placementWireVersion"),
-            "legacy v2 decoder/encoder remains an offline format fixture");
+        SimpleAssert.that(pending.get() == null && calls.size() == 1,
+            "no obsolete transport can be retried after a refused ordinary click");
     }
 
     private static void supportedModeAndSource() {
@@ -100,14 +78,14 @@ final class HologramLibrarySecondUseRegression {
             "creative or no edit permission does not promise ordinary placement");
         SimpleAssert.eq(PlainAvailability.READY,
             HologramLibraryClient.plainPlacementAvailability(true, true, settings, true, true),
-            "the unmodified default passes capability checks for fully funded main-only placement");
+            "the unmodified default passes capability checks with the selected stock providers");
         SimpleAssert.that(!defaultTool.hasTagCompound() && settings.main && settings.containers && settings.me,
             "availability does not rewrite enabled sources on the held projector");
-        // Mask order: neither fallback, containers, wireless ME, both. Direct placement never uses wireless ME.
+        // Mask order: neither external source, containers, wireless ME, both.
         var ready = PlainAvailability.READY;
         var blocked = PlainAvailability.MATERIALS;
         PlainAvailability[][] withMain = {
-            { ready, ready, ready, ready }, { ready, blocked, ready, blocked }, { ready, ready, ready, ready }
+            { ready, ready, ready, ready }, { ready, ready, ready, ready }, { ready, ready, ready, ready }
         };
         for (int priority = 0; priority < withMain.length; priority++) {
             for (int mask = 0; mask < withMain[priority].length; mask++) {
@@ -119,9 +97,9 @@ final class HologramLibrarySecondUseRegression {
                     HologramLibraryClient.plainPlacementAvailability(true, true, configured, true, true),
                     "main enabled: priority " + priority + ", fallback mask " + mask);
                 configured.main = false;
-                SimpleAssert.eq(blocked,
+                SimpleAssert.eq(mask == 0 ? blocked : ready,
                     HologramLibraryClient.plainPlacementAvailability(true, true, configured, true, true),
-                    "disabled main never falls back: priority " + priority + ", fallback mask " + mask);
+                    "only explicitly enabled external sources remain available: priority " + priority + ", fallback mask " + mask);
             }
         }
         for (int invalid : new int[] { -1, 3 }) {
@@ -149,7 +127,6 @@ final class HologramLibrarySecondUseRegression {
 
     static void run() throws Exception {
         requestRouting();
-        legacyCodecDiagnostics();
         supportedModeAndSource();
         unrelatedLibraryError();
         sun.misc.Unsafe unsafe = (sun.misc.Unsafe) field(sun.misc.Unsafe.class, "theUnsafe").get(null);

@@ -120,7 +120,7 @@ final class HologramStockCokeOvenProfile {
             IStructureElement<?>[] branches = HologramDeclarationWrappers
                 .nativeChainChildren((IStructureElementChain<?>) chain);
             if (branches == null || branches.length != 2 || !factory(branches[0], HatchElementBuilder.class, "build")
-                || HologramIncrementalNativePlacement.fixedBlockData(branches[1]) != casing) return null;
+                || fixedBlockData(branches[1]) != casing) return null;
             var profile = new HologramStockCokeOvenProfile(
                 definition, controller, hatch, casing, machineBlock, chain, branches[0], branches[1], version,
                 elements, sealed);
@@ -256,4 +256,23 @@ final class HologramStockCokeOvenProfile {
         Method factory = element == null ? null : HologramDeclarationWrappers.factory(element.getClass());
         return factory != null && factory.getDeclaringClass() == owner && name.equals(factory.getName());
     }
+    /** Read only the audited native factory's captured constants; the generic fallback may call into the block. */
+    static Block fixedBlockData(IStructureElement<?> element) {
+        Method factory = HologramDeclarationWrappers.factory(element.getClass());
+        if (factory == null || factory.getDeclaringClass() != StructureUtility.class
+            || !"ofBlock".equals(factory.getName())) return null;
+        Class<?>[] types = factory.getParameterTypes();
+        if (types.length != 4 || types[0] != Block.class || types[1] != int.class || types[2] != Block.class
+            || types[3] != int.class) return null;
+        try {
+            Object accepted = HologramDeclarationWrappers.captured(element, "val$block");
+            return accepted instanceof Block && accepted == HologramDeclarationWrappers.captured(element, "val$defaultBlock")
+                && Integer.valueOf(0).equals(HologramDeclarationWrappers.captured(element, "val$meta"))
+                && Integer.valueOf(0).equals(HologramDeclarationWrappers.captured(element, "val$defaultMeta"))
+                    ? (Block) accepted : null;
+        } catch (ReflectiveOperationException unknownNativeVersion) {
+            return null;
+        }
+    }
+
 }

@@ -423,12 +423,11 @@ public final class HologramControllerDetailsRegression {
             NBTTagCompound family = new NBTTagCompound();
             family.setInteger("scope", 3);
             family.setInteger("selected", 0);
-            SimpleAssert.eq("", HologramScreen.nativeConstructionUnavailable(baseline.data, full, false, false),
+            SimpleAssert.eq("", HologramScreen.nativeConstructionUnavailable(baseline.data, full, false),
                 "an unedited, ordinary full controller stays eligible for the short native request");
-            deniedLegacyConstruction(baseline, full, false, true);
-            deniedLegacyConstruction(baseline, family, false, false);
-            deniedLegacyConstruction(pinnedMachine, full, true, false);
-            deniedLegacyConstruction(mixed, family, true, false);
+            deniedLegacyConstruction(baseline, family, false);
+            deniedLegacyConstruction(pinnedMachine, full, true);
+            deniedLegacyConstruction(mixed, family, true);
 
             HologramState.Cell first = mixed.cells.get(0), second = mixed.cells.get(1);
             SimpleAssert.that(first.x == 16 && first.targetStack.getItemDamage() == machineId
@@ -438,23 +437,23 @@ public final class HologramControllerDetailsRegression {
                 "refusing the old geometry review leaves both exact local edits and their separate coordinates intact");
 
             HologramState pure = drag(baseline, baseline, backpack, 1, 1);
-            deniedLegacyConstruction(pure, full, true, false);
+            deniedLegacyConstruction(pure, full, true);
             NBTTagCompound presetActive = new NBTTagCompound();
             presetActive.setBoolean("presetActive", true);
-            deniedLegacyConstruction(pure.withMetadata(presetActive), full, true, false);
-            deniedLegacyConstruction(baseline.withMetadata(presetActive), full, false, false);
+            deniedLegacyConstruction(pure.withMetadata(presetActive), full, true);
+            deniedLegacyConstruction(baseline.withMetadata(presetActive), full, false);
             HologramState tagged = drag(baseline, baseline, backpack, 2, 0);
-            deniedLegacyConstruction(tagged, full, true, false);
+            deniedLegacyConstruction(tagged, full, true);
             SimpleAssert.eq(retained, tagged.cells.get(0).targetStack.getTagCompound(),
                 "retiring the transport does not sanitize tagged hatch edits out of the local document");
             for (int mode : new int[] { 1, 2 }) {
                 NBTTagCompound destructive = new NBTTagCompound();
                 destructive.setInteger("mode", mode);
-                deniedLegacyConstruction(baseline.withMetadata(destructive), full, false, false);
+                deniedLegacyConstruction(baseline.withMetadata(destructive), full, false);
             }
             NBTTagCompound selection = new NBTTagCompound();
             selection.setIntArray("selectedIndices", new int[] { 0, 1 });
-            deniedLegacyConstruction(baseline, selection, false, false);
+            deniedLegacyConstruction(baseline, selection, false);
         } finally {
             prototypes[machineId] = null;
             prototypes[hatchId] = null;
@@ -470,9 +469,8 @@ public final class HologramControllerDetailsRegression {
         return HologramLocalControllerEdits.apply(state, baseline, "customPin", request);
     }
 
-    private static void deniedLegacyConstruction(HologramState state, NBTTagCompound settings, boolean edited,
-        boolean compatibility) {
-        SimpleAssert.that(!HologramScreen.nativeConstructionUnavailable(state.data, settings, edited, compatibility)
+    private static void deniedLegacyConstruction(HologramState state, NBTTagCompound settings, boolean edited) {
+        SimpleAssert.that(!HologramScreen.nativeConstructionUnavailable(state.data, settings, edited)
             .isEmpty(), "unsupported native action must visibly refuse instead of changing or serializing the plan");
     }
 

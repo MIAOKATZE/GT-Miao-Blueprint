@@ -56,7 +56,8 @@ public final class HologramProjectedLayerServiceRegression {
             noFalseAdmission(unsafe);
             blockedTailPreservesPrefix(unsafe);
             pauseStockStopAndDisconnect(unsafe);
-            boundedBatch(unsafe);
+            deadlineBoundedWork(unsafe);
+            heightGroupCadence(unsafe);
             activityLease(unsafe);
         } finally {
             if (previous == null) HologramConstructionJournal.STORAGE_ROOT.remove();
@@ -79,9 +80,9 @@ public final class HologramProjectedLayerServiceRegression {
                 "dry observation and no workspace geometry");
             fixture.world.arm();
             require(job.offer(fixture.player, plan.first) == Offer.ACCEPTED, "first slice accepted");
-            require(job.offer(fixture.player, plan.first) == Offer.REPLAY && job.transferAck().credit == 0,
-                "replay before settlement never grants credit");
-            Status first = job.step(Long.MAX_VALUE);
+            require(job.offer(fixture.player, plan.first) == Offer.REPLAY && job.transferAck().nextSlice == 0,
+                "replay before settlement never advances the cumulative frontier");
+            Status first = job.step(Long.MAX_VALUE, 0);
             require(first.phase == AWAITING_SLICE && first.acceptedSlices == 1 && first.settledSlices == 1
                 && first.placed == 1 && first.alreadySatisfied == 1 && fixture.stock() == 2
                 && fixture.world.getBlock(0, 64, 0) == Blocks.stone && fixture.world.getBlock(0, 65, 0) == Blocks.air
@@ -90,7 +91,7 @@ public final class HologramProjectedLayerServiceRegression {
             require(job.offer(fixture.player, plan.first) == Offer.REPLAY, "settled replay leaves the world untouched");
             require(!HologramConstructionJournal.pending(fixture.player), "existing journal settled first payment");
             require(job.offer(fixture.player, plan.tail) == Offer.ACCEPTED, "tail credit");
-            Status done = job.step(Long.MAX_VALUE);
+            Status done = job.step(Long.MAX_VALUE, 0);
             require(done.phase == COMPLETE && done.placed == 2 && done.alreadySatisfied == 1 && fixture.stock() == 1
                 && done.sequence > first.sequence && job.transferAck().complete
                 && fixture.world.writes().size() == 2 && !HologramProjectedLayerService.active(fixture.player),
@@ -122,10 +123,10 @@ public final class HologramProjectedLayerServiceRegression {
             StreamPlan plan = new StreamPlan("stone", 3, new int[] { 0, 0, 0 }, new int[] { 0, 0, 0, 1, 0, 0 });
             HologramProjectedLayerService job = fixture.begin(plan);
             fixture.world.arm();
-            require(job.offer(fixture.player, plan.first) == Offer.ACCEPTED && job.step(Long.MAX_VALUE).placed == 1,
+            require(job.offer(fixture.player, plan.first) == Offer.ACCEPTED && job.step(Long.MAX_VALUE, 0).placed == 1,
                 "first safe layer commits");
             require(job.offer(fixture.player, plan.tail) == Offer.ACCEPTED, "later valid frame is not admission to write");
-            Status stopped = job.step(Long.MAX_VALUE);
+            Status stopped = job.step(Long.MAX_VALUE, 0);
             require(stopped.phase == STOPPED && stopped.reason == Reason.BLOCKED && stopped.placed == 1
                 && stopped.acceptedSlices == 2 && stopped.settledSlices == 1 && fixture.stock() == 2
                 && fixture.world.getBlock(0, 65, 0) == Blocks.air
@@ -142,9 +143,9 @@ public final class HologramProjectedLayerServiceRegression {
             fixture.world.arm();
             require(job.transferAck().credit == 1 && job.pause(fixture.player) && job.transferAck().credit == 0,
                 "pause withdraws future credit");
-            require(job.offer(fixture.player, plan.first) == Offer.ACCEPTED && job.step(Long.MAX_VALUE).phase == PAUSED
+            require(job.offer(fixture.player, plan.first) == Offer.ACCEPTED && job.step(Long.MAX_VALUE, 0).phase == PAUSED
                 && job.status().placed == 0 && fixture.stock() == 2, "one prior in-flight slice can stage, not write");
-            require(job.resume(fixture.player) && job.step(Long.MAX_VALUE).placed == 1, "owned resume");
+            require(job.resume(fixture.player) && job.step(Long.MAX_VALUE, 0).placed == 1, "owned resume");
             fixture.player.inventory.mainInventory[1] = null;
             require(job.transferAck().aborted && job.status().reason == Reason.MISSING_STOCK && job.status().placed == 1
                 && job.offer(fixture.player, plan.tail) == Offer.CLOSED && fixture.world.writes().size() == 1,
@@ -156,26 +157,66 @@ public final class HologramProjectedLayerServiceRegression {
             fixture.world.arm();
             require(job.offer(fixture.player, plan.first) == Offer.ACCEPTED, "staged before lost owner");
             fixture.player.playerNetServerHandler.netManager.channel().close().awaitUninterruptibly();
-            Status stopped = job.step(Long.MAX_VALUE);
+            Status stopped = job.step(Long.MAX_VALUE, 0);
             require(stopped.phase == STOPPED && stopped.reason == Reason.OWNER_CHANGED && fixture.stock() == 2
                 && fixture.world.writes().isEmpty(), "connection loss cannot write or debit staged cells");
         }
     }
 
-    private static void boundedBatch(sun.misc.Unsafe unsafe) throws Exception {
-        try (Fixture fixture = new Fixture(unsafe, 5)) {
-            StreamPlan plan = new StreamPlan("stone", 5, new int[] { 0, 0, 0, 1, 0, 0, 2, 0, 0, 3, 0, 0, 4, 0, 0 },
-                null);
-            HologramProjectedLayerService job = fixture.begin(plan);
+    private static void deadlineBoundedWork(sun.misc.Unsafe unsafe) throws Exception {
+        // More than both former quotas (32 inspections and 4 writes), still one legitimate stack and wire frame.
+        int count = 40;
+        try (Fixture fixture = new Fixture(unsafe, count)) {
+            UUID id = UUID.randomUUID();
+            String stone = "minecraft:stone";
+            Header header = new Header(id, 0, 64, 0, 0, 64, 0, count - 1, 64, 0, count, 1,
+                Collections.singletonList(new Variant(stone, 0, stone, 0, -1, false, "", "", count)));
+            int[] ops = new int[count * 3];
+            for (int i = 0; i < count; i++) ops[i * 3] = i;
+            byte[] slice = HologramProjectedLayerWire.encodeSlice(
+                new Slice(id, 0, 64, ops));
+            Manifest manifest = new Manifest(header);
+            HologramProjectedLayerService job = fixture.job = HologramProjectedLayerService.begin(
+                fixture.player, manifest, OBSERVE_WHOLE_MAIN_THEN_DEBIT_PER_CELL);
             fixture.world.arm();
-            require(job.offer(fixture.player, plan.first) == Offer.ACCEPTED, "one bounded slab");
-            require(job.step(System.nanoTime() - 1).placed == 0, "expired budget never starts a transaction");
-            require(job.step(Long.MAX_VALUE).placed == 4 && !job.transferAck().complete && fixture.stock() == 1,
-                "transaction count cap applies even with unlimited deadline");
-            job.cancel(fixture.player);
-            require(job.status().reason == Reason.CANCELLED && job.status().placed == 4
-                && job.status().settledSlices == 0 && job.transferAck().aborted && fixture.world.writes().size() == 4,
-                "partial slice stop publishes committed writes separately from fully settled slices");
+            require(job.offer(fixture.player, slice) == Offer.ACCEPTED, "one bounded wire slab");
+            require(job.step(System.nanoTime() - 1, 0).placed == 0, "expired shared deadline never starts a transaction");
+            Status done = job.step(Long.MAX_VALUE, 0);
+            require(done.phase == COMPLETE && done.placed == count && job.transferAck().complete
+                && fixture.stock() == 0 && fixture.world.writes().size() == count,
+                "one service invocation drains received work without a fixed cells-per-tick quota");
+            require(!HologramConstructionJournal.pending(fixture.player), "all actual world/payment transactions settled");
+        }
+    }
+
+    private static void heightGroupCadence(sun.misc.Unsafe unsafe) throws Exception {
+        try (Fixture fixture = new Fixture(unsafe, 7)) {
+            UUID id = UUID.randomUUID();
+            String stone = "minecraft:stone";
+            Header header = new Header(id, 0, 64, 0, 0, 64, 0, 0, 70, 0, 7, 7,
+                Collections.singletonList(new Variant(stone, 0, stone, 0, -1, false, "", "", 7)));
+            byte[][] frames = new byte[7][];
+            for (int i = 6; i >= 0; i--) {
+                frames[i] = HologramProjectedLayerWire.encodeSlice(
+                    new Slice(id, i, 64 + i, new int[] { 0, 0, 0 }));
+            }
+            fixture.job = HologramProjectedLayerService.begin(fixture.player,
+                new Manifest(header), OBSERVE_WHOLE_MAIN_THEN_DEBIT_PER_CELL);
+            var job = fixture.job;
+            fixture.world.arm();
+            for (int i = 0; i < 5; i++)
+                require(job.offer(fixture.player, frames[i]) == Offer.ACCEPTED, "first five layers staged");
+            require(job.step(Long.MAX_VALUE, 100).placed == 5 && fixture.stock() == 2,
+                "first part of the same height group writes and debits");
+            for (int i = 5; i < frames.length; i++)
+                require(job.offer(fixture.player, frames[i]) == Offer.ACCEPTED, "sixth and seventh layers staged");
+            require(job.step(Long.MAX_VALUE, 112).placed == 6 && fixture.stock() == 1
+                && fixture.world.writes().size() == 6, "the sixth settles, but the seventh cannot write or debit");
+            require(job.step(Long.MAX_VALUE, 121).placed == 6 && fixture.stock() == 1,
+                "the seventh waits at completion plus nine ticks");
+            require(job.step(Long.MAX_VALUE, 122).phase == COMPLETE && fixture.stock() == 0
+                && fixture.world.getBlock(0, 70, 0) == Blocks.stone && fixture.world.writes().size() == 7,
+                "the seventh writes and debits exactly ten ticks after the first group finishes");
         }
     }
 
@@ -189,18 +230,16 @@ public final class HologramProjectedLayerServiceRegression {
             Header header = new Header(id, 0, 64, 0, 0, 64, 0, slices - 1, 64, 0, slices, slices,
                 Collections.singletonList(new Variant(stone, 0, stone, 0, -1, false, "", "", slices)));
             byte[][] pieces = new byte[slices][];
-            byte[] root = HologramProjectedLayerWire.end();
             for (int i = slices - 1; i >= 0; i--) {
                 fixture.world.seed(i, 64, 0, Blocks.stone, 0);
-                pieces[i] = HologramProjectedLayerWire.encodeSlice(new Slice(id, i, 64, new int[] { i, 0, 0 }, root));
-                root = HologramProjectedLayerWire.commitment(header, pieces[i]);
+                pieces[i] = HologramProjectedLayerWire.encodeSlice(new Slice(id, i, 64, new int[] { i, 0, 0 }));
             }
             HologramProjectedLayerService job = fixture.job = HologramProjectedLayerService
-                .begin(fixture.player, new Manifest(header, root), OBSERVE_WHOLE_MAIN_THEN_DEBIT_PER_CELL, time::get);
+                .begin(fixture.player, new Manifest(header), OBSERVE_WHOLE_MAIN_THEN_DEBIT_PER_CELL, time::get);
             for (byte[] piece : pieces) {
                 time.addAndGet(29 * second);
                 require(job.offer(fixture.player, piece) == Offer.ACCEPTED, "genuine continued activity");
-                job.step(Long.MAX_VALUE);
+                job.step(Long.MAX_VALUE, 0);
             }
             require(time.get() > 600 * second && job.status().phase == COMPLETE
                 && job.status().alreadySatisfied == slices && job.status().placed == 0 && fixture.stock() == slices,
@@ -243,12 +282,11 @@ public final class HologramProjectedLayerServiceRegression {
             String name = "minecraft:" + block;
             Header header = new Header(id, 0, 64, 0, 0, 64, 0, 4, 65, 0, count, tailOps == null ? 1 : 2,
                 Collections.singletonList(new Variant(name, 0, name, 0, -1, false, "", "", count)));
-            byte[] end = HologramProjectedLayerWire.end();
-            tail = tailOps == null ? null : HologramProjectedLayerWire.encodeSlice(new Slice(id, 1, 65, tailOps, end));
+            tail = tailOps == null ? null : HologramProjectedLayerWire.encodeSlice(new Slice(id, 1, 65, tailOps));
             first = HologramProjectedLayerWire.encodeSlice(
-                new Slice(id, 0, 64, firstOps, tail == null ? end : HologramProjectedLayerWire.commitment(header, tail)));
+                new Slice(id, 0, 64, firstOps));
             manifest = HologramProjectedLayerWire.decodeManifest(HologramProjectedLayerWire
-                .encodeManifest(new Manifest(header, HologramProjectedLayerWire.commitment(header, first))));
+                .encodeManifest(new Manifest(header)));
         }
     }
 

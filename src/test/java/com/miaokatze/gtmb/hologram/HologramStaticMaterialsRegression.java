@@ -3,7 +3,11 @@
 
 package com.miaokatze.gtmb.hologram;
 
+import net.minecraft.block.Block;
 import net.minecraft.init.Blocks;
+import net.minecraftforge.fluids.Fluid;
+import net.minecraftforge.fluids.FluidRegistry;
+import net.minecraftforge.fluids.FluidStack;
 import net.minecraft.init.Items;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
@@ -32,6 +36,24 @@ final class HologramStaticMaterialsRegression {
             }
             tile.setTag("Inventory", inventory);
             NBTTagCompound original = (NBTTagCompound) tile.copy();
+            assertResolvedRepeat(Blocks.chest, 0, new ItemStack(Blocks.chest), tile, null);
+            Fluid fluid = FluidRegistry.getFluid("gtmb_static_contribution_fixture");
+            if (fluid == null) {
+                fluid = new Fluid("gtmb_static_contribution_fixture");
+                FluidRegistry.registerFluid(fluid);
+            }
+            NBTTagCompound contents = new NBTTagCompound();
+            contents.setString("id", "fixture:tile");
+            contents.setTag("mFluid", new FluidStack(fluid, 1250).writeToNBT(new NBTTagCompound()));
+            assertResolvedRepeat(Blocks.stone, 0, new ItemStack(Blocks.stone), null, contents);
+            NBTTagCompound sealedTag = new NBTTagCompound();
+            NBTTagCompound sealedTile = new NBTTagCompound();
+            sealedTile.setInteger("mID", 25);
+            sealedTag.setTag(HologramRecovery.TAG,
+                HologramRecovery.sealNBT(sealedTile, "minecraft:chest", 0, "minecraft:chest", 0, 25));
+            ItemStack sealed = new ItemStack(Blocks.chest);
+            sealed.setTagCompound(sealedTag);
+            assertResolvedRepeat(Blocks.chest, 0, sealed, null, sealedTag);
             builder.add(Blocks.chest, 0, new ItemStack(Blocks.chest), tile, null);
             builder.add(Blocks.chest, 0, new ItemStack(Blocks.chest), tile, null);
             SimpleAssert.eq(original, tile, "material inspection never edits the retained source payload");
@@ -77,5 +99,29 @@ final class HologramStaticMaterialsRegression {
         } catch (Exception failure) {
             throw new AssertionError("Detached material estimate regression", failure);
         }
+    }
+
+    static void assertResolvedRepeat(Block block, int metadata, ItemStack target, NBTTagCompound tile,
+        NBTTagCompound item) throws Exception {
+        HologramStaticMaterials.Builder one = new HologramStaticMaterials.Builder();
+        one.add(block, metadata, target, tile, item);
+        one.unaccounted("explicit unknown component");
+        NBTTagCompound before = one.snapshot();
+        HologramStaticMaterials.Contribution frozen = one.freeze();
+        HologramStaticMaterials.Builder aggregated = new HologramStaticMaterials.Builder();
+        aggregated.addResolved(frozen, 3);
+        HologramStaticMaterials.Builder sequential = new HologramStaticMaterials.Builder();
+        for (int i = 0; i < 3; i++) {
+            sequential.add(block, metadata, target, tile, item);
+            sequential.unaccounted("explicit unknown component");
+        }
+        SimpleAssert.eq(sequential.snapshot(), aggregated.snapshot(),
+            "resolved aggregate preserves exact item/fluid quantities, tagged identities and explicit uncertainties");
+        aggregated.snapshot().setBoolean("mutated", true);
+        SimpleAssert.eq(before, one.snapshot(), "consumer snapshots cannot mutate a sealed contribution");
+        try {
+            one.unaccounted("late mutation");
+            throw new AssertionError("sealed contribution accepted a mutation");
+        } catch (IllegalStateException expected) {}
     }
 }

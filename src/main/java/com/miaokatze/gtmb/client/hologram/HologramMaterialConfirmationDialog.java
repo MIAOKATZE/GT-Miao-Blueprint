@@ -46,7 +46,6 @@ final class HologramMaterialConfirmationDialog {
         BACK,
         REFRESH,
         SUBMIT,
-        ADVANCED,
         DETAILS
     }
 
@@ -68,10 +67,6 @@ final class HologramMaterialConfirmationDialog {
         boolean localSubmitAvailable();
 
         default boolean describesNativeTargets() {
-            return false;
-        }
-
-        default boolean supportsAdvancedPlacement() {
             return false;
         }
 
@@ -193,9 +188,6 @@ final class HologramMaterialConfirmationDialog {
             case 245 -> new int[] { 400, 340, 218 };
             case 246 -> new int[] { 476, 369, 142 };
             case 247 -> new int[] { 338, 369, 132 };
-            case 248 -> local && localView.supportsAdvancedPlacement()
-                ? new int[] { localView.supportsDetailedMaterials() ? 174 : 14, 369,
-                    localView.supportsDetailedMaterials() ? 154 : 314 } : null;
             case 249 -> local && localView.supportsDetailedMaterials() ? new int[] { 14, 369, 150 } : null;
             default -> null;
         };
@@ -408,19 +400,6 @@ final class HologramMaterialConfirmationDialog {
                 () -> localView.localAction(LocalAction.DETAILS),
                 localView::localDetailsAvailable,
                 () -> 0).tooltipBuilder(t -> t.addLine("仅本地统计指定结构，不请求或开始施工。")));
-            if (localView.supportsAdvancedPlacement()) panel.child(
-                button(
-                    248,
-                    () -> details ? "高级施工选项…" : "高级施工选项（旧流程）…",
-                    details ? 174 : 14,
-                    369,
-                    details ? 154 : 314,
-                    () -> localView.localAction(LocalAction.ADVANCED),
-                    localView::localSubmitAvailable,
-                    () -> 0).tooltipBuilder(t -> {
-                        t.addLine("会联系服务器打开旧版核验页，可选择 NBT、网络、抵用券等。");
-                        t.addLine("不会自动施工、清理原方块或下 AE 订单。");
-                    }));
             panel.child(
                 button(
                     247,

@@ -14,6 +14,7 @@ import com.miaokatze.gtmb.hologram.HologramPreviewPose;
 import com.miaokatze.gtmb.hologram.HologramProjectedLayerEncoder;
 import com.miaokatze.gtmb.hologram.HologramProjectedLayerEncoder.Cursor;
 import com.miaokatze.gtmb.hologram.HologramProjectedLayerEncoder.Evidence;
+import com.miaokatze.gtmb.hologram.HologramProjectedLayerEncoder.Layout;
 import com.miaokatze.gtmb.hologram.HologramProjectedLayerEncoder.Plain;
 import com.miaokatze.gtmb.hologram.HologramProjectedLayerEncoder.Source;
 
@@ -22,7 +23,8 @@ final class HologramPrivatePlainPlacementSource implements Source {
 
     private static final int OFFSET = HologramProjectedLayerEncoder.MAX_OFFSET;
     private static final long MAX_CELL_PROBES = 12_000_000;
-    private final Evidence evidence;
+    private final int cells;
+    private final Layout layout;
     private final HologramRegionCache regions;
     private final int[] anchor, localLow, localHigh, low, high;
     private final int[] worldAxis = new int[3], sign = new int[3];
@@ -31,7 +33,7 @@ final class HologramPrivatePlainPlacementSource implements Source {
 
     /**
      * Call only after consuming the existing material-confirmation ticket. Evidence must be the unchanged capture's
-     * own, built at its compact reader and not synthesized from a loaded renderer or material forecast.
+     * own, from its exact compact reader or frozen draft visitor, never from a renderer or material forecast.
      */
     static HologramPrivatePlainPlacementSource bind(HologramLocalPlacement.Submission confirmed, Minecraft client,
         BooleanSupplier stillOwned) throws IOException {
@@ -40,20 +42,28 @@ final class HologramPrivatePlainPlacementSource implements Source {
         HologramLibraryClient.DisplaySource captured = confirmed.source();
         HologramState displayed = confirmed.display();
         Evidence evidence = captured == null ? null : captured.plainPlacementEvidence();
-        if (captured == null || captured.draft != null || captured.json == null || !captured.compactSource
-            || !captured.publicId.isEmpty() || !captured.key.equals("local:" + captured.localId)
-            || !captured.localId.matches("local_[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}")
-            || !captured.capturedIndexedMaterialSource() || evidence == null || !evidence.sameCapture(captured.json)
-            || captured.state == null || displayed == null || displayed.cells != captured.state.cells
-            || displayed.regions != captured.state.regions || captured.state.data.getBoolean("displayPartial")
-            || displayed.data.getBoolean("displayPartial")
+        if (captured == null || evidence == null || !captured.publicId.isEmpty() || captured.state == null
+            || displayed == null || displayed.cells != captured.state.cells || displayed.regions != captured.state.regions
+            || captured.state.data.getBoolean("displayPartial") || displayed.data.getBoolean("displayPartial")
             || displayed.cells.size() != evidence.cells()) throw unsupported();
+        Object exact;
+        if (captured.draft != null) {
+            if (captured.json != null || !captured.key.equals("draft") || !captured.localId.isEmpty())
+                throw unsupported();
+            exact = captured.draft;
+        } else {
+            if (captured.json == null || !captured.compactSource || !captured.key.equals("local:" + captured.localId)
+                || !captured.localId.matches("local_[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}")
+                || !captured.capturedIndexedMaterialSource()) throw unsupported();
+            exact = captured.json;
+        }
+        if (!evidence.sameCapture(exact)) throw unsupported();
         NBTTagCompound frozen = confirmed.intent();
         if (!frozen.hasKey("x", 3) || !frozen.hasKey("y", 3) || !frozen.hasKey("z", 3)
             || !frozen.hasKey("previewPose", 11)) throw unsupported();
         return new HologramPrivatePlainPlacementSource(
             evidence,
-            captured.json,
+            exact,
             displayed.regions,
             new int[] { frozen.getInteger("x"), frozen.getInteger("y"), frozen.getInteger("z") },
             frozen.getIntArray("previewPose"),
@@ -62,12 +72,12 @@ final class HologramPrivatePlainPlacementSource implements Source {
     }
 
     /** Inputs below this boundary are immutable; available to the pure synthetic cursor fixture. */
-    HologramPrivatePlainPlacementSource(Evidence evidence, byte[] exact, HologramRegionCache regions, int[] anchor,
+    HologramPrivatePlainPlacementSource(Evidence evidence, Object exact, HologramRegionCache regions, int[] anchor,
         int[] recipe, int worldHeight, BooleanSupplier current) throws IOException {
         if (evidence == null || !evidence.sameCapture(exact) || regions == null || anchor == null
             || anchor.length != 3 || recipe == null || recipe.length > HologramPreviewPose.MAX_RECIPE_LENGTH
             || worldHeight < 1 || worldHeight > 4096 || current == null) throw unsupported();
-        this.evidence = evidence;
+        cells = evidence.cells();
         this.regions = regions;
         this.anchor = anchor.clone();
         this.current = current;
@@ -77,6 +87,7 @@ final class HologramPrivatePlainPlacementSource implements Source {
             pose = pose.turn(turn == 1);
         }
         int[] extents = regions.bounds();
+        if (!evidence.matchesBounds(extents)) throw unsupported();
         localLow = new int[] { extents[0], extents[1], extents[2] };
         localHigh = new int[] { extents[3], extents[4], extents[5] };
         low = new int[3];
@@ -105,20 +116,20 @@ final class HologramPrivatePlainPlacementSource implements Source {
         long occupied = Math.min(volume, (long) regions.regions.size() * 4096);
         long emptyChunkProbes = coarse * 16L * 16L;
         if (occupied + emptyChunkProbes > MAX_CELL_PROBES) throw unsupported();
+        layout = evidence.layout(this.anchor, worldAxis, sign);
     }
 
     int anchor(int axis) {
         return anchor[axis];
     }
 
-    @Override
-    public int cells() {
-        return evidence.cells();
+    int cells() {
+        return cells;
     }
 
     @Override
-    public int count(Plain kind) {
-        return evidence.count(kind);
+    public Layout layout() {
+        return layout;
     }
 
     @Override

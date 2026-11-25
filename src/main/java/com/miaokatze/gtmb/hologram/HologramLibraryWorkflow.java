@@ -477,11 +477,9 @@ final class HologramLibraryWorkflow {
                 request.hasKey("reviewedJsonSha256", 8) ? request.getString("reviewedJsonSha256")
                     : request.getString("jsonSha256")))
             return false;
-        if (request.getBoolean("localSaveReceipt")) {
-            if (!HologramLibraryFacade.localSaveWritten(s.player, request)) return false;
-            s.blueprintSavePreviewSha256 = request.getString("previewSha256");
-        } else if (s.blueprintSavePreviewSha256.isEmpty()
-            || !s.blueprintSavePreviewSha256.equals(request.getString("previewSha256"))) return false;
+        if (!request.hasKey("localSaveReceipt", 1) || !request.getBoolean("localSaveReceipt")
+            || !HologramLibraryFacade.localSaveWritten(s.player, request)) return false;
+        s.blueprintSavePreviewSha256 = request.getString("previewSha256");
         if (s.blueprintSavePrepared != null) {
             try {
                 HologramPresets.commitSaved(s.blueprintSavePrepared, s.blueprintSaveUpdate);
@@ -511,7 +509,7 @@ final class HologramLibraryWorkflow {
         return true;
     }
 
-    /** Capability shared by native preview upload and the exact-byte disk acknowledgement. */
+    /** Ownership fence for the exact-byte local disk acknowledgement. */
     static boolean librarySaveCurrent(EntityPlayerMP player, NBTTagCompound request) {
         if (player == null || request == null) return false;
         HologramSession s = HologramWorkspace.find(player.getUniqueID());
@@ -543,15 +541,6 @@ final class HologramLibraryWorkflow {
     static boolean libraryDraftPrepared(EntityPlayerMP player, NBTTagCompound request, String hash) {
         if (!librarySaveCurrent(player, request) || !hash.matches("[a-f0-9]{64}")) return false;
         HologramWorkspace.find(player.getUniqueID()).blueprintSaveJsonSha256 = hash;
-        return true;
-    }
-
-    static boolean libraryPreviewVerified(EntityPlayerMP player, NBTTagCompound request, String jsonHash,
-        String previewHash) {
-        if (!librarySaveCurrent(player, request) || !previewHash.matches("[a-f0-9]{64}")) return false;
-        HologramSession s = HologramWorkspace.find(player.getUniqueID());
-        if (!jsonHash.equals(s.blueprintSaveJsonSha256)) return false;
-        s.blueprintSavePreviewSha256 = previewHash;
         return true;
     }
 

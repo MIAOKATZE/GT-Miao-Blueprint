@@ -359,7 +359,7 @@ public final class HologramProgressNativeFixture {
         result.setInteger("cells", CELLS);
         result.setInteger("explicitChunkRequests", chunk);
         result.setInteger("fixtureCellsPerTickBound", 512);
-        result.setInteger("productionJobPerTickBound", HologramPlacementJobs.BUDGET);
+        result.setBoolean("productionJobTimeBoundOnly", true);
         result.setLong("productionSliceNanos", HologramWorkBudget.SLICE_NANOS);
         result.setLong("productionTickNanos", HologramWorkBudget.TICK_NANOS);
         result.setTag("samples", samples);

@@ -91,7 +91,7 @@ final class HologramStockNativeServer {
         }
     }
 
-    private static final int INGRESS_CAP = 64, RESULT_CAP = 128, WORK_PER_TICK = 8, PROOF_CAP = 256;
+    private static final int INGRESS_CAP = 64, RESULT_CAP = 128, PROOF_CAP = 256;
     private static final long COLD_NANOS = TimeUnit.SECONDS.toNanos(10);
     private final ReplySink sink;
     private final HologramRequestGate probeSlots = new HologramRequestGate(1, 32);
@@ -179,7 +179,7 @@ final class HologramStockNativeServer {
                 if (resetRequested || System.nanoTime() >= deadline) return;
                 if (!active.remove(job.endpoint.actor, job)) continue;
                 active.put(job.endpoint.actor, job);
-                var state = job.entry.tick(deadline, 32, WORK_PER_TICK, (gate, lease) -> {
+                var state = job.entry.tick(deadline, (gate, lease) -> {
                     synchronized (inbound) {
                         return resetRequested || stopQueued.contains(job.key) ? null : gate.beginTransaction(lease);
                     }
@@ -341,7 +341,7 @@ final class HologramStockNativeServer {
         Identity key = waiting.identity();
         Owned other = active.get(waiting.endpoint.actor);
         if (other != null && !HologramWorkspace.currentActionEndpoint(other.endpoint)) {
-            var retired = other.entry.tick(Long.MAX_VALUE, 1, 1, (current, lease) -> null);
+            var retired = other.entry.tick(Long.MAX_VALUE, (current, lease) -> null);
             if (retired != HologramStockNativeConstruction.State.ACTIVE) terminal(other, retired);
         }
         ProofHistory history = proofHistory(waiting.endpoint);
@@ -463,7 +463,7 @@ final class HologramStockNativeServer {
             if (job.entry.stop(job.endpoint, job.key.request.gateRequest())) {
                 terminal(job, HologramStockNativeConstruction.State.STOPPED);
             } else if (!HologramWorkspace.currentActionEndpoint(job.endpoint)) {
-                var state = job.entry.tick(Long.MAX_VALUE, 1, 1, (current, lease) -> null);
+                var state = job.entry.tick(Long.MAX_VALUE, (current, lease) -> null);
                 if (state != HologramStockNativeConstruction.State.ACTIVE) terminal(job, state);
             }
         }

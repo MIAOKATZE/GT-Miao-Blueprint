@@ -142,12 +142,6 @@ final class HologramLibraryServiceRegression {
             SimpleAssert.that(
                 HologramService.libraryDraftPrepared(owner, saveRequest, jsonSha),
                 "server records the exact pre-transfer JSON SHA under its save nonce");
-            SimpleAssert.that(
-                !HologramService.libraryPreviewVerified(owner, saveRequest, previewSha, previewSha),
-                "preview with a different JSON digest cannot verify the save");
-            SimpleAssert.that(
-                HologramService.libraryPreviewVerified(owner, saveRequest, jsonSha, previewSha),
-                "validated source-bound PNG can arm its own preview digest");
             NBTTagCompound acknowledgement = (NBTTagCompound) saveRequest.copy();
             acknowledgement.setString("op", "ackBlueprintSaved");
             acknowledgement.setString("localId", savedLocal);
@@ -179,8 +173,8 @@ final class HologramLibraryServiceRegression {
                 "closing presentation preserves exact admitted receipt");
             HologramService.handle(owner, acknowledgement);
             SimpleAssert.that(
-                !(Boolean) get(session, "blueprintDirty") && ((String) get(session, "blueprintSaveReceipt")).isEmpty(),
-                "only exact JSON and verified PNG disk ACK retires the nonce");
+                (Boolean) get(session, "blueprintDirty") && saveReceipt.equals(get(session, "blueprintSaveReceipt")),
+                "even exact submitted hashes cannot commit without a local owner receipt");
             owner.inventory.currentItem = 0;
             set(session, "libraryUiActive", true);
             exerciseLocalReceipt(unsafe, owner, other, reconnect, session, request, savedLocal, jsonSha, previewSha);
@@ -806,9 +800,9 @@ final class HologramLibraryServiceRegression {
             set(session, "blueprintSavePreviewSha256", "");
             set(session, "blueprintDirty", true);
             Method remember = HologramLibraryFacade.class
-                .getDeclaredMethod("rememberSavedResult", EntityPlayerMP.class, NBTTagCompound.class);
+                .getDeclaredMethod("rememberSavedResult", EntityPlayerMP.class, NBTTagCompound.class, byte[].class);
             remember.setAccessible(true);
-            remember.invoke(null, owner, proof);
+            remember.invoke(null, owner, proof, (byte[]) null);
             Object activeResult = results.get(owner.getUniqueID());
             NBTTagCompound activeProof = (NBTTagCompound) get(activeResult, "proof");
             HologramSession current = (HologramSession) session;
@@ -910,7 +904,7 @@ final class HologramLibraryServiceRegression {
             set(session, "blueprintSaveReceipt", proof.getString("saveReceipt"));
             set(session, "blueprintSavePreviewSha256", "");
             set(session, "blueprintDirty", true);
-            remember.invoke(null, owner, proof);
+            remember.invoke(null, owner, proof, (byte[]) null);
             NBTTagCompound canceled = (NBTTagCompound) proof.copy();
             canceled.setString("previewSha256", pngHash);
             HologramLibraryFacade.resolveSavedResult(owner, canceled, true);
@@ -926,7 +920,7 @@ final class HologramLibraryServiceRegression {
                 UUID.randomUUID()
                     .toString());
             set(session, "blueprintSaveReceipt", proof.getString("saveReceipt"));
-            remember.invoke(null, owner, proof);
+            remember.invoke(null, owner, proof, (byte[]) null);
             Field queueField = com.miaokatze.gtmb.util.ServerTaskScheduler.class.getDeclaredField("SERVER_TASKS");
             queueField.setAccessible(true);
             java.util.Queue<Runnable> tasks = (java.util.Queue<Runnable>) queueField.get(null);
@@ -962,7 +956,7 @@ final class HologramLibraryServiceRegression {
                     .toString());
             set(session, "blueprintSaveReceipt", proof.getString("saveReceipt"));
             set(session, "blueprintSaveJsonSha256", jsonHash);
-            remember.invoke(null, owner, proof);
+            remember.invoke(null, owner, proof, (byte[]) null);
             NBTTagCompound wrongCallback = (NBTTagCompound) proof.copy();
             wrongCallback.setString("session", "old-session");
             HologramBusyReplies.rejectLibraryCallback(owner, wrongCallback);

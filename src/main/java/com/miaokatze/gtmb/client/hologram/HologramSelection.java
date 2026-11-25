@@ -11,7 +11,78 @@ import java.util.Set;
 /** Client selection only; server actions carry explicit indices and validate every edit. */
 public final class HologramSelection {
 
-    private final Set<Integer> indices = new LinkedHashSet<>();
+    private HologramState materialState;
+    private HologramLocalMaterialIndex materialIndex;
+    private HologramLocalMaterialIndex.Selection materialSelection;
+    private HologramLocalMaterialIndex.Result materialResult;
+    private final Set<Integer> indices = new LinkedHashSet<Integer>() {
+        @Override
+        public boolean add(Integer index) {
+            if (!super.add(index)) return false;
+            changeMaterial(index, 1);
+            return true;
+        }
+
+        @Override
+        public boolean remove(Object value) {
+            if (!super.remove(value)) return false;
+            changeMaterial((Integer) value, -1);
+            return true;
+        }
+
+        @Override
+        public void clear() {
+            super.clear();
+            if (materialSelection != null) materialSelection.clear();
+        }
+
+        @Override
+        public boolean removeAll(java.util.Collection<?> values) {
+            boolean changed = false;
+            for (Object value : values) changed |= remove(value);
+            return changed;
+        }
+
+        @Override
+        public boolean removeIf(java.util.function.Predicate<? super Integer> predicate) {
+            boolean changed = false;
+            java.util.Iterator<Integer> iterator = iterator();
+            while (iterator.hasNext()) {
+                int index = iterator.next();
+                if (predicate.test(index)) {
+                    changeMaterial(index, -1);
+                    iterator.remove();
+                    changed = true;
+                }
+            }
+            return changed;
+        }
+    };
+
+    void bindMaterials(HologramState state) {
+        materialState = state;
+        if (materialIndex == state.localMaterialIndex) return;
+        materialIndex = state.localMaterialIndex;
+        materialSelection = materialIndex == null ? null : materialIndex.new Selection();
+        if (materialSelection != null)
+            for (int index : indices) if (index >= 0 && index < state.cells.size())
+                materialSelection.change(state.cells.get(index), 1);
+        finishMaterials();
+    }
+
+    private void changeMaterial(int index, int delta) {
+        if (materialSelection != null && index >= 0 && index < materialState.cells.size())
+            materialSelection.change(materialState.cells.get(index), delta);
+    }
+
+    private void finishMaterials() {
+        materialResult = materialSelection == null ? null : materialSelection.result();
+    }
+
+    HologramLocalMaterialIndex.Result materialResult(HologramState state) {
+        return materialIndex != null && materialIndex == state.localMaterialIndex && materialIndex.current()
+            ? materialResult : null;
+    }
     private final java.util.BitSet selectedBits = new java.util.BitSet();
     private int selectedBitsVersion = -1;
     private int corner = -1;
@@ -34,6 +105,7 @@ public final class HologramSelection {
         indices.clear();
         corner = -1;
         clickedStructureId = "";
+        finishMaterials();
     }
 
     public void click(int index, boolean additive) {
@@ -44,6 +116,7 @@ public final class HologramSelection {
         if (additive && indices.contains(index)) indices.remove(index);
         else indices.add(index);
         corner = index;
+        finishMaterials();
     }
 
     void load(int[] supplied, int primary, int size) {
@@ -51,9 +124,11 @@ public final class HologramSelection {
         for (int index : supplied) if (index >= 0 && index < size) indices.add(index);
         if (indices.isEmpty() && primary >= 0 && primary < size) indices.add(primary);
         corner = indices.isEmpty() ? -1 : first();
+        finishMaterials();
     }
 
     void box(HologramState state, int from, int to, boolean additive) {
+        bindMaterials(state);
         if (from < 0 || to < 0 || from >= state.cells.size() || to >= state.cells.size()) return;
         HologramState.Cell a = state.cells.get(from), b = state.cells.get(to);
         version++;
@@ -74,6 +149,7 @@ public final class HologramSelection {
         java.util.Collections.sort(matched);
         indices.addAll(matched);
         corner = from;
+        finishMaterials();
     }
 
     /** Inclusive world-space volume, independent of camera angle and visible faces. */
@@ -86,14 +162,17 @@ public final class HologramSelection {
     }
 
     void structure(HologramState state, String id, boolean additive) {
+        bindMaterials(state);
         version++;
         if (!additive) clear();
         if (!id.isEmpty()) indices.addAll(state.structureMembers.getOrDefault(id, java.util.Collections.emptyList()));
         clickedStructureId = knownStructure(state, id) ? id : "";
+        finishMaterials();
     }
 
     /** Grade families expand only on explicit T input, inside the clicked structure. */
     void previewClick(HologramState state, int index, String outline, boolean sameType, boolean additive) {
+        bindMaterials(state);
         if (index >= 0 && index < state.cells.size()) for (String group : state.cells.get(index).structureIds)
             if (com.miaokatze.gtmb.hologram.HologramTextBox.isAttachmentId(group)) {
                 structure(state, group, additive);
@@ -128,6 +207,7 @@ public final class HologramSelection {
         if (additive && indices.containsAll(matched)) indices.removeAll(matched);
         else indices.addAll(matched);
         corner = index;
+        finishMaterials();
     }
 
     /** Existing hatch targets keep their independent device identity when casing grades are selected. */
@@ -257,12 +337,15 @@ public final class HologramSelection {
         indices.removeIf(i -> i < 0 || i >= size);
         if (corner >= size) corner = -1;
         if (indices.isEmpty()) clickedStructureId = "";
+        finishMaterials();
     }
 
     void all(HologramState state) {
+        bindMaterials(state);
         clear();
         for (HologramState.Cell cell : state.cells) indices.add(cell.index);
         corner = first();
+        finishMaterials();
     }
 
     public boolean contains(int index) {

@@ -24,7 +24,6 @@ public final class HologramLifecycle {
     public void onServerTick(TickEvent.ServerTickEvent event) {
         if (event.phase == TickEvent.Phase.START) HologramCutService.startupRecovery();
         if (event.phase == TickEvent.Phase.END) try {
-            HologramProjectedPlacementService.tick();
             HologramAeCraftingOrders.tick();
             HologramDemolition.tick();
             HologramService.tick();
@@ -43,7 +42,6 @@ public final class HologramLifecycle {
     public void loggedOut(PlayerEvent.PlayerLoggedOutEvent event) {
         if (event.player instanceof EntityPlayerMP player) {
             HologramWorkspace.revokeActionEndpoint(player);
-            HologramProjectedPlacementService.forget(player);
             HologramDemolition.cancel(player);
             HologramCutService.disconnected(player);
             HologramAeCraftingOrders.cancel(player, "玩家已离线，AE 缺料订单已取消");

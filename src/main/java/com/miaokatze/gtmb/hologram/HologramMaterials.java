@@ -218,12 +218,14 @@ public final class HologramMaterials {
                     if (slot == protectedSlot) continue;
                     ItemStack source = player.inventory.mainInventory[slot];
                     if (source == null || source.stackSize <= 0) continue;
-                    if (suppliedAdapters == null && AEApi.instance()
-                        .registries()
-                        .wireless()
-                        .isWirelessTerminal(source)) continue;
                     for (ItemStackExtractor adapter : adapters) {
                         if (!adapter.isValidSource(source.copy(), player)) continue;
+                        // Only a real container candidate needs the terminal exclusion. Do not initialize
+                        // unrelated native source registries merely because a plain stack occupies a slot.
+                        if (suppliedAdapters == null && AEApi.instance()
+                            .registries()
+                            .wireless()
+                            .isWirelessTerminal(source)) break;
                         containers.add(new Container(slot, source, adapter));
                         if (adapter.isAPIImplemented(APIType.IS_VALID_SOURCE)) break;
                     }
@@ -1141,6 +1143,11 @@ public final class HologramMaterials {
                     Stats.ItemsInserted.addToPlayer(player, amount);
                 }
             };
+        }
+
+        /** Identity-only scope fence. Provider access still authenticates on each native extraction. */
+        boolean scopedSelected(EntityPlayerMP actor, Settings exactSettings, int slot) {
+            return player == actor && actor.worldObj == recoveryWorld && settings == exactSettings && protectedSlot == slot;
         }
 
         boolean scopedMain(EntityPlayerMP actor, Settings exactSettings, int slot) {

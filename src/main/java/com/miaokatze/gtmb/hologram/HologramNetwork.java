@@ -162,13 +162,13 @@ public final class HologramNetwork {
             9,
             Side.CLIENT);
         channel.registerMessage(
-            HologramPlacementUpload.Handler.class,
-            HologramPlacementUpload.RetiredFrame.class,
+            HologramRetiredPlacementPackets.Handler.class,
+            HologramRetiredPlacementPackets.RetiredFrame.class,
             10,
             Side.SERVER);
         channel.registerMessage(
-            HologramPlacementUpload.AckHandler.class,
-            HologramPlacementUpload.Ack.class,
+            HologramRetiredPlacementPackets.AckHandler.class,
+            HologramRetiredPlacementPackets.Ack.class,
             11,
             Side.CLIENT);
         channel.registerMessage(
@@ -509,19 +509,6 @@ public final class HologramNetwork {
         else channel.sendToServer(new Action(tag));
     }
 
-    /** Retained for source compatibility; never serializes a whole construction payload. */
-    public static HologramPlacementUpload.Prepared prepareProjectedPlacement(NBTTagCompound tag,
-        java.util.function.BooleanSupplier current) throws IOException {
-        throw new IOException(RETIRED_PLACEMENT_REASON);
-    }
-
-    public static void sendPreparedPlacement(HologramPlacementUpload.Prepared prepared,
-        java.util.function.BooleanSupplier current) throws IOException {
-        throw new IOException(RETIRED_PLACEMENT_REASON);
-    }
-
-    public static void discardPreparedPlacement(java.util.UUID id) {}
-
     /** A legacy peer gets a small owned incompatibility; this path admits no edit, snapshot, transfer or worker. */
     static void refuseRetiredPlacement(HologramWorkspace.ActionEndpoint endpoint, String id) {
         refuseRetiredPlacement(endpoint, id, RETIRED_PLACEMENT_REASON);
@@ -533,7 +520,7 @@ public final class HologramNetwork {
         if (lease == null) return;
         ServerTaskScheduler.scheduleServerTask(() -> runQueuedAction(endpoint, lease, () -> {
             // Do not mark the ID consumed or end another generation's legitimate native task.
-            if (HologramProjectedPlacementService.consumed(endpoint.player, id)) return;
+            if (HologramConstructionReceipts.consumed(endpoint.player, id)) return;
             NBTTagCompound reply = new NBTTagCompound();
             reply.setString("placementRequestId", id);
             reply.setBoolean("placementRequestAccepted", false);
@@ -1812,7 +1799,7 @@ public final class HologramNetwork {
             String compactId = compactNative ? msg.tag.getString("placementRequestId") : "";
             if (lease == null) {
                 if (compactNative && HologramNativeCompactStart.canonical(compactId))
-                    HologramProjectedPlacementService.reply(player, compactId, false, "服务器正忙，原生放置未开始。");
+                    HologramConstructionReceipts.reply(player, compactId, false, "服务器正忙，原生放置未开始。");
                 else if (!snapshotControl) HologramBusyReplies.reject(player, msg.tag, HologramBusyReplies.Kind.ACTION);
                 return null;
             }
@@ -1826,9 +1813,9 @@ public final class HologramNetwork {
             ServerTaskScheduler.scheduleServerTask(() -> runQueuedAction(endpoint, lease, () -> {
                 if (compactNative && !submittedTool.matches(player.getHeldItem())) {
                     if (HologramNativeCompactStart.canonical(compactId)
-                        && !HologramProjectedPlacementService.consumed(player, compactId)) {
-                        HologramProjectedPlacementService.retire(player, compactId);
-                        HologramProjectedPlacementService.reply(player, compactId, false, "手持投影仪已变化。");
+                        && !HologramConstructionReceipts.consumed(player, compactId)) {
+                        HologramConstructionReceipts.retire(player, compactId);
+                        HologramConstructionReceipts.reply(player, compactId, false, "手持投影仪已变化。");
                     }
                     return;
                 }
@@ -1875,7 +1862,7 @@ public final class HologramNetwork {
             String requestId = tag.getString("placementRequestId");
             if (!HologramNativeCompactStart.cancel(player, requestId)
                 && !HologramNativeReadyPlacement.cancel(player, requestId))
-                HologramProjectedPlacementService.cancel(player, requestId);
+                HologramConstructionReceipts.cancel(player, requestId);
             return;
         }
         if (HologramCompactNativeRequest.ordinary(tag)

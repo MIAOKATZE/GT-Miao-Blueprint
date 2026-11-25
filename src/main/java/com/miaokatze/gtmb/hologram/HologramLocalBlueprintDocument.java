@@ -357,21 +357,22 @@ public final class HologramLocalBlueprintDocument {
     }
 
     public FrozenDraft freeze() {
-        requireMaterialized();
+        HologramPackedAuthoring sourcePacked = packed;
         return new FrozenDraft(
             document,
             codec,
             encoded,
             encoded == null || explicitRetention,
             false,
-            LocalSaveIntent.STRICT);
+            LocalSaveIntent.STRICT,
+            sourcePacked == null ? null : sourcePacked.layout());
     }
 
     @FunctionalInterface
     public interface DisplayCell {
 
         void accept(int x, int y, int z, String block, int metadata, String item, int damage, int facing,
-            String tileNbt, String itemNbt) throws IOException;
+            String tileNbt, String itemNbt, int count, boolean controller) throws IOException;
     }
 
     /** A copy-on-write document version that can outlive the editor preparing a placement or preview. */
@@ -381,13 +382,21 @@ public final class HologramLocalBlueprintDocument {
         private final HologramLocalBlueprintCodec codec;
         private final boolean explicitRetention;
         private final boolean savePrepared;
+        private final HologramLocalBlueprintCodec.CompactLayout packedLayout;
         private final LocalSaveIntent incompleteAuthorIntent;
         private byte[] encoded;
 
         private FrozenDraft(Preset document, HologramLocalBlueprintCodec codec, byte[] encoded,
             boolean explicitRetention, boolean savePrepared, LocalSaveIntent incompleteAuthorIntent) {
+            this(document, codec, encoded, explicitRetention, savePrepared, incompleteAuthorIntent, null);
+        }
+
+        private FrozenDraft(Preset document, HologramLocalBlueprintCodec codec, byte[] encoded,
+            boolean explicitRetention, boolean savePrepared, LocalSaveIntent incompleteAuthorIntent,
+            HologramLocalBlueprintCodec.CompactLayout packedLayout) {
             this.document = document;
             this.codec = codec;
+            this.packedLayout = packedLayout;
             this.encoded = encoded;
             this.explicitRetention = explicitRetention;
             this.savePrepared = savePrepared;
@@ -395,8 +404,8 @@ public final class HologramLocalBlueprintDocument {
         }
 
         private byte[] encodedArtifact() throws IOException {
-            if (document.cells.isEmpty()) throw new IOException("蓝图没有方块");
-            if (encoded == null) encoded = codec.write(document);
+            if (cellCount() == 0) throw new IOException("蓝图没有方块");
+            if (encoded == null) encoded = codec.write(document, packedLayout);
             return encoded;
         }
 
@@ -408,7 +417,7 @@ public final class HologramLocalBlueprintDocument {
         public synchronized HologramBlueprintArtifact.Artifact bindLocalSave(String targetId, byte[] png)
             throws IOException {
             if (!savePrepared || !document.id.equals(targetId)) throw new IOException("本地蓝图保存目标已变化");
-            return HologramBlueprintArtifact.prepareSave(encodedArtifact(), png);
+            return HologramBlueprintArtifact.prepareLocalSave(encodedArtifact(), png);
         }
 
         public LocalSaveIntent incompleteAuthorIntent() {
@@ -416,25 +425,83 @@ public final class HologramLocalBlueprintDocument {
         }
 
         public int cellCount() {
-            return document.cells.size();
+            return packedLayout == null ? document.cells.size() : packedLayout.rows().cells();
         }
 
         public void visitDisplayCells(DisplayCell visitor, java.util.function.BooleanSupplier current)
             throws IOException {
-            for (Cell cell : document.cells) {
+            visitDisplayCells(visitor, current, null);
+        }
+
+        /** One existing display pass: exact canonical target facts and display facts use the same owned row. */
+        public void visitDisplayCells(DisplayCell visitor, java.util.function.BooleanSupplier current,
+            HologramProjectedLayerEncoder.DraftEvidenceBuilder proof) throws IOException {
+            var rows = packedLayout == null ? null : packedLayout.rows();
+            int total = cellCount();
+            Cell reviewed = null;
+            for (int ordinal = 0; ordinal < total; ordinal++) {
                 if (!current.getAsBoolean()) throw new IOException("蓝图预览已取消");
-                if (!cell.excluded) visitor.accept(
-                    cell.x,
-                    cell.y,
-                    cell.z,
-                    text(cell.block),
-                    cell.metadata,
-                    text(cell.item),
-                    cell.damage,
-                    cell.facing,
-                    text(cell.tileNbt),
-                    text(cell.itemNbt));
+                Cell cell = rows == null ? document.cells.get(ordinal)
+                    : packedLayout.materials()[rows.materialIndex(ordinal)];
+                if (proof != null && cell != reviewed) {
+                    reviewed = cell;
+                    if (cell.excluded || !codec.plainDraftCell(cell) || !text(cell.structureId).isEmpty()
+                        || !empty(cell.structureIds) || cell.defaultDamage != 0
+                        || !text(cell.defaultItem).isEmpty() && !text(cell.defaultItem).equals(cell.item)) {
+                        proof.reject();
+                        proof = null;
+                    }
+                }
+                if (cell.excluded) continue;
+                int x = rows == null ? cell.x : rows.coordinate(ordinal, 0);
+                int y = rows == null ? cell.y : rows.coordinate(ordinal, 1);
+                int z = rows == null ? cell.z : rows.coordinate(ordinal, 2);
+                String block = text(cell.block), item = text(cell.item);
+                String tileNbt = text(cell.tileNbt), itemNbt = text(cell.itemNbt);
+                visitor.accept(x, y, z, block, cell.metadata, item, cell.damage, cell.facing, tileNbt, itemNbt,
+                    cell.count, cell.controller);
+                if (proof != null) proof.row(this, x, y, z, block, cell.metadata, item, cell.damage, cell.facing,
+                    tileNbt, itemNbt, cell.count, cell.controller);
             }
+        }
+
+        /** Eligibility reads only header/palette metadata; the existing display pass proves every raw target row. */
+        public boolean plainPlacementEligible() {
+            return !savePrepared && document.schema == 2 && codec.plainDraftHeader(document)
+                && !materialSummaryNeedsReview() && !Boolean.TRUE.equals(document.fullyVoucherCovered)
+                && !Boolean.TRUE.equals(document.sourceItemFramesTruncated) && empty(document.sourceItemFrames)
+                && empty(document.aeIssues) && empty(document.hintAreas) && empty(document.structures)
+                && document.controllerId == -1 && (document.controllerFacing == null || document.controllerFacing == -1)
+                && (text(document.controllerType).isEmpty() || "area".equals(document.controllerType))
+                && plainPlacementPaletteMask() >= 0;
+        }
+
+        /** Optional descriptive origin declarations have the same restrictions as the saved compact source. */
+        public int plainPlacementPaletteMask() {
+            if (document.palette.size() > HologramProjectedLayerEncoder.Plain.values().length) return -1;
+            int kinds = 0;
+            for (Cell origin : document.palette) {
+                HologramProjectedLayerEncoder.Plain kind = HologramProjectedLayerEncoder.Plain.find(origin.item);
+                if (kind == null || !codec.plainDraftCell(origin) || origin.metadata != 0 || origin.damage != 0
+                    || origin.count != 1 || origin.facing != -1 || origin.controller || origin.excluded
+                    || origin.defaultDamage != 0 || origin.x != 0 || origin.y != 0 || origin.z != 0
+                    || origin.block != null || origin.tileNbt != null || origin.itemNbt != null
+                    || origin.defaultItem != null || origin.prompt != null || origin.structureId != null
+                    || origin.structureIds != null || (kinds & 1 << kind.ordinal()) != 0) return -1;
+                kinds |= 1 << kind.ordinal();
+            }
+            return kinds;
+        }
+
+        private static boolean empty(List<?> values) { return values == null || values.isEmpty(); }
+
+        /** Metadata-only material-description policy; no file serialization or source-cell traversal. */
+        public boolean materialSummarySchemaKnown() { return document.schema == 2; }
+
+        public boolean materialSummaryNeedsReview() {
+            return document.retainedNbtKeys != null || !text(document.processingNbt).isEmpty()
+                || !text(document.semanticNbt).isEmpty() || !text(document.quantumGroupingNbt).isEmpty()
+                || codec.retainedMaterialPolicy(document);
         }
 
         public NBTTagCompound displayMetadata() {
@@ -470,7 +537,7 @@ public final class HologramLocalBlueprintDocument {
 
     public FrozenDraft prepareSaveDraft(NBTTagCompound options, String authorName, UUID authorUuid, String localId,
         LocalSaveIntent saveIntent) throws IOException {
-        requireMaterialized();
+        HologramPackedAuthoring sourcePacked = packed;
         Preset prepared = copyHeaderForEdit(document);
         prepared.cells = document.cells;
         prepared.palette = document.palette;
@@ -509,10 +576,11 @@ public final class HologramLocalBlueprintDocument {
             throw new IOException("蓝图缺少完整作者信息");
         if (prepared.createdAt <= 0 && incompleteAuthorIntent == LocalSaveIntent.STRICT)
             prepared.createdAt = System.currentTimeMillis();
-        if (prepared.cells.isEmpty() || text(prepared.name).trim()
+        if (viewCellCount() == 0 || text(prepared.name).trim()
             .isEmpty() || prepared.name.length() > 48) throw new IOException("请填写蓝图名称并保留至少一个方块");
         if (!codec.hasOriginalVersion(prepared)) HologramBlueprintVersions.stampSaved(prepared);
-        return new FrozenDraft(prepared, codec, null, true, true, incompleteAuthorIntent);
+        return new FrozenDraft(prepared, codec, null, true, true, incompleteAuthorIntent,
+            sourcePacked == null ? null : sourcePacked.layout());
     }
 
     /** The caller publishes a save only after the exact JSON and preview pair has committed. */
@@ -533,7 +601,6 @@ public final class HologramLocalBlueprintDocument {
 
     /** The exact bytes come from a committed, verified pair produced from this save version. */
     public void saved(long expectedRevision, FrozenDraft prepared, byte[] exactJson) throws IOException {
-        requireMaterialized();
         if (expectedRevision != revision || prepared.codec != codec) throw new IOException("蓝图已修改，请重新保存");
         explicitRetention = prepared.explicitRetention;
         acceptSave(prepared.document, exactJson);
@@ -992,7 +1059,7 @@ public final class HologramLocalBlueprintDocument {
             default -> throw new IllegalArgumentException(op);
         }
         int cells = packedAuthoring() ? viewCellCount() : next.cells.size();
-        if (!HologramBlueprintLimits.accepts(cells) || next.structures.size() > 256)
+        if (!HologramBlueprintLimits.acceptsLocal(cells) || next.structures.size() > 256)
             throw new IOException("蓝图方块或结构数量超出上限");
         if (!current.getAsBoolean()) throw new IOException("本地蓝图编辑已取消");
         Object nextContent = new Object();
@@ -1797,7 +1864,7 @@ public final class HologramLocalBlueprintDocument {
         if (!current.getAsBoolean()) throw new IOException("蓝图预览已取消");
         long expectedRevision = revision;
         List<Cell> source = document.cells;
-        HologramBlueprintLimits.require(source.size());
+        HologramBlueprintLimits.requireLocal(source.size());
         int[] coordinates = new int[Math.multiplyExact(source.size(), 4)];
         int[] bounds = { Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE,
             Integer.MIN_VALUE };

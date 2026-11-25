@@ -73,6 +73,14 @@ final class HologramWorldTransactions {
         return operate(s, c, index, new PlacementScope(s, c, Objects.requireNonNull(authority), livePrecommit, null, null));
     }
 
+    /** Plain projected blocks, using the tool's exact selected material sources and normal recovery ledger. */
+    static boolean operateScopedSelected(HologramSession s, HologramCapture.Cell c, int index,
+        BooleanSupplier authority) {
+        PlacementScope scope = new PlacementScope(s, c, Objects.requireNonNull(authority), null, null, null);
+        scope.selectedSources = !s.materialSettings.main || s.materialSettings.containers || s.materialSettings.me;
+        return operate(s, c, index, scope);
+    }
+
     /** Closed #1000 source proof for one known plain cell; all world/payment checks remain in the scoped engine. */
     static boolean operateScopedEbf(HologramSession s, HologramStockEbfProfile.PreparedCell prepared,
         BooleanSupplier authority, BooleanSupplier livePrecommit, BooleanSupplier liveTransport) {
@@ -96,7 +104,7 @@ final class HologramWorldTransactions {
         final boolean creative;
         HologramMaterials.Context materials;
         HologramMaterials.ScopedMainClaim claim;
-        boolean unresolved;
+        boolean unresolved, selectedSources;
 
         PlacementScope(HologramSession s, HologramCapture.Cell cell, BooleanSupplier authority,
             BooleanSupplier livePrecommit, BooleanSupplier liveTransport, HologramStockEbfProfile.PreparedCell ebf) {
@@ -124,15 +132,16 @@ final class HologramWorldTransactions {
         }
 
         boolean stockCurrent(HologramSession s) {
-            return creative || claim != null && claim.matches(s.player);
+            return creative || selectedSources || claim != null && claim.matches(s.player);
         }
 
         boolean inputs(HologramSession s) {
             return endpoint(s) && s.mode == 0 && s.slot == slot && settings == s.materialSettings
-                && settings.main && !settings.containers && !settings.me && !s.jobVoucherRequested
+                && (selectedSources || settings.main && !settings.containers && !settings.me) && !s.jobVoucherRequested
                 && s.player.capabilities.allowEdit && s.player.capabilities.isCreativeMode == creative
                 && (materials == null
-                    || s.materialContext == materials && materials.scopedMain(s.player, settings, slot));
+                    || s.materialContext == materials && (selectedSources ? materials.scopedSelected(s.player, settings, slot)
+                        : materials.scopedMain(s.player, settings, slot)));
         }
 
         boolean current(HologramSession s) {
@@ -414,7 +423,7 @@ final class HologramWorldTransactions {
         BlockSnapshot snapshot = readOnlyBlockSnapshot(w, c.x, c.y, c.z);
         if (scope != null && !scope.current(s)) return scopedRejected(s, c);
         HologramMaterials.Transaction transaction = materialSource(s, scope).begin();
-        if (scope == null) {
+        if (scope == null || scope.selectedSources) {
             transaction.protectAssets(s.pendingAssetBudget, s.cellAssetBudgets.getOrDefault(index, Collections.emptyMap()))
                 .journal(HologramConstructionJournal.begin(s.player, c.x, c.y, c.z, old, oldMeta, savedTile, inventory));
         } else {
@@ -444,12 +453,18 @@ final class HologramWorldTransactions {
                 if (!scope.creative) {
                     ItemStack specimen = energyTarget.copy();
                     specimen.stackSize = 1;
-                    scope.claim = HologramMaterials.ScopedMainClaim
-                        .observe(s.player, scope.inventory, scope.main, scope.slot, specimen);
-                    if (scope.claim == null || !scope.current(s)) {
+                    boolean funded;
+                    if (scope.selectedSources) {
+                        funded = transaction.takeOne(specimen, false);
+                    } else {
+                        scope.claim = HologramMaterials.ScopedMainClaim
+                            .observe(s.player, scope.inventory, scope.main, scope.slot, specimen);
+                        funded = scope.claim != null;
+                    }
+                    if (!funded || !scope.current(s)) {
                         rollbackMaterials(s, transaction, inventory, scope);
                         c.status = "missing";
-                        s.status = "原背包没有可核对的本格材料，未施工、未扣料";
+                        s.status = "所选来源没有可核对的本格材料，未施工、已还原可确认的扣料";
                         return false;
                     }
                     // A fungible local escrow token only; StructureLib never extracts from a live backpack.
@@ -617,7 +632,7 @@ final class HologramWorldTransactions {
                     rollbackMaterials(s, transaction, inventory, scope);
                     return scopedRejected(s, c);
                 }
-                if (scope == null) {
+                if (scope == null || scope.selectedSources) {
                     changedWorld = true;
                     transaction.beforeWorldMutation();
                 } else transaction.beforeScopedWorldMutation();
@@ -998,11 +1013,18 @@ final class HologramWorldTransactions {
                 // slot and retire this exact receipt in one callback-free transition.
                 if (!liveIntact || !transportIntact || ebfSeal == HologramStockEbfProfile.FinalSeal.DEPENDENCY_CHANGED
                     || !scope.stockCurrent(s) || !scope.current(s)
-                    || !transaction.finishScopedPlain(scope.claim)) {
+                    || !scope.selectedSources && !transaction.finishScopedPlain(scope.claim)) {
                     if (!scope.worldCurrent(s)) return retainScopedJournal(s, transaction, scope);
                     if (changedWorld && !restoreCell(s, c, transaction, old, oldMeta, savedTile, scope)) return false;
                     rollbackMaterials(s, transaction, inventory, scope);
                     return scopedRejected(s, c);
+                }
+                if (scope.selectedSources) {
+                    try {
+                        transaction.commit();
+                    } catch (RuntimeException | LinkageError failure) {
+                        return retainScopedJournal(s, transaction, scope, "selected-payment-commit-uncertain");
+                    }
                 }
                 c.status = "placed";
                 return true;
@@ -1253,6 +1275,12 @@ final class HologramWorldTransactions {
     private static void rollbackMaterials(HologramSession s, HologramMaterials.Transaction transaction,
         ItemStack[] inventory, PlacementScope scope) {
         if (scope != null) {
+            if (scope.selectedSources) {
+                if (!scope.worldCurrent(s) || !scope.endpoint(s))
+                    retainScopedJournal(s, transaction, scope, "selected-payment-owner-changed");
+                else rollbackMaterials(s, transaction, inventory, null);
+                return;
+            }
             if (!scope.worldCurrent(s)) retainScopedJournal(s, transaction, scope);
             else if (!transaction.finishScopedPlain(null))
                 retainScopedJournal(s, transaction, scope, "scoped-unpaid-receipt-not-clearable");

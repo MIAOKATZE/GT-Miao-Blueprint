@@ -3,16 +3,22 @@
 
 package com.miaokatze.gtmb.hologram;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.UUID;
 
 import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.tileentity.TileEntity;
+import net.minecraft.world.World;
 
 import com.github.bsideup.jabel.Desugar;
 
 /** One confirmed stock action carried by the old-peer inert serverRules envelope. No nested payload. */
 public final class HologramStockNativeWire {
 
-    public static final int VERSION = 1;
+    public static final int VERSION = 2;
+    private static final int EBF_HATCHES = 5, EBF_WORDS = 5 * EBF_HATCHES;
     private static final String VERSION_KEY = "nativeStockVersion";
     private static final String REQUEST = "nativeStockRequest";
     private static final String INTENT = "nativeStockIntent";
@@ -49,13 +55,61 @@ public final class HologramStockNativeWire {
         }
     }
 
-    /** Source, controller, hatch type/tier and funding are fixed by protocol, never chosen from input NBT. */
+    /** EBF uses declaration coordinates, exact installed type and facing, not arbitrary requested blocks. */
+    @Desugar
+    public record EbfHatch(int a, int b, int c, int id, int facing) {}
+
+    /** Client convenience only. The authenticated server independently qualifies all five installed parts. */
+    public static List<EbfHatch> observedEbfHatches(World world, TileEntity tile) {
+        return HologramStockEbfProfile.observedHatches(world, tile);
+    }
+
+    public static boolean ebfChannels(int main, NBTTagCompound channels) {
+        return HologramStockEbfProfile.coilMetadata(main, channels) >= 0;
+    }
+
+    /** Source IDs are implied by the exact stock profile shape; no client geometry or material list. */
     @Desugar
     public record Confirmation(Key key, int dimension, UUID tool, int x, int y, int z, int side, int slot,
         int facing, int main, boolean mainExplicit, boolean noHatches, int priority,
-        int hatchX, int hatchY, int hatchZ, int hatchFacing) {
+        int hatchX, int hatchY, int hatchZ, int hatchFacing, int coil, List<EbfHatch> ebfHatches) {
+
+        public Confirmation {
+            if (ebfHatches != null) ebfHatches = ebfHatches.size() == EBF_HATCHES
+                ? Collections.unmodifiableList(new ArrayList<>(ebfHatches)) : Collections.emptyList();
+        }
+
+        public Confirmation(Key key, int dimension, UUID tool, int x, int y, int z, int side, int slot,
+            int facing, int main, boolean mainExplicit, boolean noHatches, int priority,
+            int hatchX, int hatchY, int hatchZ, int hatchFacing) {
+            this(key, dimension, tool, x, y, z, side, slot, facing, main, mainExplicit, noHatches, priority,
+                hatchX, hatchY, hatchZ, hatchFacing, 0, null);
+        }
+
+        public static Confirmation ebf(Key key, int dimension, UUID tool, int x, int y, int z, int side, int slot,
+            int facing, int main, boolean mainExplicit, boolean noHatches, int priority, int coil,
+            List<EbfHatch> installed) {
+            return new Confirmation(key, dimension, tool, x, y, z, side, slot, facing, main, mainExplicit,
+                noHatches, priority, 0, 0, 0, 0, coil, installed == null ? Collections.emptyList() : installed);
+        }
+
+        public boolean ebf() {
+            return ebfHatches != null;
+        }
 
         HologramStockNativeEntry.Intent intent() {
+            if (ebf()) {
+                var installed = new ArrayList<HologramStockEbfProfile.Installed>(EBF_HATCHES);
+                for (var hatch : ebfHatches) {
+                    if (hatch == null) return null;
+                    installed.add(new HologramStockEbfProfile.Installed(hatch.a, hatch.b, hatch.c, hatch.id, hatch.facing));
+                }
+                return new HologramStockNativeEntry.Intent(key.gateRequest(), key.generation,
+                    HologramStockNativeEntry.EBF, HologramStockEbfProfile.CONTROLLER,
+                    x, y, z, side, slot, facing, main, mainExplicit, noHatches, priority,
+                    HologramStockNativeEntry.Funding.REQUIRE_FULL_BOUND, null,
+                    new HologramStockNativeEntry.EbfConfig(coil, installed));
+            }
             return new HologramStockNativeEntry.Intent(key.gateRequest(), key.generation,
                 HologramStockCokeOvenProfile.SOURCE_ID, HologramStockCokeOvenProfile.CONTROLLER,
                 x, y, z, side, slot, facing, main, mainExplicit, noHatches, priority,
@@ -66,13 +120,16 @@ public final class HologramStockNativeWire {
 
         public Confirmation forGeneration(long generation) {
             return new Confirmation(new Key(key.request, key.sequence, generation), dimension, tool, x, y, z, side,
-                slot, facing, main, mainExplicit, noHatches, priority, hatchX, hatchY, hatchZ, hatchFacing);
+                slot, facing, main, mainExplicit, noHatches, priority, hatchX, hatchY, hatchZ, hatchFacing, coil, ebfHatches);
         }
 
         boolean valid(boolean probe) {
-            return key != null && key.validNonce() && (probe ? key.generation == 0 : key.generation > 0)
-                && tool != null && (tool.getMostSignificantBits() != 0 || tool.getLeastSignificantBits() != 0)
-                && (probe ? forGeneration(1) : this).intent().valid();
+            if (key == null || !key.validNonce() || (probe ? key.generation != 0 : key.generation <= 0)
+                || tool == null || (tool.getMostSignificantBits() == 0 && tool.getLeastSignificantBits() == 0))
+                return false;
+            if (ebf() ? hatchX != 0 || hatchY != 0 || hatchZ != 0 || hatchFacing != 0 : coil != 0) return false;
+            var checked = (probe ? forGeneration(1) : this).intent();
+            return checked != null && checked.valid();
         }
     }
 
@@ -116,10 +173,24 @@ public final class HologramStockNativeWire {
         tag.setBoolean("mainExplicit", value.mainExplicit);
         tag.setBoolean("noHatches", value.noHatches);
         tag.setInteger("priority", value.priority);
-        tag.setInteger("hatchX", value.hatchX);
-        tag.setInteger("hatchY", value.hatchY);
-        tag.setInteger("hatchZ", value.hatchZ);
-        tag.setInteger("hatchFacing", value.hatchFacing);
+        if (value.ebf()) {
+            tag.setInteger("coil", value.coil);
+            int[] hatches = new int[EBF_WORDS];
+            int i = 0;
+            for (var hatch : value.ebfHatches) {
+                hatches[i++] = hatch.a;
+                hatches[i++] = hatch.b;
+                hatches[i++] = hatch.c;
+                hatches[i++] = hatch.id;
+                hatches[i++] = hatch.facing;
+            }
+            tag.setIntArray("installedHatches", hatches);
+        } else {
+            tag.setInteger("hatchX", value.hatchX);
+            tag.setInteger("hatchY", value.hatchY);
+            tag.setInteger("hatchZ", value.hatchZ);
+            tag.setInteger("hatchFacing", value.hatchFacing);
+        }
         return tag;
     }
 
@@ -146,17 +217,29 @@ public final class HologramStockNativeWire {
         if (command == Command.STOP || command == Command.STATUS)
             return tag.func_150296_c().size() == 6 ? new Request(command, key, null) : null;
 
-        if (tag.func_150296_c().size() != 22 || !tag.hasKey("tool", 8)
+        boolean ebf = tag.hasKey("installedHatches");
+        if (tag.func_150296_c().size() != (ebf ? 20 : 22) || !tag.hasKey("tool", 8)
             || !exactBoolean(tag, "mainExplicit") || !exactBoolean(tag, "noHatches")) return null;
-        for (String field : new String[] { "dimension", "x", "y", "z", "side", "slot", "facing", "main",
-            "priority", "hatchX", "hatchY", "hatchZ", "hatchFacing" }) {
+        for (String field : new String[] { "dimension", "x", "y", "z", "side", "slot", "facing", "main", "priority" })
             if (!tag.hasKey(field, 3)) return null;
+        List<EbfHatch> installed = null;
+        if (ebf) {
+            if (!tag.hasKey("installedHatches", 11) || !tag.hasKey("coil", 3)) return null;
+            int[] hatches = tag.getIntArray("installedHatches");
+            if (hatches.length != EBF_WORDS) return null;
+            installed = new ArrayList<>(EBF_HATCHES);
+            for (int i = 0; i < hatches.length; i += 5)
+                installed.add(new EbfHatch(hatches[i], hatches[i + 1], hatches[i + 2], hatches[i + 3], hatches[i + 4]));
+        } else {
+            for (String field : new String[] { "hatchX", "hatchY", "hatchZ", "hatchFacing" })
+                if (!tag.hasKey(field, 3)) return null;
         }
         var confirmation = new Confirmation(key, tag.getInteger("dimension"), uuid(tag.getString("tool")),
             tag.getInteger("x"), tag.getInteger("y"), tag.getInteger("z"), tag.getInteger("side"),
             tag.getInteger("slot"), tag.getInteger("facing"), tag.getInteger("main"), tag.getBoolean("mainExplicit"),
             tag.getBoolean("noHatches"), tag.getInteger("priority"), tag.getInteger("hatchX"),
-            tag.getInteger("hatchY"), tag.getInteger("hatchZ"), tag.getInteger("hatchFacing"));
+            tag.getInteger("hatchY"), tag.getInteger("hatchZ"), tag.getInteger("hatchFacing"),
+            tag.getInteger("coil"), installed);
         return confirmation.valid(command == Command.PROBE) ? new Request(command, key, confirmation) : null;
     }
 
@@ -179,7 +262,7 @@ public final class HologramStockNativeWire {
         String reason = tag.getString("reason");
         if (key == null || phase < 0 || phase >= Phase.values().length || reason.length() > 192) return null;
         Phase state = Phase.values()[phase];
-        if (state == Phase.UNKNOWN ? placed != -1 : placed < 0 || placed > 24 || (state == Phase.CAPABLE || state == Phase.NEEDS_PROOF) && placed != 0)
+        if (state == Phase.UNKNOWN ? placed != -1 : placed < 0 || placed > HologramStockEbfProfile.CASING_BOUND + HologramStockEbfProfile.COIL_BOUND || (state == Phase.CAPABLE || state == Phase.NEEDS_PROOF) && placed != 0)
             return null;
         return new Reply(key, state, placed, reason);
     }

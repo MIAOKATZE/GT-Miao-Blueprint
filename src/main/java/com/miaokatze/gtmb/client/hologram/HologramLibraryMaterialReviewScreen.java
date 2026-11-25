@@ -80,8 +80,6 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
             else if (action == LocalAction.REFRESH) {
                 if (ticket.current(client))
                     description.refresh(() -> client.thePlayer.inventory.mainInventory, ticket.slot);
-            } else if (action == LocalAction.ADVANCED) {
-                if (ticket.current(client)) HologramClient.selectionNotice("此入口不支持高级施工，未发送施工请求。");
             } else if (action == LocalAction.SUBMIT && ticket.current(client)) {
                 availability = HologramLibraryClient.INSTANCE.plainPlacementAvailability(ticket.frozen, client);
                 if (availability != PlainAvailability.READY) {

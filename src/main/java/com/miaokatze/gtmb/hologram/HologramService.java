@@ -134,7 +134,7 @@ public final class HologramService {
     }
 
     public static void clear() {
-        HologramProjectedPlacementService.clear();
+        HologramConstructionReceipts.clear();
         HologramWorkspace.clear();
     }
 
@@ -250,11 +250,6 @@ public final class HologramService {
 
     static boolean libraryDraftPrepared(EntityPlayerMP player, NBTTagCompound request, String hash) {
         return HologramLibraryWorkflow.libraryDraftPrepared(player, request, hash);
-    }
-
-    static boolean libraryPreviewVerified(EntityPlayerMP player, NBTTagCompound request, String jsonHash,
-        String previewHash) {
-        return HologramLibraryWorkflow.libraryPreviewVerified(player, request, jsonHash, previewHash);
     }
 
     static void librarySaveCancelled(EntityPlayerMP player, NBTTagCompound request) {

@@ -21,7 +21,9 @@ public final class HologramPackedAuthoring {
 
     static HologramPackedAuthoring retain(CompactLayout layout, boolean enabled, boolean admittedView, String fileId,
         BooleanSupplier current) throws IOException {
-        if (!enabled || !admittedView || layout == null || fileId.isEmpty()) return null;
+        // A validated named import may retain its local rows before receiving a library ID.
+        // This root grants authoring access only; placement still requires an exact persisted private source.
+        if (!enabled || !admittedView || layout == null) return null;
         if (!current.getAsBoolean()) throw new IOException("蓝图读取已取消");
         return new HologramPackedAuthoring(layout);
     }

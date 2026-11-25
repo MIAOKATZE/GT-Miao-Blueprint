@@ -275,7 +275,7 @@ public final class HologramRegressionTest {
             }
         });
         cases.put(
-            "projected_placement_wire_carries_only_operations_and_matching_consumables",
+            "retired_whole_placement_ingress_is_rejected_without_geometry_or_side_effects",
             HologramPlacementRequestRegression::run);
         // Standalone helper contracts; these are not production dispatcher entry tests.
         cases.put("isolated_business_wire_policy", HologramBusinessWirePolicyRegression::run);
@@ -290,7 +290,6 @@ public final class HologramRegressionTest {
         cases.put(
             "isolated_owned_placement_progress",
             com.miaokatze.gtmb.client.hologram.HologramOwnedPlacementProgressRegression::run);
-        cases.put("isolated_incremental_native_placement", HologramIncrementalNativePlacementRegression::run);
         cases.put("isolated_scoped_world_transactions", HologramWorldTransactionsScopedRegression::run);
         cases.put("isolated_projected_layer_encoder", () -> {
             try {
@@ -309,6 +308,15 @@ public final class HologramRegressionTest {
         cases.put("isolated_projected_layer_wire_and_plan", () -> {
             try {
                 HologramProjectedLayerRegression.run();
+            } catch (Exception failure) {
+                throw new RuntimeException(failure);
+            }
+        });
+        cases.put("projected_layer_groups_preserve_six_layer_ten_tick_cadence",
+            () -> HologramLayerCadenceRegression.main(new String[0]));
+        cases.put("official_blueprint_material_button_transport_stop_and_projection_lifecycle", () -> {
+            try {
+                com.miaokatze.gtmb.client.hologram.HologramClientProjectedPlacementLifecycleRegression.run();
             } catch (Exception failure) {
                 throw new RuntimeException(failure);
             }
@@ -418,15 +426,6 @@ public final class HologramRegressionTest {
                 throw new RuntimeException(failure);
             }
         });
-        if (!System.getProperty("gtmb.reviewedMetadata.fixture", "").isEmpty()) {
-            cases.put("isolated_reviewed_plain_placement_guard", () -> {
-                try {
-                    HologramProjectedReviewedPlainPlacementRegression.run();
-                } catch (Exception failure) {
-                    throw new RuntimeException(failure);
-                }
-            });
-        }
         cases.put("isolated_windows_archive_fake_handle_contract", () -> {
             try {
                 com.miaokatze.gtmb.client.hologram.HologramWindowsArchiveProviderRegression.run();
@@ -445,9 +444,6 @@ public final class HologramRegressionTest {
                 throw new RuntimeException(failure);
             }
         });
-        cases.put(
-            "projected_placement_guard_trace_is_private_and_one_shot",
-            HologramProjectedPlacementGuardTraceRegression::run);
         cases.put(
             "native_generated_source_water_preserves_editing_without_placement_authority",
             HologramNativeSourceWaterRegression::run);

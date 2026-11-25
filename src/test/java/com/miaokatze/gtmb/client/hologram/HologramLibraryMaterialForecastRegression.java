@@ -29,6 +29,44 @@ final class HologramLibraryMaterialForecastRegression {
         unmasked();
         masked();
         descriptiveRows();
+        sharedSourceFacts();
+    }
+
+    private static void sharedSourceFacts() {
+        var compact = new HologramSavedMaterialSource.Tally(blueprint(), 8);
+        var expanded = new HologramSavedMaterialSource.Tally(blueprint(), 8);
+        var frozen = new HologramSavedMaterialSource.Tally(8, true, false);
+        for (int i = 0; i < 4; i++) {
+            JsonObject row = row("stone", 0);
+            if (i == 1) row.addProperty("controller", true);
+            if (i == 2) row.addProperty("count", 2);
+            if (i == 3) row.addProperty("tileNbt", "opaque retained quantum/fluid payload");
+            compact.include(i, row);
+            JsonObject located = new JsonObject();
+            for (var field : row.entrySet()) located.add(field.getKey(), field.getValue());
+            located.addProperty("x", i);
+            located.addProperty("y", 2);
+            located.addProperty("z", 3);
+            expanded.includeExpanded(located);
+            frozen.includeFrozen("minecraft:stone", 0, "minecraft:stone", 0, -1,
+                i == 2 ? 2 : 1, i == 1, i == 3 ? "opaque retained quantum/fluid payload" : "", "");
+        }
+        var reference = compact.snapshot();
+        for (var source : new HologramSavedMaterialSource[] {expanded.snapshot(), frozen.snapshot()}) {
+            SimpleAssert.eq(reference.variants(), source.variants(),
+                "compact, expanded and frozen capture keep equal exact descriptive variants");
+            SimpleAssert.that(source.payloadCells() == 1 && source.unsupportedCells() == 1,
+                "special retained payload and unsupported scalar remain explicit unknowns, never shell aliases");
+        }
+        var bounded = new HologramSavedMaterialSource.Tally(10_000, true, false);
+        for (int i = 0; i <= HologramSavedMaterialSource.MAX_TRACKED_DESCRIPTORS; i++) {
+            String id = "fixture:item_" + i;
+            bounded.includeFrozen(id, 0, id, 0, -1, 1, false, "", "");
+        }
+        bounded.includeFrozen("fixture:item_0", 0, "fixture:item_0", 0, -1, 1, false, "", "");
+        SimpleAssert.that(bounded.snapshot().limitCells() == 1
+            && bounded.snapshot().variants().get(0).cells() == 2,
+            "wide frozen palettes stay bounded without dropping counts of already-tracked identities");
     }
 
     private static void unmasked() {

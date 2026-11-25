@@ -29,6 +29,7 @@ import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.LocalSaveInten
 final class HologramClientLibrary {
 
     static final int MAX_BYTES = HologramBlueprintArtifact.MAX_JSON_BYTES, MAX_ENTRIES = 128;
+    private static final int MAX_LOCAL_BYTES = com.miaokatze.gtmb.hologram.HologramBlueprintLimits.LOCAL_FILE_BYTES;
     private final Path directory;
     private final Path metadataFile;
     private final PairIo pairIo;
@@ -48,12 +49,12 @@ final class HologramClientLibrary {
         @Override
         public HologramBlueprintArtifact.PairWrite write(Path path, byte[] json, byte[] png,
             java.util.function.BooleanSupplier current) throws IOException {
-            return HologramBlueprintArtifact.writePairPending(path, json, png, current);
+            return HologramBlueprintArtifact.writeLocalPairPending(path, json, png, current);
         }
 
         @Override
         public HologramBlueprintArtifact.Artifact read(Path path) throws IOException {
-            return HologramBlueprintArtifact.readPair(path);
+            return HologramBlueprintArtifact.readLocalPair(path);
         }
     };
 
@@ -196,7 +197,7 @@ final class HologramClientLibrary {
     private static String stamp(Path path) throws IOException {
         java.nio.file.attribute.BasicFileAttributes attributes = Files
             .readAttributes(path, java.nio.file.attribute.BasicFileAttributes.class);
-        if (!attributes.isRegularFile() || attributes.size() > MAX_BYTES)
+        if (!attributes.isRegularFile() || attributes.size() > MAX_LOCAL_BYTES)
             throw new IOException("Invalid local blueprint member");
         return path.toAbsolutePath()
             .normalize() + ":"
@@ -300,7 +301,8 @@ final class HologramClientLibrary {
     private LocalSave preparePrivateDocumentSave(byte[] data, byte[] preview, String id,
         java.util.function.BooleanSupplier stillCurrent, HologramLocalSaveTrace trace,
         LocalSaveIntent incompleteAuthorIntent) throws IOException {
-        JsonObject blueprint = com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec.displayRows(data).blueprint;
+        JsonObject blueprint = com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec.documentBlueprint(
+            com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec.localMetadata(data));
         JsonObject header = blueprint(blueprint);
         mark(trace, Stage.PAIR_INPUT_READY);
         return prepareSavePair(data, preview, id, stillCurrent, header, trace, incompleteAuthorIntent);
@@ -322,7 +324,7 @@ final class HologramClientLibrary {
                 }
         }
         if (!Files.exists(previous) && list().size() >= MAX_ENTRIES) throw new IOException("客户端蓝图库已满（128 项）");
-        Path target = HologramBlueprintFiles.target(directory, id, data);
+        Path target = HologramBlueprintFiles.targetLocal(directory, id, data);
         if (incompleteAuthorIntent == LocalSaveIntent.STRICT
             && (string(blueprint, "authorName").isEmpty() || string(blueprint, "authorUuid").isEmpty()))
             throw new IOException("蓝图缺少完整作者信息");
@@ -472,7 +474,7 @@ final class HologramClientLibrary {
     }
 
     byte[] read(String id) throws IOException {
-        byte[] data = HologramBlueprintArtifact.readPair(file(id)).json;
+        byte[] data = HologramBlueprintArtifact.readLocalPair(file(id)).json;
         parse(data);
         return data;
     }
@@ -664,8 +666,8 @@ final class HologramClientLibrary {
     }
 
     private static JsonObject parse(byte[] data) throws IOException {
-        if (data == null || data.length > MAX_BYTES)
-            throw new IOException("客户端蓝图超过 " + MAX_BYTES / (1024 * 1024) + " MiB");
+        if (data == null || data.length > MAX_LOCAL_BYTES)
+            throw new IOException("客户端蓝图超过 " + MAX_LOCAL_BYTES / (1024 * 1024) + " MiB");
         try {
             String json = new String(data, StandardCharsets.UTF_8);
             int depth = 0;
@@ -681,9 +683,11 @@ final class HologramClientLibrary {
                     if (++depth > 64) throw new IOException("蓝图 JSON 嵌套过深");
                 } else if (character == '}' || character == ']') depth--;
             }
-            JsonObject object = com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec.parse(data);
+            JsonObject object = com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec.localMetadata(data);
             blueprint(object);
-            HologramLibraryFacade.validateNativeJson(data);
+            if (data.length <= MAX_BYTES && blueprint(object).get("displayCells").getAsInt()
+                <= com.miaokatze.gtmb.hologram.HologramBlueprintLimits.MAX_CELLS)
+                HologramLibraryFacade.validateNativeJson(data);
             return object;
         } catch (RuntimeException invalid) {
             throw new IOException("蓝图 JSON 无效", invalid);

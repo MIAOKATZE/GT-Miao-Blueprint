@@ -35,6 +35,11 @@ final class HologramStockNativeConstruction {
             HologramConstructionTaskGate.Lease lease);
     }
 
+    /** Explicit available-stock consent; ordinary requests continue to require full funding. */
+    enum Consent {
+        PLACE_SAFE_CELLS_WITH_AVAILABLE_STOCK
+    }
+
     enum State {
         ACTIVE, COMPLETE, STOPPED, RECOVERY_PENDING
     }
@@ -137,8 +142,8 @@ final class HologramStockNativeConstruction {
 
     static HologramStockNativeConstruction begin(HologramWorkspace.ActionEndpoint endpoint, HologramSession session,
         HologramConstructionTaskGate.Request request, String source, int confirmedMain,
-        HologramIncrementalNativePlacement.Consent consent, HatchChoice choice) throws IOException {
-        if (consent != HologramIncrementalNativePlacement.Consent.PLACE_SAFE_CELLS_WITH_AVAILABLE_STOCK)
+        Consent consent, HatchChoice choice) throws IOException {
+        if (consent != Consent.PLACE_SAFE_CELLS_WITH_AVAILABLE_STOCK)
             throw refusal("没有当前原生逐格补建的明确部分施工确认。");
         HologramConstructionTaskGate gate = HologramWorkspace.constructionGate(endpoint);
         if (gate == null || session == null || endpoint.player != session.player || request == null
@@ -307,21 +312,19 @@ final class HologramStockNativeConstruction {
             && stockLinksCurrent();
     }
 
-    State drain(long deadline, int entries, int commits) {
-        return drain(deadline, entries, commits, HologramConstructionTaskGate::beginTransaction);
+    State drain(long deadline) {
+        return drain(deadline, HologramConstructionTaskGate::beginTransaction);
     }
 
-    State drain(long deadline, int entries, int commits, PermitAdmission admission) {
+    State drain(long deadline, PermitAdmission admission) {
         if (!gate.onOwnerThread()) throw new IllegalStateException("Native stock construction owner thread");
-        if (entries < 1 || commits < 1) throw new IllegalArgumentException("Native stock slice quotas");
         if (state != State.ACTIVE || System.nanoTime() >= deadline) return state;
         if (advancing) throw new IllegalStateException("Native stock construction cannot re-enter a permit");
         advancing = true;
         try {
             if (!current(true)) return stop("原生补建的所有者、配置、仓室或现场变更。");
-            int before = placed;
-            for (int work = 0; work < Math.min(32, entries) && placed - before < commits
-                && System.nanoTime() < deadline; work++) {
+            // Native construction is continuous; only the shared owner-thread time budget may yield.
+            while (System.nanoTime() < deadline) {
                 if (activeElement == null) {
                     if (cursor.done() == cursor.total()) return finish();
                     int entry = cursor.done();
