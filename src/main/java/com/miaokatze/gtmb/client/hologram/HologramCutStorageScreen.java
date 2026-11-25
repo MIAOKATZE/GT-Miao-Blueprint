@@ -95,7 +95,7 @@ final class HologramCutStorageScreen extends HologramMuiScreen {
             HologramMuiTheme.button(() -> text("undo"), 12 + bw + gap, y, bw, 20, this::undo)
                 .name("cut_storage_undo"));
         panel().child(HologramMuiTheme.button(() -> text("sync"), 12 + (bw + gap) * 2, y, bw, 20, () -> {
-            client().refreshDirectory();
+            client().retryDirectory();
             preview.retry();
         })
             .name("cut_storage_sync"));

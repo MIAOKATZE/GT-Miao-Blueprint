@@ -15,6 +15,7 @@ import net.minecraft.nbt.NBTTagCompound;
 
 import org.lwjgl.input.Keyboard;
 
+import com.miaokatze.gtmb.client.hologram.HologramLibraryClient.PlainAvailability;
 import com.miaokatze.gtmb.client.hologram.HologramLocalPlacement.Submission;
 import com.miaokatze.gtmb.client.hologram.HologramMaterialConfirmationDialog.LocalAction;
 import com.miaokatze.gtmb.client.hologram.HologramMaterialConfirmationDialog.LocalFrame;
@@ -28,6 +29,7 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
     private final Ticket ticket;
     private final CapturedDescription description;
     private HologramMaterialConfirmationDialog dialog;
+    private PlainAvailability availability = PlainAvailability.SOURCE;
 
     HologramLibraryMaterialReviewScreen(HologramLocalPlacement placement, Submission frozen, Minecraft client) {
         super("library_material_review", 1, 1);
@@ -52,23 +54,22 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
     @Override
     public LocalFrame localFrame() {
         Minecraft client = Minecraft.getMinecraft();
-        return ticket.current(client) ? description.frame(() -> client.thePlayer.inventory.mainInventory, ticket.slot)
-            : null;
-    }
-
-    @Override
-    public boolean supportsAdvancedPlacement() {
-        return true;
+        if (!ticket.current(client)) return null;
+        availability = HologramLibraryClient.INSTANCE.plainPlacementAvailability(ticket.frozen, client);
+        LocalFrame frame = description.frame(() -> client.thePlayer.inventory.mainInventory, ticket.slot);
+        return availability == PlainAvailability.READY ? frame : new LocalFrame(
+            frame.rows(), frame.scope(), frame.status() + " · " + availability.reason,
+            frame.emptyLabel(), frame.ready(), frame.description());
     }
 
     @Override
     public String localSubmitLabel() {
-        return "开始施工（使用已启用的背包或容器，不动 AE）";
+        return availability == PlainAvailability.READY ? "开始施工（仅使用主背包）" : "施工不可用 · " + availability.reason;
     }
 
     @Override
     public boolean localSubmitAvailable() {
-        return ticket.current(Minecraft.getMinecraft());
+        return availability == PlainAvailability.READY && ticket.current(Minecraft.getMinecraft());
     }
 
     @Override
@@ -79,19 +80,27 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
             else if (action == LocalAction.REFRESH) {
                 if (ticket.current(client))
                     description.refresh(() -> client.thePlayer.inventory.mainInventory, ticket.slot);
-            } else if (dispatchRefused(action, () -> ticket.consume(client), placement::submitFrozen)) {
-                returnToWorld(client);
-                HologramClient.selectionNotice(
-                    action == LocalAction.ADVANCED ? "未打开高级施工选项；位置保留，请重新打开材料窗口。" : "未开始施工；位置保留，请重新打开材料窗口。");
+            } else if (action == LocalAction.ADVANCED) {
+                if (ticket.current(client)) HologramClient.selectionNotice("此入口不支持高级施工，未发送施工请求。");
+            } else if (action == LocalAction.SUBMIT && ticket.current(client)) {
+                availability = HologramLibraryClient.INSTANCE.plainPlacementAvailability(ticket.frozen, client);
+                if (availability != PlainAvailability.READY) {
+                    if (availability == PlainAvailability.TRANSPORT)
+                        HologramClientProjectedPlacement.logMissingTransport();
+                    HologramClient.selectionNotice(availability.reason + "，未开始施工。");
+                } else if (dispatchRefused(action, () -> ticket.consume(client), placement::submitFrozen)) {
+                    returnToWorld(client);
+                    HologramClient.selectionNotice("当前锁定范围或连接未通过施工检查；已保留位置，未开始施工。");
+                }
             }
         });
     }
 
     static boolean dispatchRefused(LocalAction action, Supplier<Submission> consume,
         BiPredicate<Submission, Boolean> submit) {
-        if (action != LocalAction.SUBMIT && action != LocalAction.ADVANCED) return false;
+        if (action != LocalAction.SUBMIT) return false;
         Submission frozen = consume.get();
-        return frozen != null && !submit.test(frozen, action == LocalAction.SUBMIT);
+        return frozen != null && !submit.test(frozen, true);
     }
 
     @Override

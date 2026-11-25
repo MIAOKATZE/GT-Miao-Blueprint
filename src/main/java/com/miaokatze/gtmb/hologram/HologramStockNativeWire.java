@@ -1,0 +1,212 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Additional terms: see AGPL-ADDITIONAL-TERMS.md in the project root.
+
+package com.miaokatze.gtmb.hologram;
+
+import java.util.UUID;
+
+import net.minecraft.nbt.NBTTagCompound;
+
+import com.github.bsideup.jabel.Desugar;
+
+/** One confirmed stock action carried by the old-peer inert serverRules envelope. No nested payload. */
+public final class HologramStockNativeWire {
+
+    public static final int VERSION = 1;
+    private static final String VERSION_KEY = "nativeStockVersion";
+    private static final String REQUEST = "nativeStockRequest";
+    private static final String INTENT = "nativeStockIntent";
+    private static final String GENERATION = "nativeStockGeneration";
+    private static final String COMMAND = "nativeStockCommand";
+
+    public enum Command {
+        BEGIN, STOP, STATUS, PROBE, BEGIN_AFTER_PROBE;
+
+        boolean begins() {
+            return this == BEGIN || this == BEGIN_AFTER_PROBE;
+        }
+    }
+
+    public enum Phase {
+        ACCEPTED, ACTIVE, COMPLETE, STOPPED, REFUSED, RECOVERY_PENDING, UNKNOWN, CAPABLE, NEEDS_PROOF
+    }
+
+    @Desugar
+    public record Key(UUID request, long sequence, long generation) {
+
+        public boolean valid() {
+            return validNonce() && generation > 0;
+        }
+
+        boolean validNonce() {
+            return request != null && (request.getMostSignificantBits() != 0 || request.getLeastSignificantBits() != 0)
+                && sequence > 0;
+        }
+
+        HologramConstructionTaskGate.Request gateRequest() {
+            return new HologramConstructionTaskGate.Request(
+                request, sequence, HologramConstructionTaskGate.Kind.INCREMENTAL_NATIVE);
+        }
+    }
+
+    /** Source, controller, hatch type/tier and funding are fixed by protocol, never chosen from input NBT. */
+    @Desugar
+    public record Confirmation(Key key, int dimension, UUID tool, int x, int y, int z, int side, int slot,
+        int facing, int main, boolean mainExplicit, boolean noHatches, int priority,
+        int hatchX, int hatchY, int hatchZ, int hatchFacing) {
+
+        HologramStockNativeEntry.Intent intent() {
+            return new HologramStockNativeEntry.Intent(key.gateRequest(), key.generation,
+                HologramStockCokeOvenProfile.SOURCE_ID, HologramStockCokeOvenProfile.CONTROLLER,
+                x, y, z, side, slot, facing, main, mainExplicit, noHatches, priority,
+                HologramStockNativeEntry.Funding.REQUIRE_FULL_BOUND,
+                new HologramStockNativeConstruction.HatchChoice(hatchX, hatchY, hatchZ,
+                    HologramStockCokeOvenProfile.HATCH, HologramStockCokeOvenProfile.HATCH_TIER, hatchFacing));
+        }
+
+        public Confirmation forGeneration(long generation) {
+            return new Confirmation(new Key(key.request, key.sequence, generation), dimension, tool, x, y, z, side,
+                slot, facing, main, mainExplicit, noHatches, priority, hatchX, hatchY, hatchZ, hatchFacing);
+        }
+
+        boolean valid(boolean probe) {
+            return key != null && key.validNonce() && (probe ? key.generation == 0 : key.generation > 0)
+                && tool != null && (tool.getMostSignificantBits() != 0 || tool.getLeastSignificantBits() != 0)
+                && (probe ? forGeneration(1) : this).intent().valid();
+        }
+    }
+
+    @Desugar
+    record Request(Command command, Key key, Confirmation confirmation) {}
+
+    @Desugar
+    public record Reply(Key key, Phase phase, int placed, String reason) {}
+
+    private HologramStockNativeWire() {}
+
+    static boolean recognizes(NBTTagCompound tag) {
+        return tag != null && tag.hasKey(VERSION_KEY);
+    }
+
+    public static NBTTagCompound confirm(Confirmation value) {
+        return preparedAction(value, Command.BEGIN);
+    }
+
+    public static NBTTagCompound confirmAfterProbe(Confirmation value) {
+        return preparedAction(value, Command.BEGIN_AFTER_PROBE);
+    }
+
+    public static NBTTagCompound probe(Confirmation pending) {
+        return preparedAction(pending, Command.PROBE);
+    }
+
+    private static NBTTagCompound preparedAction(Confirmation value, Command command) {
+        if (value == null || !value.valid(command == Command.PROBE))
+            throw new IllegalArgumentException("Invalid stock native confirmation");
+        var tag = action(value.key, command);
+        tag.setString("tool", value.tool.toString());
+        tag.setInteger("dimension", value.dimension);
+        tag.setInteger("x", value.x);
+        tag.setInteger("y", value.y);
+        tag.setInteger("z", value.z);
+        tag.setInteger("side", value.side);
+        tag.setInteger("slot", value.slot);
+        tag.setInteger("facing", value.facing);
+        tag.setInteger("main", value.main);
+        tag.setBoolean("mainExplicit", value.mainExplicit);
+        tag.setBoolean("noHatches", value.noHatches);
+        tag.setInteger("priority", value.priority);
+        tag.setInteger("hatchX", value.hatchX);
+        tag.setInteger("hatchY", value.hatchY);
+        tag.setInteger("hatchZ", value.hatchZ);
+        tag.setInteger("hatchFacing", value.hatchFacing);
+        return tag;
+    }
+
+    public static NBTTagCompound control(Key key, Command command) {
+        if (command != Command.STOP && command != Command.STATUS) throw new IllegalArgumentException("Expected stock control");
+        return action(key, command);
+    }
+
+    private static NBTTagCompound action(Key key, Command command) {
+        var tag = identity(key, command == Command.PROBE);
+        tag.setString("action", "serverRules");
+        tag.setByte(COMMAND, (byte) command.ordinal());
+        return tag;
+    }
+
+    static Request readRequest(NBTTagCompound tag) {
+        if (!tag.hasKey("action", 8) || !"serverRules".equals(tag.getString("action"))
+            || !tag.hasKey(COMMAND, 1)) return null;
+        int index = tag.getByte(COMMAND);
+        if (index < 0 || index >= Command.values().length) return null;
+        Command command = Command.values()[index];
+        var key = readIdentity(tag, command == Command.PROBE);
+        if (key == null) return null;
+        if (command == Command.STOP || command == Command.STATUS)
+            return tag.func_150296_c().size() == 6 ? new Request(command, key, null) : null;
+
+        if (tag.func_150296_c().size() != 22 || !tag.hasKey("tool", 8)
+            || !exactBoolean(tag, "mainExplicit") || !exactBoolean(tag, "noHatches")) return null;
+        for (String field : new String[] { "dimension", "x", "y", "z", "side", "slot", "facing", "main",
+            "priority", "hatchX", "hatchY", "hatchZ", "hatchFacing" }) {
+            if (!tag.hasKey(field, 3)) return null;
+        }
+        var confirmation = new Confirmation(key, tag.getInteger("dimension"), uuid(tag.getString("tool")),
+            tag.getInteger("x"), tag.getInteger("y"), tag.getInteger("z"), tag.getInteger("side"),
+            tag.getInteger("slot"), tag.getInteger("facing"), tag.getInteger("main"), tag.getBoolean("mainExplicit"),
+            tag.getBoolean("noHatches"), tag.getInteger("priority"), tag.getInteger("hatchX"),
+            tag.getInteger("hatchY"), tag.getInteger("hatchZ"), tag.getInteger("hatchFacing"));
+        return confirmation.valid(command == Command.PROBE) ? new Request(command, key, confirmation) : null;
+    }
+
+    static NBTTagCompound writeReply(Reply reply) {
+        var tag = identity(reply.key, false);
+        tag.setBoolean("serverRulesOnly", true);
+        tag.setByte("nativeStockPhase", (byte) reply.phase.ordinal());
+        tag.setInteger("placed", reply.placed);
+        String reason = reply.reason;
+        tag.setString("reason", reason.substring(0, Math.min(reason.length(), 192)));
+        return tag;
+    }
+
+    static Reply readReply(NBTTagCompound tag) {
+        if (tag.func_150296_c().size() != 8 || !exactBoolean(tag, "serverRulesOnly")
+            || !tag.getBoolean("serverRulesOnly") || !tag.hasKey("nativeStockPhase", 1)
+            || !tag.hasKey("placed", 3) || !tag.hasKey("reason", 8)) return null;
+        var key = readIdentity(tag, false);
+        int phase = tag.getByte("nativeStockPhase"), placed = tag.getInteger("placed");
+        String reason = tag.getString("reason");
+        if (key == null || phase < 0 || phase >= Phase.values().length || reason.length() > 192) return null;
+        Phase state = Phase.values()[phase];
+        if (state == Phase.UNKNOWN ? placed != -1 : placed < 0 || placed > 24 || (state == Phase.CAPABLE || state == Phase.NEEDS_PROOF) && placed != 0)
+            return null;
+        return new Reply(key, state, placed, reason);
+    }
+
+    private static NBTTagCompound identity(Key key, boolean probe) {
+        if (key == null || !key.validNonce() || (probe ? key.generation != 0 : key.generation <= 0))
+            throw new IllegalArgumentException("Invalid stock native request key");
+        var tag = new NBTTagCompound();
+        tag.setInteger(VERSION_KEY, VERSION);
+        tag.setString(REQUEST, key.request.toString());
+        tag.setLong(INTENT, key.sequence);
+        tag.setLong(GENERATION, key.generation);
+        return tag;
+    }
+
+    private static Key readIdentity(NBTTagCompound tag, boolean probe) {
+        if (!tag.hasKey(VERSION_KEY, 3) || tag.getInteger(VERSION_KEY) != VERSION || !tag.hasKey(REQUEST, 8)
+            || !tag.hasKey(INTENT, 4) || !tag.hasKey(GENERATION, 4)) return null;
+        var key = new Key(uuid(tag.getString(REQUEST)), tag.getLong(INTENT), tag.getLong(GENERATION));
+        return key.validNonce() && (probe ? key.generation == 0 : key.generation > 0) ? key : null;
+    }
+
+    private static boolean exactBoolean(NBTTagCompound tag, String key) {
+        return tag.hasKey(key, 1) && (tag.getByte(key) == 0 || tag.getByte(key) == 1);
+    }
+
+    private static UUID uuid(String text) {
+        return HologramNativeCompactStart.canonical(text) ? UUID.fromString(text) : null;
+    }
+}

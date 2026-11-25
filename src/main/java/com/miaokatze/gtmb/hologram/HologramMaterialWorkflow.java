@@ -22,6 +22,7 @@ final class HologramMaterialWorkflow {
 
     static boolean action(HologramSession s, NBTTagCompound action, String op) {
         boolean material = lightweight(op);
+        if ("orderMissingMaterials".equals(op) && HologramWorkspace.refuseLegacyConstruction(s, action)) return true;
         if (blockDuringOrder(s, op)) {
             s.status = "AE 缺料订单正在后台处理；请等待完成或取消订单后再修改蓝图与施工计划";
             if (material) HologramSnapshots.sendMaterialQuote(s, action.getLong("uiSequence"));
@@ -81,6 +82,7 @@ final class HologramMaterialWorkflow {
                 request.setString(
                     "presetId",
                     s.virtual && s.virtualPreset != null && s.virtualPreset.id != null ? s.virtualPreset.id : "");
+                if (HologramWorkspace.refuseLegacyConstruction(s, action)) return true;
                 s.status = HologramMaterialOrdering.available(s.player)
                     ? HologramMaterialOrdering.submit(s.player, extensionRequest(request))
                     : HologramAeCraftingOrders.submit(s.player, s.materialSettings, request);

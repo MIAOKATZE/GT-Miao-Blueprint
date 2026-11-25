@@ -7,6 +7,8 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
@@ -14,14 +16,18 @@ import java.util.function.BiConsumer;
 
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.network.NetHandlerPlayServer;
+import net.minecraft.network.NetworkManager;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.management.UserListOpsEntry;
+import net.minecraft.world.World;
 
 import com.miaokatze.gtmb.util.ServerTaskScheduler;
 
 import cpw.mods.fml.common.FMLCommonHandler;
 import cpw.mods.fml.common.eventhandler.SubscribeEvent;
 import cpw.mods.fml.common.gameevent.TickEvent;
+import io.netty.channel.Channel;
 
 /** Common-side bridge. Client-visible flags never replace the actual dedicated-server check. */
 public final class HologramLibraryFacade {
@@ -38,6 +44,8 @@ public final class HologramLibraryFacade {
         HologramLibraryProtocol.INBOUND_REQUESTS);
     private static final ConcurrentHashMap<UUID, SavedResult> savedResults = new ConcurrentHashMap<>();
     private static final HologramRequestGate callbacks = new HologramRequestGate(2, 16);
+    private static final int RETIRED_DRAFT_NOTICE_LIMIT = 64, RETIRED_DRAFT_NOTICES_PER_TICK = 4;
+    private static final LinkedHashMap<UUID, SavePeerEndpoint> retiredDraftNotices = new LinkedHashMap<>();
     private static volatile BiConsumer<EntityPlayerMP, NBTTagCompound> draftReceiver;
 
     private HologramLibraryFacade() {}
@@ -123,6 +131,11 @@ public final class HologramLibraryFacade {
     static void receive(EntityPlayerMP player, NBTTagCompound request) {
         String operation = request.getString("op");
         if (!enabled() && !integratedOperation(operation)) return;
+        if ("exportDraft".equals(operation)) {
+            // Never acquire a library/callback slot or return a busy error with a disk receipt owner's token.
+            exportDraft(player, request);
+            return;
+        }
         synchronized (pending) {
             UUID owner = actorId(player);
             boolean chunk = HologramLibraryProtocol.uploadChunk(request);
@@ -172,13 +185,56 @@ public final class HologramLibraryFacade {
             || "saveResultConsumed".equals(operation);
     }
 
-    static void exportDraft(EntityPlayerMP player, NBTTagCompound request) {
-        scheduleLibraryCallback(player, request, () -> {
-            BiConsumer<EntityPlayerMP, NBTTagCompound> receiver = draftReceiver;
-            if (enabled() && receiver != null && HologramLibraryService.sessionCurrent(player, request))
-                receiver.accept(player, request);
-            else error(player, "Blueprint session changed; reopen and retry", request.getLong("clientTaskToken"));
-        });
+    private static final String SERVER_DRAFT_LOCAL_ONLY =
+        "当前来源没有可在客户端保存的原件；未下载、未保存。请在本机捕获，或打开客户端蓝图库中的副本。";
+
+    static void exportDraft(EntityPlayerMP player, NBTTagCompound ignored) {
+        if (!enabled()) return;
+        SavePeerEndpoint notice = new SavePeerEndpoint(player);
+        if (!notice.current()) return;
+        synchronized (retiredDraftNotices) {
+            UUID owner = actorId(player);
+            SavePeerEndpoint pendingNotice = retiredDraftNotices.get(owner);
+            if ((pendingNotice == null && retiredDraftNotices.size() < RETIRED_DRAFT_NOTICE_LIMIT)
+                || pendingNotice != null && !pendingNotice.current()) retiredDraftNotices.put(owner, notice);
+        }
+    }
+
+    /** Chat only, coalesced per authenticated peer; a full notice queue is deliberately silent. */
+    private static void flushRetiredDraftNotices() {
+        ArrayList<SavePeerEndpoint> ready = new ArrayList<>(RETIRED_DRAFT_NOTICES_PER_TICK);
+        synchronized (retiredDraftNotices) {
+            var pendingNotices = retiredDraftNotices.values().iterator();
+            while (ready.size() < RETIRED_DRAFT_NOTICES_PER_TICK && pendingNotices.hasNext()) {
+                ready.add(pendingNotices.next());
+                pendingNotices.remove();
+            }
+        }
+        for (SavePeerEndpoint notice : ready) if (notice.current()) retiredDraftNotice(notice.player);
+    }
+
+    private static void clearRetiredDraftNotices() {
+        synchronized (retiredDraftNotices) {
+            retiredDraftNotices.clear();
+        }
+    }
+
+    private static void retiredDraftNotice(EntityPlayerMP player) {
+        player.addChatMessage(new net.minecraft.util.ChatComponentText("[猫猫全息·蓝图库] " + SERVER_DRAFT_LOCAL_ONLY));
+    }
+
+    static void refuseServerDraftSave(EntityPlayerMP player, NBTTagCompound request) {
+        if (!HologramNetwork.progressConnected(player)) return;
+        long task = request.hasKey("clientTaskToken", 4) ? request.getLong("clientTaskToken") : 0;
+        HologramSession owner = HologramWorkspace.find(player.getUniqueID());
+        SavedResult receipt = savedResults.get(actorId(player));
+        // A repeated save action must not deliver an error that looks like the terminal for an existing disk ACK.
+        boolean ownedReceipt = owner != null && owner.player == player && !owner.blueprintSaveReceipt.isEmpty()
+            && owner.blueprintClientTaskToken == task;
+        boolean resolvedReceipt = receipt != null && receipt.actor == player
+            && receipt.proof.getLong("clientTaskToken") == task;
+        if (task > 0 && !ownedReceipt && !resolvedReceipt) error(player, SERVER_DRAFT_LOCAL_ONLY, task);
+        else retiredDraftNotice(player);
     }
 
     static void draftPrepared(EntityPlayerMP player, NBTTagCompound request, byte[] json, String name) {
@@ -329,6 +385,19 @@ public final class HologramLibraryFacade {
         }
     }
 
+    /** Owner-thread lookup: only the exact stored pending proof can supersede a mutable UI task observation. */
+    static Long stagedSaveTask(EntityPlayerMP player, String session, String exactReceipt) {
+        if (player == null || !new SavePeerEndpoint(player).current() || player.getGameProfile() == null
+            || player.getGameProfile().getId() == null || session == null || session.isEmpty()
+            || exactReceipt == null || exactReceipt.isEmpty()) return null;
+        SavedResult stored = savedResults.get(actorId(player));
+        if (stored == null || stored.actor != player || !"pending".equals(stored.outcome)
+            || !session.equals(stored.proof.getString("session")) || !exactReceipt.equals(stored.proof.getString("saveReceipt"))
+            || !stored.proof.hasKey("clientTaskToken", 4)) return null;
+        long task = stored.proof.getLong("clientTaskToken");
+        return task >= 0 ? task : null;
+    }
+
     /** The server already owns the JSON digest; private PNG bytes remain on their owner's client. */
     static boolean localSaveWritten(EntityPlayerMP player, NBTTagCompound acknowledgement) {
         SavedResult result = savedResults.get(actorId(player));
@@ -360,8 +429,9 @@ public final class HologramLibraryFacade {
     }
 
     static void resolveSavedResult(EntityPlayerMP player, NBTTagCompound request, boolean cancel) {
-        // Preview or IO can fail before the verified-byte result exists. Still revoke the exact owner receipt.
-        if (cancel) {
+        // A cancel may precede the byte proof, but only the exact current capability can discard its staging.
+        // A matched retained terminal can still be replayed below without touching the raw cache.
+        if (cancel && HologramLibraryService.saveCurrent(player, request)) {
             HologramService.librarySaveCancelled(player, request);
             HologramServerLibrary current = library;
             if (current != null) current.discardSavedContent(player, request);
@@ -398,7 +468,7 @@ public final class HologramLibraryFacade {
                 : request.getString("replaceLocalId");
             return actor == player && proof.getString("saveReceipt")
                 .equals(request.getString("saveReceipt"))
-                && proof.getLong("clientTaskToken") == request.getLong("clientTaskToken")
+                && matchesSaveTask(request)
                 && request.hasKey("planRevision", 4)
                 && proof.getString("session")
                     .equals(request.getString("session"))
@@ -411,6 +481,14 @@ public final class HologramLibraryFacade {
                     .equals(request.getString("previewSha256"))
                     || proof.getBoolean("localSaveReceipt") && proof.getString("previewSha256")
                         .isEmpty());
+        }
+
+        private boolean matchesSaveTask(NBTTagCompound request) {
+            if (proof.hasKey("clientTaskToken") && !proof.hasKey("clientTaskToken", 4)) return false;
+            long expected = proof.getLong("clientTaskToken");
+            return expected >= 0 && (request.hasKey("clientTaskToken")
+                ? request.hasKey("clientTaskToken", 4) && request.getLong("clientTaskToken") == expected
+                : expected == 0);
         }
 
         private boolean matchesBoundJson(NBTTagCompound request) {
@@ -495,15 +573,8 @@ public final class HologramLibraryFacade {
 
     public static void downloadDraft(EntityPlayerMP player, HologramPresets.Preset preset, String session,
         long revision, String replaceLocalId, String saveReceipt, long clientTaskToken) throws IOException {
-        NBTTagCompound request = HologramLibraryProtocol.request("exportDraft");
-        request.setString("session", session);
-        request.setLong("planRevision", revision);
-        request.setString("replaceLocalId", replaceLocalId == null ? "" : replaceLocalId);
-        request.setString("saveReceipt", saveReceipt == null ? "" : saveReceipt);
-        request.setLong("clientTaskToken", Math.max(0L, clientTaskToken));
-        HologramServerLibrary current = library;
-        if (current == null) throw new IOException("Server library is still loading");
-        current.prepareDraft(player, request, preset);
+        // Final fence also covers the integrated logical-server fallback and delayed review continuations.
+        throw new IOException(SERVER_DRAFT_LOCAL_ONLY);
     }
 
     public static boolean consumeDownloadAllowance(UUID player, int bytes) {
@@ -546,6 +617,7 @@ public final class HologramLibraryFacade {
             inboundQuota.clear();
         }
         savedResults.clear();
+        clearRetiredDraftNotices();
         callbacks.clear();
         callbackDepth();
         if (previous != null) previous.stop();
@@ -558,6 +630,7 @@ public final class HologramLibraryFacade {
             pending.clear();
             inboundQuota.clear();
         }
+        clearRetiredDraftNotices();
         callbacks.clear();
         callbackDepth();
         HologramServerLibrary current = library;
@@ -571,6 +644,7 @@ public final class HologramLibraryFacade {
             MinecraftServer server = MinecraftServer.getServer();
             if (event.phase != TickEvent.Phase.END || server == null) return;
             pruneSavedResults();
+            flushRetiredDraftNotices();
             HologramServerLibrary current = library;
             if (current == null) {
                 current = new HologramServerLibrary(
@@ -599,8 +673,8 @@ public final class HologramLibraryFacade {
                     resolveSavedResult(next.player, next.request, "cancel".equals(op));
                     if ("saveStatus".equals(op)) continue;
                 }
-                if ("exportDraft".equals(op) && !HologramLibraryService.sessionCurrent(next.player, next.request)) {
-                    error(next.player, "蓝图会话已变更，请重新打开后重试", next.request.getLong("clientTaskToken"));
+                if ("exportDraft".equals(op)) {
+                    exportDraft(next.player, next.request);
                     continue;
                 }
                 if ("previewBegin".equals(op) && !HologramLibraryService.saveCurrent(next.player, next.request)) {
@@ -609,6 +683,29 @@ public final class HologramLibraryFacade {
                 }
                 current.submit(next.player, next.request, isAdmin(next.player));
             }
+        }
+    }
+
+    private static final class SavePeerEndpoint {
+
+        final EntityPlayerMP player;
+        final World world;
+        final NetHandlerPlayServer handler;
+        final NetworkManager network;
+        final Channel channel;
+
+        SavePeerEndpoint(EntityPlayerMP player) {
+            this.player = player;
+            world = player.worldObj;
+            handler = player.playerNetServerHandler;
+            network = handler == null ? null : handler.netManager;
+            channel = network == null ? null : network.channel();
+        }
+
+        boolean current() {
+            return channel != null && channel.isOpen() && player.worldObj == world
+                && player.playerNetServerHandler == handler && handler.playerEntity == player
+                && handler.netManager == network && network.getNetHandler() == handler && network.channel() == channel;
         }
     }
 

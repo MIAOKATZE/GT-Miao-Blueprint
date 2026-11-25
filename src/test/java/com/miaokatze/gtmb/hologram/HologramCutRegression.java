@@ -24,6 +24,7 @@ public final class HologramCutRegression {
     public static void run() {
         try {
             compositeSelection();
+            boundedReplies();
             NBTTagCompound floating = new NBTTagCompound();
             floating.setFloat("nativeFloat", Float.NaN);
             floating.setDouble("nativeDouble", Double.NaN);
@@ -127,7 +128,7 @@ public final class HologramCutRegression {
             entry.setLong("sequence", 7);
             SimpleAssert.eq(
                 "剪切 #7",
-                HologramCutEntry.directory(entry)
+                HologramCutEntry.wireSummary(entry)
                     .getString("name"),
                 "old entries retain automatic names");
             SimpleAssert.eq("缓存", HologramCutNaming.checkedName("  缓存  "), "names trim surrounding whitespace");
@@ -155,22 +156,32 @@ public final class HologramCutRegression {
             air.setInteger("x", 1);
             cells.appendTag(air);
             entry.setTag("cells", cells);
+            entry.setLong("sequence", 19);
+            entry.setTag("unrecognizedPayload", tile.copy());
+            entry.setInteger("selectionVersion", 1);
+            entry.setInteger("selectedCells", 2);
             NBTTagCompound preview = HologramCutEntry.preview(entry);
             SimpleAssert.eq(
                 2,
                 preview.getTagList("cells", 10)
                     .tagCount(),
                 "preview retains air cells");
-            SimpleAssert.that(entry.equals(preview), "selected owner receives complete raw preview");
+            SimpleAssert.that(entry.equals(preview), "detached local work retains the complete raw preimage");
             preview.getTagList("cells", 10)
                 .getCompoundTagAt(0)
                 .getCompoundTag("tile")
                 .setString("owner", "detached");
             SimpleAssert.eq("native-original-owner", tile.getString("owner"), "preview is a detached copy");
-            SimpleAssert.that(
-                !HologramCutEntry.directory(entry)
-                    .hasKey("cells"),
-                "directory does not expose raw cells");
+            NBTTagCompound localHeader = HologramCutEntry.directory(entry);
+            SimpleAssert.that(localHeader.hasKey("selectionVersion", 3) && localHeader.hasKey("selectedCells", 3)
+                && localHeader.hasKey("unrecognizedPayload", 10) && !localHeader.hasKey("cells"),
+                "local journal header preserves exact format and bookkeeping independently of wire");
+            NBTTagCompound bounded = HologramCutEntry.wireSummary(entry);
+            SimpleAssert.eq(entry.getString("id"), bounded.getString("id"), "directory preserves exact entry identity");
+            SimpleAssert.that(bounded.hasKey("sequence", 4) && bounded.getLong("sequence") == 19
+                && !bounded.hasKey("cells") && !bounded.hasKey("unrecognizedPayload")
+                && !bounded.hasKey("selectionVersion"),
+                "directory copies only named primitive metadata, never nested payloads");
             Path directory = Files.createTempDirectory("gtmb-cut-regression");
             UUID owner = UUID.randomUUID();
             HologramCutStorage store = new HologramCutStorage(directory, owner);
@@ -217,7 +228,7 @@ public final class HologramCutRegression {
             HologramCutPlacementPreference.remember(state, placementChoice);
             SimpleAssert.eq(
                 "原料缓存 / Raw cache",
-                HologramCutEntry.directory(entry)
+                HologramCutEntry.wireSummary(entry)
                     .getString("name"),
                 "directory preserves custom name");
             SimpleAssert
@@ -297,6 +308,80 @@ public final class HologramCutRegression {
         } catch (IOException failure) {
             throw new AssertionError("cut clipboard persistence", failure);
         }
+    }
+
+    private static void boundedReplies() throws IOException {
+        String entryName = new String(new char[HologramCutNaming.MAX_LENGTH]).replace((char) 0, '物');
+        NBTTagCompound directory = new NBTTagCompound();
+        directory.setString("action", "state");
+        directory.setString("requestId", new UUID(0, 801).toString());
+        directory.setBoolean("success", true);
+        directory.setString("code", "ok");
+        directory.setString("message", new String(new char[512]).replace((char) 0, '剪'));
+        directory.setBoolean(HologramCutNaming.SKIP_PROMPT, true);
+        directory.setBoolean(HologramCutPlacementPreference.SKIP_PROMPT, false);
+        directory.setString("reconciledRequestId", new UUID(0, 802).toString());
+        directory.setBoolean("requestCompleted", true);
+        HologramCutProtocol.writeBoundsProof(directory, new UUID(0, 803));
+        NBTTagList rows = new NBTTagList();
+        for (int i = 0; i < HologramCutProtocol.MAX_ENTRIES; i++) {
+            NBTTagCompound row = new NBTTagCompound();
+            row.setString("id", new UUID(1, i + 1).toString());
+            row.setString("name", entryName);
+            row.setLong("sequence", i + 1);
+            row.setInteger("x", -60 + i);
+            row.setInteger("y", 64);
+            row.setInteger("z", 10);
+            row.setInteger("dimension", 0);
+            row.setInteger("sizeX", 64);
+            row.setInteger("sizeY", 64);
+            row.setInteger("sizeZ", 64);
+            row.setInteger("blocks", 1024);
+            row.setInteger("selectedCells", HologramCutProtocol.MAX_CELLS);
+            rows.appendTag(row);
+        }
+        directory.setTag("entries", rows);
+        java.io.ByteArrayOutputStream plain = new java.io.ByteArrayOutputStream();
+        try (java.io.DataOutputStream out = new java.io.DataOutputStream(plain)) {
+            net.minecraft.nbt.CompressedStreamTools.write(directory, out);
+        }
+        SimpleAssert.that(plain.size() <= 25_820 && plain.size() <= HologramCutReplyCodec.MAX_RAW_BYTES,
+            "maximal normal directory with full names, exact Retry receipt and notice fits raw ceiling");
+        byte[] encoded = HologramCutReplyCodec.encode(directory);
+        ByteBuf packet = Unpooled.buffer(), old = Unpooled.buffer();
+        try {
+            new HologramNetwork.CutFragment(42, encoded.length, 0, encoded).toBytes(packet);
+            SimpleAssert.that(packet.readableBytes() + 1 <= HologramCutReplyCodec.MAX_PACKET_BYTES
+                && HologramCutReplyCodec.MAX_PACKET_BYTES == 28_693,
+                "one normal directory fits including the original 20-byte header and FML discriminator");
+            HologramNetwork.CutFragment current = new HologramNetwork.CutFragment();
+            current.fromBytes(packet);
+            SimpleAssert.that(current.admitted() && !packet.isReadable() && directory.equals(current.decodeReply()),
+                "real marked frame and strict codec roundtrip every admitted field unchanged");
+
+            new HologramNetwork.Fragment(43, encoded.length, 0, encoded).toBytes(old);
+            HologramNetwork.CutFragment legacy = new HologramNetwork.CutFragment();
+            legacy.fromBytes(old);
+            SimpleAssert.that(!legacy.admitted() && !old.isReadable(),
+                "an ordinary old frame carrying this normal metadata is not adopted as a current Cut response");
+        } finally {
+            packet.release();
+            old.release();
+        }
+
+        NBTTagCompound notice = new NBTTagCompound();
+        notice.setString("action", "state");
+        notice.setString("requestId", new UUID(0, 804).toString());
+        notice.setBoolean("success", false);
+        notice.setString("code", "recovery_pending");
+        notice.setString("message", "原操作仍待核定；暂存未改动。");
+        SimpleAssert.that(notice.equals(HologramCutReplyCodec.decode(HologramCutReplyCodec.encode(notice))),
+            "normal pending notice stays exact without arming a directory");
+        NBTTagCompound newer = (NBTTagCompound) notice.copy();
+        newer.setString("otherNotice", "a separate feature's ordinary message");
+        byte[] unfamiliar = net.minecraft.nbt.CompressedStreamTools.compress(newer);
+        rejected(() -> HologramCutReplyCodec.decode(unfamiliar), "an unknown ordinary label is not Cut metadata");
+        rejected(() -> HologramCutReplyCodec.encode(newer), "publisher does not compress an unknown label");
     }
 
     private static void rejected(Checked action, String label) {

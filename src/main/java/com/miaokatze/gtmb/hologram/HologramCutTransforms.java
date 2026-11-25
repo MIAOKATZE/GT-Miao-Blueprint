@@ -44,6 +44,29 @@ public final class HologramCutTransforms {
     }
 
     static NBTTagCompound apply(NBTTagCompound original, CutTransforms.Transform transform, int ox, int oy, int oz) {
+        return apply(original, transform, ox, oy, oz, null);
+    }
+
+    /** Check known vanilla orientations before running any adapter, permission callback or world edit. */
+    static NBTTagCompound applyForPlacement(NBTTagCompound original, CutTransforms.Transform transform, int ox,
+        int oy, int oz) throws IOException {
+        if (transform.identity()) return apply(original, transform, ox, oy, oz);
+        HologramCutEntry.validate(original);
+        NBTTagList cells = original.getTagList("cells", 10);
+        int[] checked = new int[cells.tagCount()];
+        for (int i = 0; i < cells.tagCount(); i++) {
+            NBTTagCompound cell = cells.getCompoundTagAt(i);
+            String id = cell.getString("block");
+            checked[i] = HologramCutTransformMetadata.placementMetadata(
+                Block.getBlockFromName(id), id, cell.getInteger("meta"), transform);
+            if (checked[i] == HologramCutTransformMetadata.UNREPRESENTABLE)
+                throw new IOException("无法表示原版方块 " + id + " 的旋转或镜像；未放置，暂存仍保留。");
+        }
+        return apply(original, transform, ox, oy, oz, checked);
+    }
+
+    private static NBTTagCompound apply(NBTTagCompound original, CutTransforms.Transform transform, int ox, int oy,
+        int oz, int[] checked) {
         NBTTagCompound result = (NBTTagCompound) original.copy();
         transform.write(result);
         if (transform.identity()) return result;
@@ -65,6 +88,12 @@ public final class HologramCutTransforms {
             cell.setInteger("x", position[0]);
             cell.setInteger("y", position[1]);
             cell.setInteger("z", position[2]);
+            if (checked != null && checked[i] >= 0) {
+                // For these exact vanilla schemes only, keep the native payload and use the pinned metadata.
+                cell.setInteger("meta", checked[i]);
+                changed.appendTag(cell);
+                continue;
+            }
             Block block = Block.getBlockFromName(source.getString("block"));
             CutTransforms.State state = new CutTransforms.State(
                 block,

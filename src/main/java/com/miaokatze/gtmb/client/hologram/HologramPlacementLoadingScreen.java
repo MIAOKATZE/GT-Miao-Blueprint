@@ -14,14 +14,22 @@ import com.cleanroommc.modularui.widget.Widget;
 /** Opens on the confirming click, before any server validation or native preview work. */
 final class HologramPlacementLoadingScreen extends HologramMuiScreen {
 
+    private final HologramOwnedPlacementProgress.Ticket owned;
+
     HologramPlacementLoadingScreen() {
+        this(null);
+    }
+
+    HologramPlacementLoadingScreen(HologramOwnedPlacementProgress.Ticket owned) {
         super("placement_validation", 430, 164);
+        this.owned = owned;
     }
 
     @Override
     protected boolean muiKey(char character, int key) {
         if (key != Keyboard.KEY_ESCAPE) return false;
-        HologramLibraryClient.INSTANCE.cancelProjectedPlacement();
+        if (owned == null) HologramLibraryClient.INSTANCE.cancelProjectedPlacement();
+        else if (!HologramBackgroundTasks.cancelOwnedPlacement(owned)) HologramBackgroundTasks.leaveOwnedPlacement(owned);
         Minecraft.getMinecraft()
             .displayGuiScreen(null);
         return true;
@@ -32,7 +40,10 @@ final class HologramPlacementLoadingScreen extends HologramMuiScreen {
         HologramMuiTheme.header(panel(), () -> "蓝图放置 · 正在核对", 430);
         panel().child(
             HologramMuiTheme
-                .label(() -> HologramLibraryClient.INSTANCE.status(), 14, 42, 402, 32, HologramMuiTheme.TEXT));
+                .label(
+                    () -> owned == null ? HologramLibraryClient.INSTANCE.status()
+                        : HologramBackgroundTasks.ownedPlacementStatus(owned),
+                    14, 42, 402, 32, HologramMuiTheme.TEXT));
         panel().child(
             new Progress().pos(14, 82)
                 .size(402, 38));
@@ -43,15 +54,18 @@ final class HologramPlacementLoadingScreen extends HologramMuiScreen {
                 128,
                 206,
                 20,
-                () -> Minecraft.getMinecraft()
-                    .displayGuiScreen(null)));
+                () -> {
+                    if (owned != null) HologramBackgroundTasks.leaveOwnedPlacement(owned);
+                    Minecraft.getMinecraft().displayGuiScreen(null);
+                }));
     }
 
-    private static final class Progress extends Widget<Progress> {
+    private final class Progress extends Widget<Progress> {
 
         @Override
         public void draw(ModularGuiContext context, WidgetThemeEntry<?> theme) {
-            HologramProgress progress = HologramBackgroundTasks.progress();
+            HologramProgress progress = owned == null ? HologramBackgroundTasks.progress()
+                : HologramBackgroundTasks.ownedPlacementView(owned);
             if (progress == null) return;
             HologramProgressView.draw(Minecraft.getMinecraft().fontRenderer, progress, 0, 0, 402, 7, false);
             Minecraft.getMinecraft().fontRenderer

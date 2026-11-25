@@ -11,6 +11,7 @@ import net.minecraft.init.Items;
 import net.minecraft.inventory.IInventory;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.nbt.NBTTagList;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraft.world.WorldServer;
 import net.minecraftforge.common.util.ForgeDirection;
@@ -132,6 +133,13 @@ final class HologramCutAeNativeSmoke {
             "ordinary AE old hosts and nodes detached");
         NBTTagCompound paste = request("paste");
         paste.setString("id", captured.getString("id"));
+        NBTTagList summaries = captured.getTagList("entries", 10);
+        for (int i = 0; i < summaries.tagCount(); i++) {
+            NBTTagCompound row = summaries.getCompoundTagAt(i);
+            if (paste.getString("id").equals(row.getString("id")) && row.hasKey("sequence", 4))
+                paste.setLong("entrySequence", row.getLong("sequence"));
+        }
+        require(paste.getLong("entrySequence") > 0, "exact ordinary AE clipboard sequence");
         paste.setInteger("originX", 840);
         paste.setInteger("originY", 200);
         paste.setInteger("originZ", 720);

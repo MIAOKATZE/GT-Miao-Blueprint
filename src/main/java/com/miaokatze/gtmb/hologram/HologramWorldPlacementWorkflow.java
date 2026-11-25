@@ -118,9 +118,29 @@ final class HologramWorldPlacementWorkflow {
 
     /** Last selection belongs to the held logical tool; shortcut loading uses the ordinary validated preset path. */
     static void quickPlaceLastBlueprint(EntityPlayerMP player, NBTTagCompound request) {
-        if (HologramLibraryFacade.enabled() && !HologramLibraryService.connectedProjector(player)) return;
+        boolean dedicated = HologramLibraryFacade.enabled();
+        if (dedicated) {
+            if (!HologramLibraryService.connectedProjector(player)) return;
+            ItemStack held = player.getHeldItem();
+            HologramSession current = HologramWorkspace.find(player.getUniqueID());
+            String remembered = held != null && held.hasTagCompound()
+                ? held.getTagCompound().getString(HologramSessionKeys.SELECTED_PRESET) : "";
+            if (current != null && current.player == player && current.projectionDiscardApproved
+                && "projectionQuickPlace".equals(request.getString("op"))) remembered = request.getString("presetId");
+            if (!request.getString("publicPresetId").isEmpty() || HologramPresetWorkflow.publicLibraryId(remembered)) {
+                HologramPresetWorkflow.refusePublicHydration(player);
+                return;
+            }
+        }
         HologramSession previous = HologramProjectorWorkflow.uiSession(player);
         if (!HologramSessionPolicy.valid(previous)) return;
+        String id = HologramSessionPolicy.selectedPreset(previous);
+        if (previous.projectionDiscardApproved && "projectionQuickPlace".equals(request.getString("op")))
+            id = request.getString("presetId");
+        if (dedicated && HologramPresetWorkflow.publicLibraryId(id)) {
+            HologramPresetWorkflow.refusePublicHydration(player);
+            return;
+        }
         HologramArea area = HologramWorkspace.AREAS.get(player.getUniqueID());
         if (previous.job == 1 || previous.job == 2
             || area != null && (area.selecting || area.importing)
@@ -132,21 +152,6 @@ final class HologramWorldPlacementWorkflow {
             HologramPresetWorkflow.presetGuidance(previous, previous.status);
             HologramSnapshots.send(previous);
             return;
-        }
-        String id = HologramSessionPolicy.selectedPreset(previous);
-        if (previous.projectionDiscardApproved && "projectionQuickPlace".equals(request.getString("op")))
-            id = request.getString("presetId");
-        if (HologramLibraryFacade.enabled() && !request.getString("publicPresetId")
-            .isEmpty()) {
-            try {
-                id = HologramLibraryService.publicId(request.getString("publicPresetId"));
-                if (HologramLibraryFacade.get(player, id) == null) throw new java.io.IOException("上次选择的服务器蓝图已删除或尚未加载");
-            } catch (java.io.IOException invalid) {
-                previous.status = "快捷放置失败：" + invalid.getMessage();
-                HologramPresetWorkflow.presetGuidance(previous, previous.status);
-                HologramSnapshots.send(previous);
-                return;
-            }
         }
         if (id.isEmpty()) {
             previous.status = "尚未选择有效蓝图，或上次选择已删除；普通右键打开蓝图库重新选择后可用 Alt + 右键快捷放置";
@@ -269,6 +274,11 @@ final class HologramWorldPlacementWorkflow {
             && request.getLong("uiSequence") == s.uiSequence
             && HologramSessionPolicy.valid(s)) {
             HologramSnapshots.send(s);
+            return;
+        }
+        String scopedRefusal = HologramWorkspace.legacyConstructionRefusal(player);
+        if (scopedRefusal != null) {
+            rejectPositionLock(player, request, scopedRefusal);
             return;
         }
         if (HologramSessionPolicy.blockedByAreaImport(s) || s.cancelled

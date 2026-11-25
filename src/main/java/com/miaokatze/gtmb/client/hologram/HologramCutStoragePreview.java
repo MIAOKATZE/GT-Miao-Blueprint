@@ -3,25 +3,16 @@
 
 package com.miaokatze.gtmb.client.hologram;
 
-import java.util.UUID;
-
 import net.minecraft.client.Minecraft;
 import net.minecraft.nbt.NBTTagCompound;
 
-import com.miaokatze.gtmb.hologram.HologramNetwork;
-
-/** Read-only storage browser, deliberately separate from placement pose, locks and request accounting. */
+/** The real browser uses only its accepted directory; the isolated local tutorial keeps its own raw renderer. */
 final class HologramCutStoragePreview implements HologramCutStoragePreviewView {
 
     private static HologramCutStoragePreview active;
     final HologramCutStoragePreviewState state = new HologramCutStoragePreviewState();
     private final Object world = Minecraft.getMinecraft().theWorld;
-    private final Object connection = Minecraft.getMinecraft()
-        .getNetHandler();
-    private HologramCutRawPreviewSession renderer;
-    private NBTTagCompound raw;
-    private String notice = "";
-    private final HologramProgress.Tracker progress = new HologramProgress.Tracker();
+    private final Object connection = Minecraft.getMinecraft().getNetHandler();
 
     HologramCutStoragePreview() {
         if (active != null) active.close();
@@ -29,121 +20,44 @@ final class HologramCutStoragePreview implements HologramCutStoragePreviewView {
     }
 
     void select(String id) {
-        if (state.select(id)) clearRaw();
+        state.select(id);
     }
 
-    private boolean validWorld() {
+    void tick(boolean ignoredMayRequest) {
         Minecraft mc = Minecraft.getMinecraft();
-        return world != null && world == mc.theWorld && connection == mc.getNetHandler();
+        if (world == null || world != mc.theWorld || connection != mc.getNetHandler()) close();
     }
 
-    void tick(boolean mayRequest) {
-        if (!validWorld()) {
-            close();
-            return;
-        }
-        if (state.expire(System.nanoTime())) {
-            notice = text("timeout");
-            progress.clear();
-        }
-        if (!mayRequest || !state.needsRequest()) return;
-        NBTTagCompound request = new NBTTagCompound();
-        request.setString("action", "preview");
-        request.setString("id", state.selected());
-        UUID random = UUID.randomUUID();
-        String id = new UUID(
-            0x47544d426d750000L | (random.getMostSignificantBits() & 0xffffL),
-            random.getLeastSignificantBits()).toString();
-        request.setString("requestId", id);
-        // No placement transform: the directory always previews the original complete raw structure.
-        state.begin(id, System.nanoTime());
-        progress.update(id, "cut.preview", 0, 0, "", false, System.nanoTime());
-        notice = text("loading");
-        HologramNetwork.sendCutAction(request);
-    }
-
-    /** Also claims stale browser IDs so they cannot enter the placement controller's ACK path. */
+    /** Claim legacy browser IDs without reading their raw data or reusing their progress. */
     static boolean receive(NBTTagCompound reply) {
-        String id = reply.getString("requestId");
-        if (!id.startsWith(HologramCutStoragePreviewState.PREFIX)) return false;
-        HologramCutStoragePreview owner = active;
-        if (owner == null) return true;
-        if (!owner.validWorld()) {
-            owner.close();
-            return true;
-        }
-        if (!owner.state.accept(id)) return true;
-        boolean present = false;
-        for (NBTTagCompound summary : HologramCutClient.INSTANCE.entries()) if (owner.state.selected()
-            .equals(summary.getString("id"))) present = true;
-        if (!present) {
-            owner.select("");
-            return true;
-        }
-        if (!reply.getBoolean("success") || !reply.hasKey("preview", 10)
-            || !owner.state.selected()
-                .equals(reply.getString("id"))) {
-            owner.notice = text("unavailable") + " " + reply.getString("message");
-            owner.progress.clear();
-            return true;
-        }
-        owner.raw = (NBTTagCompound) reply.getCompoundTag("preview")
-            .copy();
-        try {
-            owner.renderer = HologramCutRawPreview.newSession();
-            owner.renderer.update(owner.raw);
-            owner.notice = "";
-            owner.progress.finish(id, System.nanoTime());
-        } catch (RuntimeException failure) {
-            owner.clearRaw();
-            owner.notice = text("unavailable") + " "
-                + failure.getClass()
-                    .getSimpleName();
-        }
-        return true;
+        return reply.getString("requestId").startsWith(HologramCutStoragePreviewState.PREFIX);
     }
 
     void retry() {
         state.retry();
-        clearRaw();
     }
 
     public HologramCutRawPreviewSession renderer() {
-        return renderer;
+        return null;
     }
 
     public NBTTagCompound raw() {
-        return raw;
+        return null;
     }
 
     HologramProgress progress() {
-        HologramProgress transport = HologramClientProgress.view("cut", "");
-        if (transport != null && !state.request()
-            .isEmpty()
-            && state.request()
-                .equals(transport.operation))
-            return transport;
-        return progress.view(System.nanoTime());
+        return null;
     }
 
     public String notice() {
-        if (renderer != null && !renderer.diagnostics()
-            .isEmpty()) return renderer.diagnostics()
-                .get(0);
-        return notice;
-    }
-
-    private void clearRaw() {
-        if (renderer != null) renderer.release();
-        renderer = null;
-        raw = null;
-        notice = "";
-        progress.clear();
+        if (state.selected().isEmpty()) return "";
+        HologramCutClient.ClipBounds bounds = HologramCutClient.INSTANCE.clipboardBounds(state.selected());
+        if (bounds == null) return "没有已确认的剪切范围。";
+        return bounds.sx + " × " + bounds.sy + " × " + bounds.sz + " · 仅显示范围，不下载完整结构。";
     }
 
     void close() {
         state.close();
-        clearRaw();
         if (active == this) active = null;
     }
 
@@ -153,10 +67,9 @@ final class HologramCutStoragePreview implements HologramCutStoragePreviewView {
 
     /** An acknowledged directory can consume a row while a recipe viewer temporarily hides this panel. */
     static void directoryChanged(java.util.List<NBTTagCompound> summaries) {
-        if (active == null || active.state.selected()
-            .isEmpty()) return;
-        for (NBTTagCompound summary : summaries) if (active.state.selected()
-            .equals(summary.getString("id"))) return;
+        if (active == null || active.state.selected().isEmpty()) return;
+        for (NBTTagCompound summary : summaries)
+            if (active.state.selected().equals(summary.getString("id"))) return;
         active.select("");
     }
 

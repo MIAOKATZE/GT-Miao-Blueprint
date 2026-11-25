@@ -68,6 +68,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     }
 
     private final boolean browseViewport, cleanCapture;
+    private volatile HologramArchiveTileGl archiveTiles;
     private final HologramPreviewAssets assets;
     private final MiaoVisonLiteSession<HologramRegionCache.Key, PreviewRegion> session = new MiaoVisonLiteSession<>();
 
@@ -79,6 +80,26 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
 
     HologramPreviewAssets assets() {
         return assets;
+    }
+
+    /** Dormant until a trusted archive owner and the existing scissored browse scene are connected. */
+    HologramArchiveTileGl.Result drawArchiveFrame(long stamp, HologramArchiveCameraTiles owner,
+        HologramEditorCameraFrame pose, List<HologramArchiveRegionSource.Region> candidates, int layer,
+        double extent) {
+        if (!browseViewport) return null;
+        if (archiveTiles == null) archiveTiles = new HologramArchiveTileGl();
+        return archiveTiles.draw(stamp, owner, pose, candidates, layer, extent);
+    }
+
+    /** Same physical render stamp, hosted by the viewport's supported render phase, not input/close. */
+    HologramArchiveTileSubmission.Report pumpArchiveRetirements(long stamp) {
+        HologramArchiveTileGl archive = archiveTiles;
+        return archive == null ? null : archive.pump(stamp);
+    }
+
+    private void retireArchiveTiles() {
+        HologramArchiveTileGl archive = archiveTiles;
+        if (archive != null) archive.retire();
     }
 
     MiaoVisonLiteTarget target(int width, int height) {
@@ -215,6 +236,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
 
     @Override
     public void close() {
+        retireArchiveTiles();
         materialPresentation = null;
         releasePreview();
         assets.clear();
@@ -446,6 +468,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     }
 
     void sceneClosed() {
+        retireArchiveTiles();
         if (previewPreparation != null) previewPreparation.closeDetached();
         invalidatePreviewDrawCache();
         session.clearPresentation();

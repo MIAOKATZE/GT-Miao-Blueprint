@@ -58,6 +58,8 @@ public final class HologramDemolition {
             || !(player.worldObj instanceof WorldServer)
             || !player.capabilities.allowEdit
             || !ItemNekoHologramProjector.isProjector(player.getHeldItem())) throw new IOException("请持有猫猫蓝图工具后重试拆除");
+        String scopedRefusal = HologramWorkspace.legacyConstructionRefusal(player);
+        if (scopedRefusal != null) throw new IOException(scopedRefusal);
         if (active(player)) throw new IOException("拆除正在进行，请先等待完成或取消");
         if (JOBS.size() >= 64) throw new IOException("拆除任务已满，请稍后重试");
         if (HologramAeCraftingOrders.active(player) || busy(HologramWorkspace.find(player.getUniqueID()))
@@ -120,6 +122,11 @@ public final class HologramDemolition {
     }
 
     private static void advance(Job job, long deadline) {
+        String scopedRefusal = HologramWorkspace.legacyConstructionRefusal(job.player);
+        if (scopedRefusal != null) {
+            finish(job, scopedRefusal);
+            return;
+        }
         String invalid = job.invalidReason();
         if (!invalid.isEmpty()) {
             finish(job, "拆除已停止：" + invalid);
@@ -232,6 +239,7 @@ public final class HologramDemolition {
                 resumeRecovery(player);
                 continue;
             }
+            if (HologramWorkspace.legacyConstructionRefusal(player) != null) continue;
             try {
                 // Background recovery visits every original receipt policy independently of a finished job's filter.
                 if (delivery.materials == null)

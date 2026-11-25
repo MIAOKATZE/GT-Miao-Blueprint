@@ -115,7 +115,7 @@ final class HologramEditorWorkspaces {
             return false;
         }
         if (hasProjectionContent()) {
-            HologramCutClient.INSTANCE.openStorageWorkspace();
+            ui.session.notice("请先关闭当前投影工作台，再从剪切模式打开暂存；投影和草稿保留。");
             return false;
         }
         ui.shell.prepareCut();

@@ -71,6 +71,13 @@ final class HologramCutMultipartNativeSmoke {
         require(originalCable.getGridNode() == null, "FMP old AE part left native grid");
         NBTTagCompound paste = request("paste");
         paste.setString("id", captured.getString("id"));
+        NBTTagList summaries = captured.getTagList("entries", 10);
+        for (int i = 0; i < summaries.tagCount(); i++) {
+            NBTTagCompound row = summaries.getCompoundTagAt(i);
+            if (paste.getString("id").equals(row.getString("id")) && row.hasKey("sequence", 4))
+                paste.setLong("entrySequence", row.getLong("sequence"));
+        }
+        require(paste.getLong("entrySequence") > 0, "exact FMP clipboard sequence");
         paste.setInteger("originX", 804);
         paste.setInteger("originY", 200);
         paste.setInteger("originZ", 720);

@@ -959,7 +959,7 @@ public final class HologramControllerCaptureRegression {
             operationReviews(s, energy, muffler);
             boundedNativeItemBill(s, energy, muffler);
             manualNativeOperationChoices(s, energy, omitSelectedCell);
-            readyNativePlacement(s, world, machine, definition, source);
+            readyNativePlacement(s, world, machine, definition, source, unsafe);
         } finally {
             HologramWorkspace.clear();
             if (source != null && source.active()) source.close();
@@ -1194,7 +1194,8 @@ public final class HologramControllerCaptureRegression {
     private static void readyNativePlacement(HologramSession s, HologramServiceEditRegression.ReadOnlyWorld world,
         HologramDynamicDefinitionRegression.DynamicController machine,
         com.gtnewhorizon.structurelib.structure.IStructureDefinition<?> definition,
-        com.miaokatze.gtmb.api.GTMBExtensions.Registration legacySource) throws ReflectiveOperationException {
+        com.miaokatze.gtmb.api.GTMBExtensions.Registration legacySource, sun.misc.Unsafe unsafe)
+        throws ReflectiveOperationException {
         String flag = "gtmb.experimental.nativeReadyPlace";
         String previousFlag = System.getProperty(flag);
         java.util.List<String> receipts = new java.util.ArrayList<>();
@@ -1395,7 +1396,7 @@ public final class HologramControllerCaptureRegression {
                 "neither intake nor the whole ready-placement continuation rediscovers the native source");
             compactNativeFromExplicitIntent(s, machine, dispatch);
             try {
-                ordinaryNativeWithoutExperimentalSource(s, machine, dispatch);
+                ordinaryNativeFirstFixtureWrite(unsafe, dispatch);
             } catch (java.io.IOException invalid) {
                 throw new AssertionError("valid ordinary stock action", invalid);
             }
@@ -1547,6 +1548,38 @@ public final class HologramControllerCaptureRegression {
         }
     }
 
+    private static void ordinaryNativeFirstFixtureWrite(sun.misc.Unsafe unsafe, java.lang.reflect.Method dispatch)
+        throws ReflectiveOperationException, java.io.IOException {
+        HologramPlacementFixtureWorld world = HologramPlacementFixtureWorld.create(unsafe);
+        EntityPlayerMP player = HologramLibraryServiceRegression.placementPlayer(unsafe, world, "NativeActualWriteFixture");
+        player.capabilities.isCreativeMode = false;
+        player.capabilities.allowEdit = true;
+        player.posX = player.posZ = .5;
+        player.posY = 64;
+        HologramDynamicDefinitionRegression.DynamicController machine = controller(unsafe, world, 0);
+        world.seed(0, 64, 0, GregTechAPI.sBlockMachines, 0);
+        HologramSession prior = new HologramSession(player, 0, 64, 0, true, 2);
+        Field channel = HologramNetwork.class.getDeclaredField("channel");
+        channel.setAccessible(true);
+        Object previous = channel.get(null);
+        java.nio.file.Path parent = HologramConstructionJournal.STORAGE_ROOT.get();
+        java.nio.file.Path scratch = java.nio.file.Files.createTempDirectory("gtmb-native-first-write-");
+        try {
+            HologramConstructionJournal.STORAGE_ROOT.set(scratch);
+            WIRE.clear();
+            channel.set(null, unsafe.allocateInstance(RecordingChannel.class));
+            ordinaryNativeWithoutExperimentalSource(prior, machine, dispatch);
+        } finally {
+            channel.set(null, previous);
+            WIRE.clear();
+            player.playerNetServerHandler.netManager.channel().close();
+            if (parent == null) HologramConstructionJournal.STORAGE_ROOT.remove();
+            else HologramConstructionJournal.STORAGE_ROOT.set(parent);
+            java.nio.file.Files.deleteIfExists(scratch.resolve("gtmb-construction-recovery"));
+            java.nio.file.Files.deleteIfExists(scratch);
+        }
+    }
+
     private static void ordinaryNativeWithoutExperimentalSource(HologramSession prior,
         HologramDynamicDefinitionRegression.DynamicController machine, java.lang.reflect.Method dispatch)
         throws ReflectiveOperationException, java.io.IOException {
@@ -1642,6 +1675,28 @@ public final class HologramControllerCaptureRegression {
         SimpleAssert.that(HologramWorkspace.find(player.getUniqueID()) == session
             && machine.constructions == constructs && player.inventory.mainInventory[1].stackSize == 3,
             "replaying the ordinary native intent neither rescans nor spends");
+        HologramPlacementFixtureWorld world = (HologramPlacementFixtureWorld) player.worldObj;
+        SimpleAssert.that(world.writes().isEmpty() && WIRE.stream().filter(receipt ->
+            id.toString().equals(receipt.getString("placementRequestId"))
+                && receipt.getBoolean("placementRequestAccepted")).count() == 1,
+            "ordinary dispatch sends one accepted reply before any block write");
+        int first = session.work.get(0);
+        HologramCapture.Cell expected = session.capture.cells.get(first);
+        String position = HologramPlacementFixtureWorld.position(expected.x, expected.y, expected.z);
+        SimpleAssert.eq(Blocks.air, world.getBlock(expected.x, expected.y, expected.z),
+            "the admitted native first cell starts empty");
+        world.arm();
+        HologramPlacementFixtureWorld.firstJobTick(session);
+        SimpleAssert.that(session.cursor == 1 && session.completed == 1 && "placed".equals(expected.status)
+            && world.writes().equals(java.util.Collections.singletonList(position))
+            && world.getBlock(expected.x, expected.y, expected.z) == Blocks.stone
+            && world.getBlockMetadata(expected.x, expected.y, expected.z) == 0
+            && player.inventory.mainInventory[1].stackSize == 2
+            && world.getTileEntity(0, 64, 0) == prior.target, "actual native transaction writes one declared stone and "
+                + "debits one carried item, preserving the controller: " + operationState(session));
+        dispatch.invoke(null, player, decoded.tag);
+        SimpleAssert.that(HologramWorkspace.find(player.getUniqueID()) == session && world.writes().size() == 1
+            && player.inventory.mainInventory[1].stackSize == 2, "duplicate native packet cannot write or debit again");
         long second = 1_000_000_000L;
         SimpleAssert.that(HologramNativeCompactStart.preparationTimeout(true, 0, 32 * second, 34 * second) == null
             && HologramNativeCompactStart.preparationTimeout(true, 0, 3 * second, 34 * second) != null

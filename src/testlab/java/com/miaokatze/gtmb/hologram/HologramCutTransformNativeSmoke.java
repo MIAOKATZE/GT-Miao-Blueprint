@@ -10,6 +10,7 @@ import net.minecraft.init.Blocks;
 import net.minecraft.init.Items;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.nbt.NBTTagList;
 import net.minecraft.tileentity.TileEntityChest;
 import net.minecraft.world.WorldServer;
 import net.minecraftforge.common.util.ForgeDirection;
@@ -46,6 +47,7 @@ final class HologramCutTransformNativeSmoke {
         cut.setInteger("z2", 721);
         NBTTagCompound reply = HologramCutService.execute(player, cut);
         require(reply.getBoolean("success"), "pose fixture cut " + reply);
+        require(!reply.hasKey("preview") && !reply.hasKey("cells"), "Cut success never serializes the preimage");
         String id = reply.getString("id");
         HologramCutStorage storage = new HologramCutStorage(HologramCutService.saveRoot(), player.getUniqueID());
         NBTTagCompound before = storage.load();
@@ -53,14 +55,26 @@ final class HologramCutTransformNativeSmoke {
         NBTTagCompound preview = action("preview", id);
         pose.write(preview);
         NBTTagCompound display = HologramCutService.execute(player, preview);
-        require(display.getBoolean("success"), "pose preview");
+        require(!display.getBoolean("success") && "preview_metadata_only".equals(display.getString("code"))
+            && !display.hasKey("preview") && !display.hasKey("entries"), "legacy wire pose preview is not provided");
+        NBTTagCompound original = new NBTTagCompound();
+        NBTTagList retained = before.getTagList("entries", 10);
+        for (int i = 0; i < retained.tagCount(); i++) {
+            NBTTagCompound row = retained.getCompoundTagAt(i);
+            if (id.equals(row.getString("id"))) original = row;
+        }
+        require(original.hasKey("sequence", 4) && original.getLong("sequence") > 0, "exact pose clipboard sequence");
+        NBTTagCompound localOracle = HologramCutTransforms.apply(original, pose, 920, 200, 720);
         require(
             storage.load()
                 .equals(before),
             "preview leaves original raw queue bytes unchanged");
         NBTTagCompound invalid = action("paste", id);
         pose.write(invalid);
+        invalid.setLong("entrySequence", original.getLong("sequence"));
+        invalid.setInteger("originX", 920);
         invalid.setInteger("originY", 256);
+        invalid.setInteger("originZ", 720);
         require(
             !HologramCutService.execute(player, invalid)
                 .getBoolean("success"),
@@ -71,6 +85,7 @@ final class HologramCutTransformNativeSmoke {
             "failed pose placement retains original snapshot");
         NBTTagCompound paste = action("paste", id);
         pose.write(paste);
+        paste.setLong("entrySequence", original.getLong("sequence"));
         paste.setInteger("originX", 920);
         paste.setInteger("originY", 200);
         paste.setInteger("originZ", 720);
@@ -80,8 +95,7 @@ final class HologramCutTransformNativeSmoke {
             "pose native placement");
         int[] at = pose.point(0, 0, 0, 4, 1, 2);
         BaseMetaTileEntity placed = (BaseMetaTileEntity) world.getTileEntity(920 + at[0], 200 + at[1], 720 + at[2]);
-        NBTTagCompound expected = display.getCompoundTag("preview")
-            .getTagList("cells", 10)
+        NBTTagCompound expected = localOracle.getTagList("cells", 10)
             .getCompoundTagAt(0)
             .getCompoundTag("tile");
         NBTTagCompound actual = new NBTTagCompound();

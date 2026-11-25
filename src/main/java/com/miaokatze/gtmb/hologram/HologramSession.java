@@ -46,6 +46,8 @@ final class HologramSession {
     String id = UUID.randomUUID()
         .toString();
     long editorWorkspaceEpoch;
+    /** Private one-cell stock transaction seat: never an editor, opening or snapshot owner. */
+    boolean stockNativePrivate;
     /** A controller-free projection page is still a distinct server-owned editor domain. */
     boolean emptyProjection;
     boolean projectionDiscardApproved;

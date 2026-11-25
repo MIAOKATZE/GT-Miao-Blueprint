@@ -15,12 +15,51 @@ final class HologramActionDispatcher {
     private HologramActionDispatcher() {}
 
     static void handle(EntityPlayerMP player, NBTTagCompound action) {
+        if (HologramWorkspace.stockNativePrivate(player)) return;
+        String requested = action.getString("op");
+        if (switch (requested) {
+            case "savePreset", "updatePreset", "saveBlueprint", "saveBlueprintAs", "saveBlueprintReplace",
+                "exportDraft", "confirmAeSave" -> true;
+            case "exportBlueprint" -> HologramLibraryFacade.enabled();
+            default -> false;
+        }) {
+            HologramSession owner = HologramWorkspace.find(player.getUniqueID());
+            if (ownsAction(owner, player, action)) HologramLibraryFacade.refuseServerDraftSave(player, action);
+            return;
+        }
+        if (switch (requested) {
+            case "build", "start", "native", "confirmBlueprintPlacement", "placeCurrentBlueprint",
+                "orderMissingMaterials" -> true;
+            default -> false;
+        }) {
+            HologramSession owner = HologramWorkspace.find(player.getUniqueID());
+            if (owner != null && owner.player == player && !owner.cancelled && owner.id.equals(action.getString("session"))
+                && (!action.hasKey("editorWorkspaceEpoch") || action.hasKey("editorWorkspaceEpoch", 4)
+                    && action.getLong("editorWorkspaceEpoch") == owner.editorWorkspaceEpoch)
+                && HologramWorkspace.refuseLegacyConstruction(owner, action)) return;
+        }
+        if (HologramLibraryFacade.enabled()) {
+            boolean publicSwitch = switch (requested) {
+                case "previewPreset", "editPreset", "choosePlacementPreset" ->
+                    HologramPresetWorkflow.publicLibraryId(action.getString("presetId"));
+                default -> false;
+            };
+            boolean resync = "requestFullSnapshot".equals(requested);
+            if (publicSwitch || resync) {
+                // Do not inspect an unowned source, or let these reads retire even a stale physical projection.
+                HologramSession owner = HologramWorkspace.find(player.getUniqueID());
+                if (!ownsAction(owner, player, action)) return;
+                if (publicSwitch || owner.libraryInitialSnapshot
+                    || owner.virtualPreset != null && HologramPresetWorkflow.publicLibraryId(owner.virtualPreset.id)) {
+                    HologramPresetWorkflow.refusePublicHydration(player);
+                    return;
+                }
+            }
+        }
         HologramWorkspace.pruneRemovedController(player);
         HologramSession s = HologramWorkspace.find(player.getUniqueID());
-        if (s == null || s.player != player || s.cancelled || !s.id.equals(action.getString("session"))) return;
-        if (action.hasKey("editorWorkspaceEpoch") && (!action.hasKey("editorWorkspaceEpoch", 4)
-            || action.getLong("editorWorkspaceEpoch") != s.editorWorkspaceEpoch)) return;
-        if (!"requestFullSnapshot".equals(action.getString("op"))) HologramNativeReadyPlacement.cancel(s);
+        if (!ownsAction(s, player, action)) return;
+        if (!"requestFullSnapshot".equals(requested)) HologramNativeReadyPlacement.cancel(s);
         if ("dismissOperationReview".equals(action.getString("op"))) {
             if (HologramSessionPolicy.currentTool(s) != null && action.hasKey("reviewSequence", 4)
                 && action.getLong("reviewSequence") == s.operationReviewSequence
@@ -647,6 +686,7 @@ final class HologramActionDispatcher {
                     HologramSnapshots.send(s);
                     return;
                 }
+                if (HologramWorkspace.refuseLegacyConstruction(s, action)) return;
                 s.cursor = 0;
                 s.completed = 0;
                 s.defer = false;
@@ -809,6 +849,12 @@ final class HologramActionDispatcher {
         }
         HologramDraftPersistence.persist(s);
         HologramSnapshots.send(s);
+    }
+
+    private static boolean ownsAction(HologramSession s, EntityPlayerMP player, NBTTagCompound action) {
+        return s != null && s.player == player && !s.cancelled && s.id.equals(action.getString("session"))
+            && (!action.hasKey("editorWorkspaceEpoch") || action.hasKey("editorWorkspaceEpoch", 4)
+                && action.getLong("editorWorkspaceEpoch") == s.editorWorkspaceEpoch);
     }
 
     /** Old clients omit the proof. New clients bind the chosen sample, while the server still owns the target. */

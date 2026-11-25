@@ -27,7 +27,11 @@ import com.miaokatze.gtmb.client.hologram.HologramMaterialConfirmationDialog.Loc
 import com.miaokatze.gtmb.client.hologram.HologramMaterialConfirmationDialog.LocalView;
 import com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector;
 import com.miaokatze.gtmb.hologram.HologramMaterialQuote;
+import com.miaokatze.gtmb.hologram.HologramNetwork;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
+
+import cpw.mods.fml.common.network.simpleimpl.IMessage;
+import cpw.mods.fml.common.network.simpleimpl.SimpleNetworkWrapper;
 
 /** Exercises the actual client quote consumer with wire identities and counts that broke the old material list. */
 public final class HologramMaterialReviewRegression {
@@ -231,141 +235,169 @@ public final class HologramMaterialReviewRegression {
     private static void staleNativeOwner() {
         try {
             sun.misc.Unsafe unsafe = (sun.misc.Unsafe) field(sun.misc.Unsafe.class, "theUnsafe").get(null);
-            Minecraft client = (Minecraft) unsafe.allocateInstance(Minecraft.class);
-            OwnerWorld world = (OwnerWorld) unsafe.allocateInstance(OwnerWorld.class);
-            EntityClientPlayerMP player = (EntityClientPlayerMP) unsafe.allocateInstance(EntityClientPlayerMP.class);
-            NetHandlerPlayClient connection = (NetHandlerPlayClient) unsafe
-                .allocateInstance(NetHandlerPlayClient.class);
-            field(EntityClientPlayerMP.class, "sendQueue").set(player, connection);
-            player.inventory = new InventoryPlayer(player);
-            ItemStack tool = new ItemStack(new ItemNekoHologramProjector());
-            player.inventory.mainInventory[0] = tool;
-            client.thePlayer = player;
-            client.theWorld = world;
-            TileEntity tile = new TileEntity();
-            tile.setWorldObj(world);
-            world.tile = tile;
-            HologramScreen screen = (HologramScreen) unsafe.allocateInstance(HologramScreen.class);
-            field(GuiScreen.class, "mc").set(screen, client);
-            client.currentScreen = screen;
-            HologramUiModules ui = new HologramUiModules(screen);
-            screen.ui = ui;
-            field(HologramScreen.class, "openedPlayer").set(screen, player);
-            field(HologramScreen.class, "openingController").set(screen, tile);
-            field(HologramScreen.class, "openingConnection").set(screen, connection);
-            field(HologramScreen.class, "openingTool").set(screen, tool);
-            field(HologramScreen.class, "openingToolId").set(screen, "");
-            NBTTagCompound metadata = new NBTTagCompound();
-            metadata.setBoolean("localStandardController", true);
-            metadata.setBoolean("supported", true);
-            metadata.setBoolean("projectionDataComplete", true);
-            NBTTagList cells = new NBTTagList();
-            cells.appendTag(estimateCell(1, false, true));
-            metadata.setTag("cells", cells);
-            field(HologramUiSession.class, "state").set(ui.session, new HologramState(metadata));
-
-            LocalView view = ui.review;
-            SimpleAssert.that(
-                ui.preview.activateControl(26) && view.localFrame() != null && ui.session.sequence() == 0,
-                "material view 26 opens the matching mode 0 local estimate without a session command");
-            HologramLocalMaterialReview frozen = ui.review.localMaterials();
-            int[] attempts = { 0 };
-            ui.review.submitLocalMaterials(settings -> {
-                attempts[0]++;
-                ui.session.notice("fixture pre-dispatch refusal");
-                return false;
-            });
-            SimpleAssert.that(
-                attempts[0] == 1 && ui.review.localMaterials() == frozen
-                    && "fixture pre-dispatch refusal".equals(view.localFrame().status()),
-                "a locally refused submit keeps the only current pane open and shows its reason");
-            ui.review.submitLocalMaterials(settings -> {
-                attempts[0]++;
-                return true;
-            });
-            ui.review.submitLocalMaterials(settings -> {
-                throw new AssertionError("a closed pane must not re-dispatch");
-            });
-            SimpleAssert.that(
-                attempts[0] == 2 && view.localFrame() == null && ui.session.sequence() == 0,
-                "successful local dispatch closes once without claiming a server acknowledgement");
-            ui.review.openNativeLocalMaterials();
-            view.localAction(LocalAction.BACK);
-            SimpleAssert.that(
-                view.localFrame() == null && ui.session.sequence() == 0,
-                "the native port's Back is purely local");
-            for (int mode : new int[] { 1, 2 }) {
-                NBTTagCompound otherMode = (NBTTagCompound) metadata.copy();
-                otherMode.setInteger("mode", mode);
-                assertLocalMaterialViewUnknown(ui, screen, otherMode);
+            Field channel = field(HologramNetwork.class, "channel");
+            Object previous = channel.get(null);
+            MaterialWire wire = (MaterialWire) unsafe.allocateInstance(MaterialWire.class);
+            channel.set(null, wire);
+            try {
+                staleNativeOwner(unsafe, wire);
+            } finally {
+                channel.set(null, previous);
             }
-            NBTTagCompound localWorkspace = (NBTTagCompound) metadata.copy();
-            localWorkspace.removeTag("localStandardController");
-            localWorkspace.setBoolean("localWorkspace", true);
-            assertLocalMaterialViewUnknown(ui, screen, localWorkspace);
-            field(HologramUiSession.class, "state").set(ui.session, new HologramState(metadata));
-            ui.review.openNativeLocalMaterials();
-            player.inventory.currentItem = 1;
-            LocalFrame stale = view.localFrame();
-            SimpleAssert.that(
-                stale != null && stale.rows().hasNoTags() && !stale.ready() && !view.localSubmitAvailable()
-                    && stale.status().contains("已变化"),
-                "the visible pane explains stale ownership without exposing old rows or enabling submission");
-            ui.review.submitLocalMaterials(settings -> {
-                throw new AssertionError("a stale scope must not dispatch");
-            });
-            view.localAction(LocalAction.REFRESH);
-            SimpleAssert.that(
-                ui.review.localMaterials() == null && ui.review.openNativeLocalMaterials()
-                    && ui.review.localMaterials() == null,
-                "changed slot retires refresh; stale opening is handled locally rather than using the legacy query");
-
-            player.inventory.currentItem = 0;
-            ui.review.openNativeLocalMaterials();
-            world.tile = new TileEntity();
-            view.localAction(LocalAction.SUBMIT);
-            SimpleAssert.that(
-                ui.review.localMaterials() == null && ui.session.sequence() == 0,
-                "an old pane cannot send or submit after the controller tile is replaced");
-
-            world.tile = tile;
-            ui.review.openNativeLocalMaterials();
-            SimpleAssert.that(ui.review.localMaterials() != null, "original owner can open a fresh pane");
-            client.thePlayer = (EntityClientPlayerMP) unsafe.allocateInstance(EntityClientPlayerMP.class);
-            view.localAction(LocalAction.REFRESH); // Replacement player has no inventory; the fence must run first.
-            SimpleAssert
-                .that(ui.review.localMaterials() == null, "stale review never reads another player's inventory");
-
-            client.thePlayer = player;
-            ui.review.openNativeLocalMaterials();
-            screen.ui = new HologramUiModules(screen);
-            view.localAction(LocalAction.SUBMIT);
-            SimpleAssert.that(ui.review.localMaterials() == null, "an inactive workspace graph cannot submit");
-
-            screen.ui = ui;
-            ui.review.openNativeLocalMaterials();
-            client.currentScreen = null;
-            view.localAction(LocalAction.REFRESH);
-            SimpleAssert.that(ui.review.localMaterials() == null, "an inactive root screen cannot refresh");
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("cannot construct the headless material pane owner", failure);
         }
     }
 
-    private static void assertLocalMaterialViewUnknown(HologramUiModules ui, HologramScreen screen,
-        NBTTagCompound metadata) throws ReflectiveOperationException {
+    private static void staleNativeOwner(sun.misc.Unsafe unsafe, MaterialWire wire)
+        throws ReflectiveOperationException {
+        Minecraft client = (Minecraft) unsafe.allocateInstance(Minecraft.class);
+        OwnerWorld world = (OwnerWorld) unsafe.allocateInstance(OwnerWorld.class);
+        EntityClientPlayerMP player = (EntityClientPlayerMP) unsafe.allocateInstance(EntityClientPlayerMP.class);
+        NetHandlerPlayClient connection = (NetHandlerPlayClient) unsafe
+            .allocateInstance(NetHandlerPlayClient.class);
+        field(EntityClientPlayerMP.class, "sendQueue").set(player, connection);
+        player.inventory = new InventoryPlayer(player);
+        ItemStack tool = new ItemStack(new ItemNekoHologramProjector());
+        player.inventory.mainInventory[0] = tool;
+        client.thePlayer = player;
+        client.theWorld = world;
+        TileEntity tile = new TileEntity();
+        tile.setWorldObj(world);
+        world.tile = tile;
+        HologramScreen screen = (HologramScreen) unsafe.allocateInstance(HologramScreen.class);
+        field(GuiScreen.class, "mc").set(screen, client);
+        client.currentScreen = screen;
+        HologramUiModules ui = new HologramUiModules(screen);
+        screen.ui = ui;
+        field(HologramScreen.class, "openedPlayer").set(screen, player);
+        field(HologramScreen.class, "openingController").set(screen, tile);
+        field(HologramScreen.class, "openingConnection").set(screen, connection);
+        field(HologramScreen.class, "openingTool").set(screen, tool);
+        field(HologramScreen.class, "openingToolId").set(screen, "");
+        NBTTagCompound metadata = new NBTTagCompound();
+        metadata.setBoolean("localStandardController", true);
+        metadata.setBoolean("supported", true);
+        metadata.setBoolean("projectionDataComplete", true);
+        NBTTagList cells = new NBTTagList();
+        cells.appendTag(estimateCell(1, false, true));
+        metadata.setTag("cells", cells);
+        field(HologramUiSession.class, "state").set(ui.session, new HologramState(metadata));
+
+        LocalView view = ui.review;
+        SimpleAssert.that(
+            ui.preview.activateControl(26) && view.localFrame() != null && ui.session.sequence() == 0,
+            "material view 26 opens the matching mode 0 local estimate without a session command");
+        HologramLocalMaterialReview frozen = ui.review.localMaterials();
+        int[] attempts = { 0 };
+        ui.review.submitLocalMaterials(settings -> {
+            attempts[0]++;
+            ui.session.notice("fixture pre-dispatch refusal");
+            return false;
+        });
+        SimpleAssert.that(
+            attempts[0] == 1 && ui.review.localMaterials() == frozen
+                && "fixture pre-dispatch refusal".equals(view.localFrame().status()),
+            "a locally refused submit keeps the only current pane open and shows its reason");
+        ui.review.submitLocalMaterials(settings -> {
+            attempts[0]++;
+            return true;
+        });
+        ui.review.submitLocalMaterials(settings -> {
+            throw new AssertionError("a closed pane must not re-dispatch");
+        });
+        SimpleAssert.that(
+            attempts[0] == 2 && view.localFrame() == null && ui.session.sequence() == 0,
+            "successful local dispatch closes once without claiming a server acknowledgement");
+        ui.review.openNativeLocalMaterials();
+        view.localAction(LocalAction.BACK);
+        SimpleAssert.that(
+            view.localFrame() == null && ui.session.sequence() == 0,
+            "the native port's Back is purely local");
+        for (int mode : new int[] { 1, 2 }) {
+            NBTTagCompound otherMode = (NBTTagCompound) metadata.copy();
+            otherMode.setInteger("mode", mode);
+            assertLocalMaterialViewUnknown(ui, wire, otherMode);
+        }
+        NBTTagCompound localWorkspace = (NBTTagCompound) metadata.copy();
+        localWorkspace.removeTag("localStandardController");
+        localWorkspace.setBoolean("localWorkspace", true);
+        assertLocalMaterialViewUnknown(ui, wire, localWorkspace);
+        field(HologramUiSession.class, "state").set(ui.session, new HologramState(metadata));
+        ui.review.openNativeLocalMaterials();
+        player.inventory.currentItem = 1;
+        LocalFrame stale = view.localFrame();
+        SimpleAssert.that(
+            stale != null && stale.rows().hasNoTags() && !stale.ready() && !view.localSubmitAvailable()
+                && stale.status().contains("已变化"),
+            "the visible pane explains stale ownership without exposing old rows or enabling submission");
+        ui.review.submitLocalMaterials(settings -> {
+            throw new AssertionError("a stale scope must not dispatch");
+        });
+        view.localAction(LocalAction.REFRESH);
+        SimpleAssert.that(
+            ui.review.localMaterials() == null && ui.review.openNativeLocalMaterials()
+                && ui.review.localMaterials() == null,
+            "changed slot retires refresh; stale opening is handled locally rather than using the legacy query");
+
+        player.inventory.currentItem = 0;
+        ui.review.openNativeLocalMaterials();
+        world.tile = new TileEntity();
+        view.localAction(LocalAction.SUBMIT);
+        SimpleAssert.that(
+            ui.review.localMaterials() == null && ui.session.sequence() == 0,
+            "an old pane cannot send or submit after the controller tile is replaced");
+
+        world.tile = tile;
+        ui.review.openNativeLocalMaterials();
+        SimpleAssert.that(ui.review.localMaterials() != null, "original owner can open a fresh pane");
+        client.thePlayer = (EntityClientPlayerMP) unsafe.allocateInstance(EntityClientPlayerMP.class);
+        view.localAction(LocalAction.REFRESH); // Replacement player has no inventory; the fence must run first.
+        SimpleAssert
+            .that(ui.review.localMaterials() == null, "stale review never reads another player's inventory");
+
+        client.thePlayer = player;
+        ui.review.openNativeLocalMaterials();
+        screen.ui = new HologramUiModules(screen);
+        view.localAction(LocalAction.SUBMIT);
+        SimpleAssert.that(ui.review.localMaterials() == null, "an inactive workspace graph cannot submit");
+
+        screen.ui = ui;
+        ui.review.openNativeLocalMaterials();
+        client.currentScreen = null;
+        view.localAction(LocalAction.REFRESH);
+        SimpleAssert.that(ui.review.localMaterials() == null, "an inactive root screen cannot refresh");
+        SimpleAssert.eq(0, wire.sends, "all local-only material page operations and stale-owner paths emitted no C2S");
+    }
+
+    private static void assertLocalMaterialViewUnknown(HologramUiModules ui, MaterialWire wire, NBTTagCompound metadata)
+        throws ReflectiveOperationException {
         HologramState state = new HologramState(metadata);
         field(HologramUiSession.class, "state").set(ui.session, state);
         ui.session.notice("");
+        int sends = wire.sends;
         SimpleAssert.that(
             ui.preview.activateControl(26) && ui.session.notice()
                 .contains("未核验服务器库存或回收结果")
                 && ui.review.localFrame() == null
                 && ui.session.state() == state
                 && !ui.session.awaitingScan()
-                && ui.session.sequence() == 0
-                && field(HologramScreen.class, "localMaterialRequest").get(screen) == null,
-            "local material view without a supported estimate reports unknown and starts no scan or stock request");
+                && ui.session.sequence() == 0 && wire.sends == sends,
+            "unsupported local material view reports unknown without a scan, stock query or any outbound message");
+    }
+
+    private static final class MaterialWire extends SimpleNetworkWrapper {
+
+        int sends;
+
+        private MaterialWire() {
+            super("gtmb_local_material_fixture");
+        }
+
+        @Override
+        public void sendToServer(IMessage message) {
+            sends++;
+        }
     }
 
     private static void graphlessLocalViewControls() {

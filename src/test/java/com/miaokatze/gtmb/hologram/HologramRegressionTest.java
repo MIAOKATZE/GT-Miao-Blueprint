@@ -277,6 +277,174 @@ public final class HologramRegressionTest {
         cases.put(
             "projected_placement_wire_carries_only_operations_and_matching_consumables",
             HologramPlacementRequestRegression::run);
+        // Standalone helper contracts; these are not production dispatcher entry tests.
+        cases.put("isolated_business_wire_policy", HologramBusinessWirePolicyRegression::run);
+        cases.put("isolated_shared_construction_task_gate", () -> {
+            try {
+                HologramConstructionTaskGateRegression.run();
+            } catch (InterruptedException failure) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException(failure);
+            }
+        });
+        cases.put(
+            "isolated_owned_placement_progress",
+            com.miaokatze.gtmb.client.hologram.HologramOwnedPlacementProgressRegression::run);
+        cases.put("isolated_incremental_native_placement", HologramIncrementalNativePlacementRegression::run);
+        cases.put("isolated_scoped_world_transactions", HologramWorldTransactionsScopedRegression::run);
+        cases.put("isolated_projected_layer_encoder", () -> {
+            try {
+                HologramProjectedLayerEncoderRegression.run();
+            } catch (java.io.IOException failure) {
+                throw new RuntimeException(failure);
+            }
+        });
+        cases.put("isolated_private_plain_source", () -> {
+            try {
+                com.miaokatze.gtmb.client.hologram.HologramPrivatePlainPlacementSourceRegression.run();
+            } catch (java.io.IOException failure) {
+                throw new RuntimeException(failure);
+            }
+        });
+        cases.put("isolated_projected_layer_wire_and_plan", () -> {
+            try {
+                HologramProjectedLayerRegression.run();
+            } catch (Exception failure) {
+                throw new RuntimeException(failure);
+            }
+        });
+        cases.put("isolated_projected_layer_server_service", () -> {
+            try {
+                HologramProjectedLayerServiceRegression.run();
+            } catch (Exception failure) {
+                throw new RuntimeException(failure);
+            }
+        });
+        cases.put("isolated_projected_layer_authenticated_transport", () -> {
+            try {
+                HologramProjectedLayerServerRegression.run();
+            } catch (Exception failure) {
+                throw new RuntimeException(failure);
+            }
+        });
+        cases.put("isolated_projected_layer_real_client_sender", () -> {
+            try {
+                com.miaokatze.gtmb.client.hologram.HologramClientProjectedPlacementRegression.run();
+            } catch (Exception failure) {
+                throw new RuntimeException(failure);
+            }
+        });
+        cases.put("isolated_projected_variant_pricing", () -> {
+            try {
+                HologramProjectedVariantPricingRegression.run();
+            } catch (Exception failure) {
+                throw new RuntimeException(failure);
+            }
+        });
+        if (!System.getProperty("gtmb.reviewedMetadata.fixture", "").isEmpty()) {
+            cases.put("isolated_projected_roof_tile_generic_proof", () -> {
+                try {
+                    HologramProjectedRoofTileProofRegression.run();
+                    System.out.println("[GTMB-ROOF-TILE-GENERIC] offline proof passed; native provider not invoked");
+                } catch (Exception failure) {
+                    throw new RuntimeException(failure);
+                }
+            });
+        }
+        if (!System.getProperty("gtmb.reviewedMetadata.fixture", "").isEmpty()) {
+            cases.put("isolated_projected_layer_reviewed_metadata_123369", () -> {
+                try {
+                    HologramProjectedLayerReviewedMetadataRegression.run();
+                } catch (Exception failure) {
+                    throw new RuntimeException(failure);
+                }
+            });
+        }
+        cases.put("isolated_archive_region_source", () -> {
+            try {
+                com.miaokatze.gtmb.client.hologram.HologramArchiveRegionSourceRegression.run();
+                String exactFive = System.getProperty("gtmb.archiveRegion.five");
+                if (exactFive != null && !exactFive.isEmpty())
+                    System.out.println("[GTMB-ARCHIVE-REGION] exact Five oracle passed");
+            } catch (java.io.IOException failure) {
+                throw new RuntimeException(failure);
+            }
+        });
+        cases.put("isolated_archive_named_import_refusal", () -> {
+            try {
+                com.miaokatze.gtmb.client.hologram.HologramArchiveNamedImportRegression.run();
+                System.out.println("[GTMB-ARCHIVE-NAMED] refusal and held-index oracle passed");
+            } catch (java.io.IOException failure) {
+                throw new RuntimeException(failure);
+            }
+        });
+        cases.put("isolated_archive_tile_mesh", () -> {
+            try {
+                com.miaokatze.gtmb.client.hologram.HologramArchiveTileMeshRegression.run();
+                String exactFive = System.getProperty("gtmb.archiveRegion.five");
+                if (exactFive != null && !exactFive.isEmpty())
+                    System.out.println("[GTMB-ARCHIVE-MESH] exact Five tile oracle passed");
+            } catch (java.io.IOException failure) {
+                throw new RuntimeException(failure);
+            }
+        });
+        cases.put("isolated_legacy_save_task_identity", () -> {
+            try {
+                HologramLegacySaveTaskIdentityRegression.run();
+            } catch (ReflectiveOperationException failure) {
+                throw new RuntimeException(failure);
+            }
+        });
+        cases.put("isolated_archive_tile_submission", () -> {
+            try {
+                com.miaokatze.gtmb.client.hologram.HologramArchiveTileSubmissionRegression.run();
+                String exactFive = System.getProperty("gtmb.archiveRegion.five");
+                if (exactFive != null && !exactFive.isEmpty())
+                    System.out.println("[GTMB-ARCHIVE-SUBMISSION] exact Five submission oracle passed");
+            } catch (java.io.IOException failure) {
+                throw new RuntimeException(failure);
+            } catch (InterruptedException failure) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException(failure);
+            }
+        });
+        cases.put("isolated_archive_gl_encoder", () -> {
+            try {
+                com.miaokatze.gtmb.client.hologram.HologramArchiveTileGlRegression.run();
+                String exactFive = System.getProperty("gtmb.archiveRegion.five");
+                if (exactFive != null && !exactFive.isEmpty())
+                    System.out.println("[GTMB-ARCHIVE-GL-ENCODER] exact Five layer encoder oracle passed");
+            } catch (java.io.IOException failure) {
+                throw new RuntimeException(failure);
+            }
+        });
+        if (!System.getProperty("gtmb.reviewedMetadata.fixture", "").isEmpty()) {
+            cases.put("isolated_reviewed_plain_placement_guard", () -> {
+                try {
+                    HologramProjectedReviewedPlainPlacementRegression.run();
+                } catch (Exception failure) {
+                    throw new RuntimeException(failure);
+                }
+            });
+        }
+        cases.put("isolated_windows_archive_fake_handle_contract", () -> {
+            try {
+                com.miaokatze.gtmb.client.hologram.HologramWindowsArchiveProviderRegression.run();
+                System.out.println("[GTMB-ARCHIVE-WINDOWS-FAKE] fake handle contract oracle passed");
+            } catch (java.io.IOException failure) {
+                throw new RuntimeException(failure);
+            } catch (InterruptedException failure) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException(failure);
+            }
+        });
+        cases.put("isolated_stock_coke_oven_native_profile", () -> {
+            try {
+                HologramStockCokeOvenProfileRegression.run();
+            } catch (Exception failure) {
+                throw new RuntimeException(failure);
+            }
+        });
         cases.put(
             "projected_placement_guard_trace_is_private_and_one_shot",
             HologramProjectedPlacementGuardTraceRegression::run);

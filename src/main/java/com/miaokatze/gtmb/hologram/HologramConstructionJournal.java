@@ -17,6 +17,7 @@ import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
+import net.minecraft.world.World;
 
 import com.miaokatze.miaokatzecore.api.io.AtomicFilePublisher;
 
@@ -24,6 +25,8 @@ import com.miaokatze.miaokatzecore.api.io.AtomicFilePublisher;
 final class HologramConstructionJournal {
 
     static final String KEY = "gtmbConstructionRecovery";
+    private static final String SCOPED_UNCERTAINTY = "scopeUncertainReason";
+    private static final String SCOPED_PUBLICATION_FAILED = "scopePublicationFailed";
     private static final Set<EntityPlayer> LOADED = Collections.newSetFromMap(new WeakHashMap<EntityPlayer, Boolean>());
     // Package-private storage seam for isolated contract fixtures; production always uses the world's save root.
     static final ThreadLocal<Path> STORAGE_ROOT = new ThreadLocal<>();
@@ -40,6 +43,7 @@ final class HologramConstructionJournal {
 
     static boolean pending(EntityPlayer player) {
         if (!LOADED.contains(player)) {
+            NBTTagCompound attached = owner(player).getCompoundTag(KEY);
             try {
                 Path file = path(player);
                 if (Files.exists(file)) {
@@ -50,11 +54,24 @@ final class HologramConstructionJournal {
                         .toString()
                         .equals(saved.getString("player")))
                         throw new IOException("Construction recovery owner mismatch");
+                    // A different save root cannot erase or replace this player's exact scoped evidence.
+                    if (attached.hasKey(SCOPED_UNCERTAINTY, 8)
+                        && (attached.getBoolean(SCOPED_PUBLICATION_FAILED)
+                            || !saved.hasKey(SCOPED_UNCERTAINTY, 8)
+                            || !attached.getString("id").equals(saved.getString("id"))
+                            || saved.getLong("revision") < attached.getLong("revision"))) {
+                        LOADED.add(player);
+                        return true;
+                    }
                     if ("settled".equals(saved.getString("phase"))) owner(player).removeTag(KEY);
                     else owner(player).setTag(KEY, saved);
                 }
                 LOADED.add(player);
             } catch (IOException | RuntimeException failure) {
+                if (attached.hasKey(SCOPED_UNCERTAINTY, 8)) {
+                    LOADED.add(player);
+                    return true;
+                }
                 NBTTagCompound blocked = new NBTTagCompound();
                 blocked.setString("phase", "unreadable");
                 blocked.setString("failure", failure.toString());
@@ -66,7 +83,11 @@ final class HologramConstructionJournal {
     }
 
     private static Path path(EntityPlayer player) throws IOException {
-        Path root = STORAGE_ROOT.get() == null ? player.worldObj.getSaveHandler()
+        return path(player, player.worldObj);
+    }
+
+    private static Path path(EntityPlayer player, World world) throws IOException {
+        Path root = STORAGE_ROOT.get() == null ? world.getSaveHandler()
             .getWorldDirectory()
             .toPath()
             .toRealPath()
@@ -81,8 +102,14 @@ final class HologramConstructionJournal {
     }
 
     static void persist(EntityPlayer player, NBTTagCompound journal) {
+        persist(player, journal, player.worldObj, false);
+    }
+
+    private static void persist(EntityPlayer player, NBTTagCompound journal, World world, boolean rejectLink) {
         try {
-            Path file = path(player);
+            Path file = path(player, world);
+            if (rejectLink && Files.isSymbolicLink(file))
+                throw new IOException("Invalid scoped recovery file; no evidence overwritten");
             if (Files.exists(file)) {
                 if (!Files.isRegularFile(file) || Files.isSymbolicLink(file) || Files.size(file) > 32L * 1024 * 1024)
                     throw new IOException("Invalid existing recovery file; no evidence overwritten");
@@ -108,6 +135,41 @@ final class HologramConstructionJournal {
             publications++;
         } catch (IOException failure) {
             throw new IllegalStateException("Cannot persist construction recovery; external mutation blocked", failure);
+        }
+    }
+
+    /**
+     * Only the abnormal scoped path publishes main-stock evidence. Never follow a callback's replacement
+     * world/stock or overwrite a different journal now occupying the actor's recovery slot.
+     */
+    static boolean retainScopedUncertainty(EntityPlayer player, NBTTagCompound exact, World original, String reason) {
+        if (exact == null || original == null) return false;
+        NBTTagCompound owned = owner(player);
+        if (owned.hasKey(KEY) && owned.getTag(KEY) != exact) return false;
+        if (!owned.hasKey(KEY)) owned.setTag(KEY, exact);
+        exact.setString(SCOPED_UNCERTAINTY, reason);
+        exact.setString("phase", "suspended");
+        exact.removeTag(SCOPED_PUBLICATION_FAILED);
+        try {
+            persist(player, exact, original, true);
+            return true;
+        } catch (RuntimeException | LinkageError failure) {
+            exact.setBoolean(SCOPED_PUBLICATION_FAILED, true);
+            return false;
+        }
+    }
+
+    private static boolean atOriginalScopedReceipt(EntityPlayerMP player, NBTTagCompound journal) {
+        if (player.worldObj.provider.dimensionId != journal.getInteger("dimension")
+            || journal.getBoolean(SCOPED_PUBLICATION_FAILED) || !journal.getBoolean("durable")) return false;
+        try {
+            Path file = path(player);
+            if (Files.isSymbolicLink(file) || !Files.isRegularFile(file) || Files.size(file) > 32L * 1024 * 1024)
+                return false;
+            NBTTagCompound saved = HologramSnapshotCodec.decode(Files.readAllBytes(file));
+            return saved.equals(journal);
+        } catch (IOException | RuntimeException failure) {
+            return false;
         }
     }
 
@@ -213,6 +275,12 @@ final class HologramConstructionJournal {
                 .toString()
                 .equals(journal.getString("player")))
             throw new IllegalStateException("凭据版本、玩家或编号不匹配");
+        if (journal.hasKey(SCOPED_UNCERTAINTY, 8)) {
+            if (!"accept".equals(action))
+                throw new IllegalStateException("施工绑定或候选结果已变化，禁止自动补偿；请在原存档人工核定后 accept");
+            if (!atOriginalScopedReceipt(player, journal))
+                throw new IllegalStateException("请返回原存档与维度并核对同一份持久施工凭据；未解除冻结");
+        }
         if ("accept".equals(action)) {
             // The administrator accepts the live world and all existing deductions; no resource is issued.
             journal.setString("resolution", "accept-live-world-and-deductions");

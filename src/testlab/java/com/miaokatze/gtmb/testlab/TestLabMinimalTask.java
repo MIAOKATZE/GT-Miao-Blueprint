@@ -13,6 +13,7 @@ import net.minecraft.nbt.NBTTagList;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.tileentity.TileEntityChest;
 
+import com.miaokatze.gtmb.api.CutTransforms.Transform;
 import com.miaokatze.gtmb.hologram.HologramRuntimeMetrics;
 import com.miaokatze.gtmb.hologram.HologramTestLabBlueprintProbe;
 
@@ -24,6 +25,7 @@ final class TestLabMinimalTask implements TestLabTasks.Task {
     private long idleUntil;
     private NBTTagCompound idleStart, original, paste;
     private String id;
+    private long entrySequence;
     private TestLabCodecWork codec;
     private boolean blueprintChecked;
 
@@ -148,8 +150,17 @@ final class TestLabMinimalTask implements TestLabTasks.Task {
             TestLabFixtureWorld.clear(runtime.world(), dx, y, dz);
             chest(dx, y, dz + 1, Items.gold_ingot, 9);
             NBTTagCompound request = region("cut", "", x, y, z, x + 1, y, z);
-            id = backend.call(request)
-                .getString("id");
+            NBTTagCompound cutReply = backend.call(request);
+            id = cutReply.getString("id");
+            TestLabTasks.require(!cutReply.hasKey("preview") && !cutReply.hasKey("cells"),
+                "Cut success emitted a complete raw preimage");
+            NBTTagList rows = cutReply.getTagList("entries", 10);
+            for (int i = 0; i < rows.tagCount(); i++) {
+                NBTTagCompound row = rows.getCompoundTagAt(i);
+                if (id.equals(row.getString("id")) && row.hasKey("sequence", 4))
+                    entrySequence = row.getLong("sequence");
+            }
+            TestLabTasks.require(entrySequence > 0, "Cut reply did not expose the exact clipboard sequence");
             TestLabTasks.require(
                 runtime.world()
                     .isAirBlock(x, y, z),
@@ -163,8 +174,11 @@ final class TestLabMinimalTask implements TestLabTasks.Task {
             byte[] before = backend.cacheBytes();
             NBTTagCompound request = backend.action("preview", id);
             request.setInteger("rotation", 1);
-            NBTTagCompound selected = backend.call(request)
-                .getCompoundTag("preview");
+            NBTTagCompound wire = backend.retiredPreview(request);
+            TestLabTasks.require(!wire.getBoolean("success") && "preview_metadata_only".equals(wire.getString("code"))
+                && !wire.hasKey("preview") && !wire.hasKey("entries"), "Retired wire preview must be payload-free");
+            report.check("retired_wire_preview", "PASS", "Real production Cut service refuses raw preview without geometry");
+            NBTTagCompound selected = backend.localClipboardPose(id, entrySequence, Transform.read(request), x, y, z);
             TestLabTasks.require(
                 selected.getInteger("sizeX") == 1 && selected.getInteger("sizeZ") == 2
                     && selected.getTagList("cells", 10)
@@ -172,15 +186,16 @@ final class TestLabMinimalTask implements TestLabTasks.Task {
                     && selected.getTagList("cells", 10)
                         .getCompoundTagAt(0)
                         .hasKey("tile", 10),
-                "Selected complete raw DTO differs");
+                "Detached local raw DTO differs");
             TestLabTasks.require(Arrays.equals(before, backend.cacheBytes()), "Preview rewrote original cache");
             report.check(
                 "selected_raw_preview_dto",
                 "PASS",
-                "Complete rotated native tile/air DTO observed; queue bytes unchanged; no client renderer or GL claim");
+                "Local journal yields exact rotated tile/air DTO; wire has no raw bytes, queue unchanged; no GL claim");
             phase++;
         } else if (phase == 5) {
             paste = backend.action("paste", id);
+            paste.setLong("entrySequence", entrySequence);
             paste.setInteger("rotation", 1);
             paste.setInteger("originX", dx);
             paste.setInteger("originY", y);

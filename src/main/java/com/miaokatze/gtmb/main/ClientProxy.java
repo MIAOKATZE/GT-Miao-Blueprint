@@ -3,7 +3,12 @@
 
 package com.miaokatze.gtmb.main;
 
+import java.util.UUID;
+
 import com.miaokatze.gtmb.client.hologram.HologramClient;
+import com.miaokatze.gtmb.client.hologram.HologramClientProjectedPlacement;
+import com.miaokatze.gtmb.hologram.HologramNetwork;
+import com.miaokatze.gtmb.hologram.HologramProjectedLayerTransport.Request;
 
 public final class ClientProxy extends CommonProxy {
 
@@ -33,6 +38,25 @@ public final class ClientProxy extends CommonProxy {
         super.init();
         com.miaokatze.gtmb.hologram.HologramNativeStructurePreview.install();
         HologramClient.install();
+        com.miaokatze.gtmb.client.hologram.HologramClientStockNative.install();
+        HologramNetwork.setProjectedLayerNegotiation(HologramClientProjectedPlacement::negotiated);
+        HologramClientProjectedPlacement.install(new HologramClientProjectedPlacement.Wire() {
+
+            @Override
+            public long nextIntentSequence() {
+                return HologramNetwork.nextConstructionIntentSequence();
+            }
+
+            @Override
+            public boolean probe(UUID request, long intentSequence) {
+                return HologramNetwork.sendProjectedLayerProbe(request, intentSequence);
+            }
+
+            @Override
+            public boolean send(Request request) {
+                return HologramNetwork.sendProjectedLayerRequest(request);
+            }
+        });
         OptionalTestLab.call("com.miaokatze.gtmb.client.hologram.HologramNativeRasterSmoke", "installObserver");
         if (cpw.mods.fml.common.Loader.isModLoaded("CarpentersBlocks"))
             carpentersRenderer = com.miaokatze.gtmb.client.compat.carpenters.CarpentersClientCompatibility.install();

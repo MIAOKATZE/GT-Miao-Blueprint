@@ -25,9 +25,15 @@ import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.nbt.NBTBase;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
+import net.minecraft.network.NetHandlerPlayServer;
+import net.minecraft.network.NetworkManager;
 
 import com.google.gson.Gson;
 import com.miaokatze.gtmb.main.GTMiaoBlueprint;
+
+import io.netty.channel.Channel;
+import io.netty.util.Attribute;
+import io.netty.util.AttributeKey;
 
 /** One IO worker, bounded mailboxes and aggregate fair transfer budgets; never sleeps on a server tick. */
 final class HologramServerLibrary {
@@ -35,6 +41,8 @@ final class HologramServerLibrary {
     private static final Gson GSON = new Gson();
     private static final int MAX_ENTRIES = 1024;
     private static final int MAX_PEERS = 64;
+    private static final AttributeKey<PublicCopyHistory> PUBLIC_COPY_HISTORY =
+        new AttributeKey<>("gtmb.hologram.publicCopyHistory");
     private static final long MAX_STORED_BYTES = 64L * 1024 * 1024;
     static final long MAX_PUBLIC_DTO_BYTES = 512L * 1024 * 1024;
     private static final long MAX_RESERVED_BYTES = 2L * HologramBlueprintArtifact.MAX_BYTES;
@@ -85,6 +93,14 @@ final class HologramServerLibrary {
             HologramNetwork.sendLibraryReply(player, statusTag(admin));
             return;
         }
+        String op = request.getString("op");
+        boolean cancelling = "cancel".equals(op) || "cancelTransfer".equals(op);
+        long clientTask = request.getLong("clientTaskToken");
+        if (cancelling && request.hasKey("clientTaskToken", 4) && clientTask > 0) {
+            // Cancellation must outlive an evicted mailbox, including when its control queue is already full.
+            PublicCopyConnection copy = PublicCopyConnection.capture(player);
+            if (copy != null) copy.history.retire(clientTask);
+        }
         Peer peer = peers.get(HologramLibraryFacade.actorId(player));
         if (peer == null || peer.player != player) {
             if (peer != null) {
@@ -127,17 +143,16 @@ final class HologramServerLibrary {
             peers.put(peer.owner, peer);
         }
         peer.admin = admin;
-        if ("cancel".equals(request.getString("op")) || "cancelTransfer".equals(request.getString("op"))) {
+        if (cancelling) {
             // This runs on the server thread even while the sole IO pump is inside serialization.
-            peer.retiredThrough = Math.max(peer.retiredThrough, request.getLong("clientTaskToken"));
-            if (peer.preparation != null && (request.getLong("clientTaskToken") == 0
-                || peer.preparation.token == request.getLong("clientTaskToken"))) {
+            peer.retiredThrough = Math.max(peer.retiredThrough, clientTask);
+            if (peer.preparation != null && (clientTask == 0 || peer.preparation.token == clientTask)) {
                 peer.preparation.valid = false;
                 tasks.remove(peer.preparation);
                 peer.preparation = null;
             }
-            if (peer.download != null && (request.getLong("clientTaskToken") == 0
-                || peer.download.clientTaskToken == request.getLong("clientTaskToken"))) peer.download.valid = false;
+            if (peer.download != null && (clientTask == 0 || peer.download.clientTaskToken == clientTask))
+                peer.download.valid = false;
         }
         if (!peer.requests.offer(request, admitted(peer, request))) {
             error(peer, "Server library request queue is busy; retry later", request.getLong("clientTaskToken"));
@@ -378,7 +393,6 @@ final class HologramServerLibrary {
 
     private void handle(Peer peer, NBTTagCompound request) throws IOException {
         String op = request.getString("op");
-        if ("download".equals(op)) requireDownload(peer.owner);
         if ("uploadBegin".equals(op) || "uploadChunk".equals(op)) requirePublish(peer.owner);
         if ("list".equals(op)) list(peer, request.getInteger("page"));
         else if ("upgradeLibrary".equals(op)) upgradeLibrary(peer, request);
@@ -420,6 +434,10 @@ final class HologramServerLibrary {
         } else if ("uploadBegin".equals(op) || "previewBegin".equals(op)) begin(peer, request);
         else if ("uploadChunk".equals(op) || "previewChunk".equals(op)) append(peer, request);
         else if ("download".equals(op)) {
+            requirePublicCopy(peer, request);
+            long task = request.getLong("clientTaskToken");
+            if (!peer.copyConnection.history.claim(task))
+                throw new IOException("旧复制请求不会重新传送蓝图，请明确重新复制");
             Entry entry = publicEntry(request);
             if (request.hasKey("sourceRevision") || request.hasKey("sourceHash")) requirePublicRevision(entry, request);
             // This operation transfers a complete usable file; a browse label never authorizes releasing it.
@@ -451,6 +469,23 @@ final class HologramServerLibrary {
                     peer.pendingDraft = null;
             }
         } else throw new IOException("Unknown library operation");
+    }
+
+    private void requirePublicCopy(Peer peer, NBTTagCompound request) throws IOException {
+        requireDownload(peer.owner);
+        if (HologramBusinessWirePolicy.libraryRequest(
+            request, HologramBusinessWirePolicy.Owner.NONE, HologramBusinessWirePolicy.Origin.NETWORK_INGRESS)
+            != HologramBusinessWirePolicy.Intent.LIBRARY_DOWNLOAD)
+            throw new IOException("完整蓝图仅在明确复制到本地时下载");
+        if (!publicCopyCurrent(peer, request.getLong("clientTaskToken")))
+            throw new IOException("服务器蓝图复制已取消或连接已变更，请重新确认复制");
+        if (peer.download != null) throw new IOException("A download is already active");
+    }
+
+    private boolean publicCopyCurrent(Peer peer, long token) {
+        PublicCopyConnection copy = peer.copyConnection;
+        return !closed && peer.online && token > peer.retiredThrough && copy != null
+            && token > copy.history.retiredThrough && copy.current(peer.player);
     }
 
     private static void requirePublicRevision(Entry entry, NBTTagCompound request) throws IOException {
@@ -1116,18 +1151,19 @@ final class HologramServerLibrary {
 
     private void queueDownload(Peer peer, byte[] bytes, String name, NBTTagCompound request, String id)
         throws IOException {
-        boolean publicDownload = !"exportDraft".equals(request.getString("op"));
-        if (publicDownload) requireDownload(peer.owner);
+        String operation = request.getString("op");
+        boolean publicDownload = "download".equals(operation);
+        if (publicDownload) requirePublicCopy(peer, request);
+        else if (!"exportDraft".equals(operation)) throw new IOException("Unknown library transfer purpose");
         if (peer.download != null) throw new IOException("A download is already active");
         if (activeDownloads >= 4 || bytes.length > MAX_RESERVED_BYTES - downloadBytes)
             throw new IOException("Server download queue is busy; retry later");
-        peer.download = new Download(
-            HologramLibraryDownload.encode(
-                bytes,
-                () -> peer.online && !closed
-                    && (request.getLong("clientTaskToken") == 0
-                        || request.getLong("clientTaskToken") > peer.retiredThrough)),
-            request.getLong("clientTaskToken"));
+        long task = request.getLong("clientTaskToken");
+        HologramLibraryDownload.Encoded encoded = HologramLibraryDownload.encode(
+            bytes, () -> publicDownload ? publicCopyCurrent(peer, task)
+                : peer.online && !closed && (task == 0 || task > peer.retiredThrough));
+        if (publicDownload) requirePublicCopy(peer, request);
+        peer.download = new Download(encoded, task);
         peer.download.publicDownload = publicDownload;
         if ("exportDraft".equals(request.getString("op"))) peer.download.boundRequest = (NBTTagCompound) request.copy();
         downloadBytes += bytes.length;
@@ -1182,7 +1218,7 @@ final class HologramServerLibrary {
         }
         Download download = peer.download;
         if (download == null || !peer.online) return;
-        if (!download.valid) {
+        if (!download.valid || download.publicDownload && !publicCopyCurrent(peer, download.clientTaskToken)) {
             clearDownload(peer);
             error(peer, "Blueprint session changed; transfer cancelled", download.clientTaskToken);
             return;
@@ -1338,12 +1374,80 @@ final class HologramServerLibrary {
         }
     }
 
+    /** Mailboxes can be evicted; exactly one small watermark lives on the authenticated transport itself. */
+    private static final class PublicCopyHistory {
+
+        final UUID owner;
+        volatile long retiredThrough;
+        private long claimedThrough;
+
+        PublicCopyHistory(UUID owner) {
+            this.owner = owner;
+        }
+
+        synchronized void retire(long token) {
+            retiredThrough = Math.max(retiredThrough, token);
+        }
+
+        synchronized boolean claim(long token) {
+            if (token <= retiredThrough || token <= claimedThrough) return false;
+            claimedThrough = token;
+            return true;
+        }
+    }
+
+    private static final class PublicCopyConnection {
+
+        final NetHandlerPlayServer handler;
+        final NetworkManager network;
+        final Channel channel;
+        final PublicCopyHistory history;
+
+        private PublicCopyConnection(NetHandlerPlayServer handler, NetworkManager network, Channel channel,
+            PublicCopyHistory history) {
+            this.handler = handler;
+            this.network = network;
+            this.channel = channel;
+            this.history = history;
+        }
+
+        boolean current(EntityPlayerMP player) {
+            return current(player, handler, network, channel);
+        }
+
+        private static boolean current(EntityPlayerMP player, NetHandlerPlayServer handler, NetworkManager network,
+            Channel channel) {
+            return channel != null && channel.isOpen() && player.playerNetServerHandler == handler
+                && handler.playerEntity == player && handler.netManager == network && network.getNetHandler() == handler
+                && network.channel() == channel;
+        }
+
+        static PublicCopyConnection capture(EntityPlayerMP player) {
+            NetHandlerPlayServer handler = player.playerNetServerHandler;
+            NetworkManager network = handler == null ? null : handler.netManager;
+            Channel channel = network == null ? null : network.channel();
+            if (!current(player, handler, network, channel)) return null;
+            UUID owner = HologramLibraryFacade.actorId(player);
+            Attribute<PublicCopyHistory> attribute = channel.attr(PUBLIC_COPY_HISTORY);
+            PublicCopyHistory history = attribute.get();
+            if (history == null) {
+                PublicCopyHistory fresh = new PublicCopyHistory(owner);
+                history = attribute.setIfAbsent(fresh);
+                if (history == null) history = fresh;
+            }
+            // No player, world, or library is retained by the attribute after the channel closes.
+            return owner.equals(history.owner) && current(player, handler, network, channel)
+                ? new PublicCopyConnection(handler, network, channel, history) : null;
+        }
+    }
+
     private static final class Peer {
 
         final EntityPlayerMP player;
         final Object world;
         final UUID owner;
         final String name;
+        final PublicCopyConnection copyConnection;
         final HologramLibraryProtocol.RequestQueue requests = new HologramLibraryProtocol.RequestQueue();
         volatile boolean online = true, admin;
         volatile Upload upload;
@@ -1359,6 +1463,7 @@ final class HologramServerLibrary {
             world = net.minecraft.server.MinecraftServer.getServer();
             owner = HologramLibraryFacade.actorId(player);
             name = player.getCommandSenderName();
+            copyConnection = PublicCopyConnection.capture(player);
         }
     }
 

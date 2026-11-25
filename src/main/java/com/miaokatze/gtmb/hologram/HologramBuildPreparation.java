@@ -35,6 +35,11 @@ final class HologramBuildPreparation {
     }
 
     private static void directBuild(HologramSession s, boolean rescan, NBTTagCompound reviewedAction) {
+        String scopedRefusal = HologramWorkspace.legacyConstructionRefusal(s.player);
+        if (scopedRefusal != null) {
+            s.status = scopedRefusal;
+            return;
+        }
         if (HologramDeferredPlanRefresh.blocked(s)) return;
         if (HologramSessionPolicy.blockedByAreaImport(s)) return;
         if (HologramStructureProjection.showing(s) && !HologramStructureProjection.prepareOperation(s)) return;

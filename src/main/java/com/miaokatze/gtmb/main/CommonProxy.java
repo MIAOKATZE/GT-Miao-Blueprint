@@ -64,8 +64,12 @@ public class CommonProxy {
     public void testLabClientReady() {}
 
     public void serverStopping() {
-        com.miaokatze.gtmb.hologram.HologramCutService.clear();
-        HologramService.clear();
-        ServerTaskScheduler.clear();
+        try {
+            HologramNetwork.closeProjectedLayerServer();
+        } finally {
+            com.miaokatze.gtmb.hologram.HologramCutService.clear();
+            HologramService.clear();
+            ServerTaskScheduler.clear();
+        }
     }
 }
