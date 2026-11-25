@@ -496,7 +496,7 @@ public final class HologramMaterialReviewRegression {
                 "local review keeps voucher/refresh/back/submit but never mounts the no-op AE order");
             var recovery = (com.cleanroommc.modularui.widget.ParentWidget<?>) panel.getChildren().stream()
                 .filter(widget -> "material_recovery_destination".equals(widget.getName()))
-                .findFirst().orElseThrow();
+                .findFirst().orElseThrow(() -> new AssertionError("Recovery control missing"));
             SimpleAssert.that(!recovery.isEnabled(), "placement has no visible empty recovery button");
             SimpleAssert.eq(
                 HologramEditorTheme.TEXT,
