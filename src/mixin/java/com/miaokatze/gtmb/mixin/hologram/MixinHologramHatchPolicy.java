@@ -41,7 +41,8 @@ public abstract class MixinHologramHatchPolicy {
             "hatchItemFilter(Ljava/util/function/BiFunction;)Lgregtech/api/util/HatchElementBuilder;",
             "hatchClass(Ljava/lang/Class;)Lgregtech/api/util/HatchElementBuilder;",
             "hatchClasses([Ljava/lang/Class;)Lgregtech/api/util/HatchElementBuilder;",
-            "hatchClasses(Ljava/util/List;)Lgregtech/api/util/HatchElementBuilder;" },
+            "hatchClasses(Ljava/util/List;)Lgregtech/api/util/HatchElementBuilder;",
+            "adder(Lgregtech/api/util/IGTHatchAdder;)Lgregtech/api/util/HatchElementBuilder;" },
         at = @At("RETURN"))
     private void gtit$reset(CallbackInfoReturnable<HatchElementBuilder<?>> callback) {
         HologramHatchPolicy.reset(this);

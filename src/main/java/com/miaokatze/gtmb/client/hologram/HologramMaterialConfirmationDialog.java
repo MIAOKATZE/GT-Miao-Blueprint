@@ -47,8 +47,10 @@ final class HologramMaterialConfirmationDialog {
         BACK,
         REFRESH,
         SUBMIT,
-        DETAILS,
-        VOUCHER, BIND_GROUP, BIND_SLOT, DEMOLITION_DESTINATION
+        VOUCHER,
+        BIND_GROUP,
+        BIND_SLOT,
+        DEMOLITION_DESTINATION
     }
 
     /** The port lends its current detached rows for read-only rendering. */
@@ -68,42 +70,47 @@ final class HologramMaterialConfirmationDialog {
 
         boolean localSubmitAvailable();
 
-        default String localSubmitBlocker() { return localSubmitAvailable() ? "" : "当前无法提交。"; }
+        default String localSubmitBlocker() {
+            return localSubmitAvailable() ? "" : "当前无法提交。";
+        }
 
-        default boolean localHatchDelta() { return false; }
+        default boolean localHatchDelta() {
+            return false;
+        }
 
         default void localSubmitDenied() {}
-
-        default boolean describesNativeTargets() {
-            return false;
-        }
-
-        default boolean supportsDetailedMaterials() {
-            return false;
-        }
-
-        default boolean localDetailsAvailable() {
-            return false;
-        }
-
-        default String localDetailsLabel() {
-            return "";
-        }
 
         default String localSubmitLabel() {
             return "提交施工并核验…";
         }
 
-        default boolean localDemolitionAvailable() { return false; }
-        default String localDemolitionDestinationLabel() { return ""; }
-        default boolean hasBindingChoices(){return false;}
-        default String bindingGroupLabel(){return "";}
-        default String bindingSlotLabel(){return "";}
+        default boolean localDemolitionAvailable() {
+            return false;
+        }
+
+        default String localDemolitionDestinationLabel() {
+            return "";
+        }
+
+        default boolean hasBindingChoices() {
+            return false;
+        }
+
+        default String bindingGroupLabel() {
+            return "";
+        }
+
+        default String bindingSlotLabel() {
+            return "";
+        }
+
         default boolean localVoucherAvailable() {
             return false;
         }
 
-        default String localVoucherBlocker() { return "此操作不使用装饰券"; }
+        default String localVoucherBlocker() {
+            return "此操作不使用装饰券";
+        }
 
         default boolean localVoucherSelected() {
             return false;
@@ -177,6 +184,7 @@ final class HologramMaterialConfirmationDialog {
 
     void tick(boolean show) {
         int previousRows = rowCount();
+        boolean wasDescriptive = descriptive();
         if (local) {
             localFrame = show ? localView.localFrame() : null;
             if (localFrame == null) {
@@ -184,8 +192,9 @@ final class HologramMaterialConfirmationDialog {
                 return;
             }
         }
-        boolean resized = descriptive() ? previousRows != rowCount()
-            : local ? materials.updateLocal(localFrame.rows()) : materials.update(state());
+        boolean dataResized = !descriptive()
+            && (local ? materials.updateLocal(localFrame.rows()) : materials.update(state()));
+        boolean resized = dataResized || previousRows != rowCount() || wasDescriptive != descriptive();
         if (resized && canvas != null) {
             listResizes++;
             canvas.height(Math.max(LIST_HEIGHT, rowCount() * ROW_HEIGHT))
@@ -220,7 +229,6 @@ final class HologramMaterialConfirmationDialog {
             case 245 -> new int[] { 400, 340, 218 };
             case 246 -> new int[] { 476, 369, 142 };
             case 247 -> new int[] { 338, 369, 132 };
-            case 249 -> local && localView.supportsDetailedMaterials() ? new int[] { 14, 369, 150 } : null;
             default -> null;
         };
         if (bounds == null) return null;
@@ -341,8 +349,7 @@ final class HologramMaterialConfirmationDialog {
             HologramMuiTheme.label(this::reviewHint, 14, 55, 604, 15, HologramMuiTheme.MUTED)
                 .tooltipBuilder(t -> {
                     if (descriptive()) {
-                        t.addLine(localView.describesNativeTargets() ? "原生目标基材不含附属资源和设备 NBT；背包观察不代表可扣料。"
-                            : "原图记录格数不是施工需求；背包同物品数量不代表可扣料。");
+                        t.addLine("原图记录格数不是施工需求；背包同物品数量不代表可扣料。");
                         return;
                     }
                     if (local && localView.localHatchDelta()) {
@@ -361,8 +368,7 @@ final class HologramMaterialConfirmationDialog {
                 .tooltipAutoUpdate(true));
         panel.child(
             HologramMuiTheme.label(
-                () -> descriptive() ? localView.describesNativeTargets() ? "目标基材身份" : "原图物品身份"
-                    : "材料 / 精确 NBT 条目",
+                () -> descriptive() ? "原图物品身份" : "材料 / 精确 NBT 条目",
                 42 + ROW_INSET,
                 77,
                 220,
@@ -370,8 +376,7 @@ final class HologramMaterialConfirmationDialog {
                 HologramMuiTheme.TITLE));
         panel.child(
             HologramMuiTheme
-                .label(() -> descriptive() ? localView.describesNativeTargets() ? "原生目标格数" : "蓝图记录格数" : "需求",
-                    270 + ROW_INSET, 77, 110, 15, HologramMuiTheme.TITLE));
+                .label(() -> descriptive() ? "蓝图记录格数" : "需求", 270 + ROW_INSET, 77, 110, 15, HologramMuiTheme.TITLE));
         panel.child(
             HologramMuiTheme.label(
                 () -> descriptive() ? "本机背包同物品" : local ? "背包已知" : "已有",
@@ -380,9 +385,14 @@ final class HologramMaterialConfirmationDialog {
                 110,
                 15,
                 HologramMuiTheme.TITLE));
-        if (!descriptive()) panel.child(
-            HologramMuiTheme
-                .label(() -> local ? "背包差额" : "缺失", 498 + ROW_INSET, 77, 110, 15, HologramUiAccent.WARNING));
+        panel.child(
+            HologramMuiTheme.label(
+                () -> descriptive() ? "" : local ? "背包差额" : "缺失",
+                498 + ROW_INSET,
+                77,
+                110,
+                15,
+                HologramUiAccent.WARNING));
         list = new MaterialList().pos(14, 96)
             .size(LIST_WIDTH, LIST_HEIGHT)
             .background(HologramMuiTheme.PANEL);
@@ -435,36 +445,57 @@ final class HologramMaterialConfirmationDialog {
                     604,
                     16,
                     HologramMuiTheme.MUTED));
-            boolean details = localView.supportsDetailedMaterials();
-            if (details) panel.child(button(
-                249,
-                localView::localDetailsLabel,
-                14,
-                369,
-                150,
-                () -> localView.localAction(LocalAction.DETAILS),
-                localView::localDetailsAvailable,
-                () -> 0));
-            panel.child(HologramMuiTheme.label(localView::localSourcesLabel, 14, 340, 210, 16,
-                HologramMuiTheme.MUTED));
-            if(localView.hasBindingChoices()) {
-                panel.child(button(250,localView::bindingGroupLabel,234,340,160,
-                    ()->localView.localAction(LocalAction.BIND_GROUP),()->true,()->0));
-                panel.child(button(251,localView::bindingSlotLabel,165,369,165,
-                    ()->localView.localAction(LocalAction.BIND_SLOT),()->true,()->0));
+            panel.child(HologramMuiTheme.label(localView::localSourcesLabel, 14, 340, 210, 16, HologramMuiTheme.MUTED));
+            if (localView.hasBindingChoices()) {
+                panel.child(
+                    button(
+                        250,
+                        localView::bindingGroupLabel,
+                        234,
+                        340,
+                        160,
+                        () -> localView.localAction(LocalAction.BIND_GROUP),
+                        () -> true,
+                        () -> 0));
+                panel.child(
+                    button(
+                        251,
+                        localView::bindingSlotLabel,
+                        165,
+                        369,
+                        165,
+                        () -> localView.localAction(LocalAction.BIND_SLOT),
+                        () -> true,
+                        () -> 0));
             }
-            panel.child(button(245, localView::localVoucherLabel, 400, 340, 218,
-                () -> { if (localView.localVoucherAvailable()) localView.localAction(LocalAction.VOUCHER); },
-                localView::localVoucherAvailable,
-                () -> localView.localVoucherSelected() ? HologramUiAccent.SUGGESTION : 0));
-            // The same panel can be reused for removal. Hide the whole action rather than painting an empty disabled button.
+            panel.child(
+                button(
+                    245,
+                    localView::localVoucherLabel,
+                    400,
+                    340,
+                    218,
+                    () -> { if (localView.localVoucherAvailable()) localView.localAction(LocalAction.VOUCHER); },
+                    localView::localVoucherAvailable,
+                    () -> localView.localVoucherSelected() ? HologramUiAccent.SUGGESTION : 0));
+            // The same panel can be reused for removal. Hide the whole action rather than painting an empty disabled
+            // button.
             ParentWidget<?> recovery = new ParentWidget<>().name("material_recovery_destination")
                 .pos(165, 369)
                 .size(165, 23)
-                .child(button(
-                    252, localView::localDemolitionDestinationLabel, 0, 0, 165,
-                    () -> { if (localView.localDemolitionAvailable()) localView.localAction(LocalAction.DEMOLITION_DESTINATION); },
-                    localView::localDemolitionAvailable, () -> 0));
+                .child(
+                    button(
+                        252,
+                        localView::localDemolitionDestinationLabel,
+                        0,
+                        0,
+                        165,
+                        () -> {
+                            if (localView.localDemolitionAvailable())
+                                localView.localAction(LocalAction.DEMOLITION_DESTINATION);
+                        },
+                        localView::localDemolitionAvailable,
+                        () -> 0));
             recovery.setEnabled(localView.localDemolitionAvailable());
             panel.child(recovery.setEnabledIf(widget -> localView.localDemolitionAvailable()));
             panel.child(
@@ -487,23 +518,13 @@ final class HologramMaterialConfirmationDialog {
                     () -> localView.localAction(LocalAction.BACK),
                     () -> true,
                     () -> 0));
-            panel.child(
-                button(
-                    55,
-                    localView::localSubmitLabel,
-                    184,
-                    402,
-                    434,
-                    () -> {
-                        if (localView.localSubmitAvailable()) localView.localAction(LocalAction.SUBMIT);
-                        else localView.localSubmitDenied();
-                    },
-                    localView::localSubmitAvailable,
-                    () -> HologramUiAccent.INFORMATION));
+            panel.child(button(55, localView::localSubmitLabel, 184, 402, 434, () -> {
+                if (localView.localSubmitAvailable()) localView.localAction(LocalAction.SUBMIT);
+                else localView.localSubmitDenied();
+            }, localView::localSubmitAvailable, () -> HologramUiAccent.INFORMATION));
             return panel;
         }
-        panel.child(
-            HologramMuiTheme.label(this::status, 14, 299, 604, 16, HologramMuiTheme.TEXT));
+        panel.child(HologramMuiTheme.label(this::status, 14, 299, 604, 16, HologramMuiTheme.TEXT));
         panel.child(
             HologramMuiTheme.label(ui.review::lastCacheReviewSummary, 14, 316, 604, 16, HologramMuiTheme.TEXT)
                 .color(ui.review::lastCacheReviewColor)
@@ -578,9 +599,11 @@ final class HologramMaterialConfirmationDialog {
                 () -> voucherEnabled() && (hasVoucherDemand() || voucherSelected()) ? HologramUiAccent.SUGGESTION : 0)
                     .tooltipBuilder(t -> {
                         if (voucherEnabled() && (hasVoucherDemand() || voucherSelected())) {
-                            if (state().getCompoundTag("materialQuote").getBoolean("creativePaymentsFree"))
-                                t.addLine("创造模式不消耗抵用券");
-                            else t.addLine("主物品栏：" + state().getCompoundTag("decorativeVoucher").getLong("available") + " 张");
+                            if (state().getCompoundTag("materialQuote")
+                                .getBoolean("creativePaymentsFree")) t.addLine("创造模式不消耗抵用券");
+                            else t.addLine(
+                                "主物品栏：" + state().getCompoundTag("decorativeVoucher")
+                                    .getLong("available") + " 张");
                         }
                     }));
         panel.child(
@@ -682,9 +705,7 @@ final class HologramMaterialConfirmationDialog {
     }
 
     private String reviewHint() {
-        if (descriptive()) return localView.describesNativeTargets()
-            ? "原生预览目标基材；背包独立观察，施工用量、容器及 AE 均未核验。"
-            : "查看原图记录和本机背包；施工用量、容器及 AE 均未核验。";
+        if (descriptive()) return "查看原图记录和本机背包；施工用量、容器及 AE 均未核验。";
         if (local && localView.localHatchDelta()) return "需求仅计入换入物品；转向、拆除不扣料。";
         if (local) return "理论需求与本机背包；AE / 容器库存未知，不查询服务器。";
         if (lessonClose != null) return "同一规划的精确材料需求 · 教学库存为 0 · 此处不查询玩家库存或执行施工";
@@ -862,7 +883,11 @@ final class HologramMaterialConfirmationDialog {
                         if (sample.icon != null) drawItem(sample.icon, 5, y + 8, context.getCurrentDrawingZ());
                         else font.drawString("?", 7, y + 15, HologramUiAccent.INFORMATION);
                         font.drawString(font.trimStringToWidth(sample.name, 220), 31, y + 8, HologramMuiTheme.TEXT);
-                        font.drawString(font.trimStringToWidth(sample.identity, 220), 31, y + 24, HologramMuiTheme.MUTED);
+                        font.drawString(
+                            font.trimStringToWidth(sample.identity, 220),
+                            31,
+                            y + 24,
+                            HologramMuiTheme.MUTED);
                         number(font, Long.toString(row.blueprintCells()), 256, y + 16, HologramMuiTheme.TEXT);
                         number(
                             font,

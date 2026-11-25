@@ -657,14 +657,20 @@ public final class HologramUiModuleRegression {
             var reason = HologramEditorPropertiesPane.class.getDeclaredMethod("constructionReason");
             canReview.setAccessible(true);
             reason.setAccessible(true);
-            SimpleAssert.that(!(Boolean) canReview.invoke(pane), "unsettled native capture cannot review construction");
-            SimpleAssert.eq("正在采集结构，请稍候。", reason.invoke(pane), "capture reason is visible before review");
+            var config = ui.config.configuration();
+            SimpleAssert.that(
+                !HologramPlacementConfirmation.localStructureReviewBlocker(state, config, false)
+                    .isEmpty(),
+                "unsettled capture without the published native target cannot submit construction");
             state.data.setBoolean("capturePending", false);
-            SimpleAssert.that(!(Boolean) canReview.invoke(pane), "visible geometry alone cannot review construction");
+            SimpleAssert.that(
+                !HologramPlacementConfirmation.localStructureReviewBlocker(state, config, false)
+                    .isEmpty(),
+                "visible geometry alone cannot submit construction");
             state.data.setBoolean("projectionDataComplete", true);
             state.data.setBoolean("localPlanPending", true);
             SimpleAssert.that(!(Boolean) canReview.invoke(pane), "an in-flight plan cannot review construction");
-            SimpleAssert.eq("施工计划正在更新，请稍候。", reason.invoke(pane), "pending plan has actionable status");
+            SimpleAssert.eq("正在更新计划", reason.invoke(pane), "pending plan has actionable status");
             state.data.setBoolean("localPlanPending", false);
             SimpleAssert.that((Boolean) canReview.invoke(pane), "settled target enables only the review entry");
             SimpleAssert.that(

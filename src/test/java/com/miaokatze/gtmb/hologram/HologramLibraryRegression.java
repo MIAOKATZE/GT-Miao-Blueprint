@@ -139,7 +139,9 @@ public final class HologramLibraryRegression {
             HologramLibraryFacade.receive(actor, unadmitted);
             HologramLibraryFacade.receive(actor, HologramLibraryProtocol.request("previewBegin"));
             SimpleAssert.that(queue.isEmpty(), "retired whole-preview traffic has no dedicated mailbox");
-            global.set(null, unsafe().allocateInstance(Class.forName("net.minecraft.server.integrated.IntegratedServer")));
+            global.set(
+                null,
+                unsafe().allocateInstance(Class.forName("net.minecraft.server.integrated.IntegratedServer")));
             SimpleAssert.that(
                 !pending.containsKey(HologramLibraryFacade.actorId(actor)),
                 "rejected unadmitted chunks retain no ingress quota");
@@ -205,7 +207,8 @@ public final class HologramLibraryRegression {
             NBTTagCompound blockedDownload = HologramLibraryProtocol.request("download");
             blockedDownload.setString("id", id);
             blockedDownload.setLong("clientTaskToken", 810);
-            blockedDownload.setString(HologramBusinessWirePolicy.DOWNLOAD_INTENT_KEY, HologramBusinessWirePolicy.PUBLIC_COPY);
+            blockedDownload
+                .setString(HologramBusinessWirePolicy.DOWNLOAD_INTENT_KEY, HologramBusinessWirePolicy.PUBLIC_COPY);
             denied(
                 () -> runWorker(active, () -> handle(active, ordinary, blockedDownload)),
                 "full legacy payload is not released to older clients under a browse/download pretext");
@@ -904,43 +907,68 @@ public final class HologramLibraryRegression {
             String id = "public_" + UUID.randomUUID();
             var owner = UUID.randomUUID();
             var original = store.prepare(id, owner, "Uploader", 2, good);
-            SimpleAssert.eq("Native author", original.label().author(), "source author survives policy");
-            SimpleAssert.eq(1, original.label().cells(), "typed source is still a single cell");
-            SimpleAssert.eq("", store.commit(original, good, null, () -> {}), "first native pair commits");
+            SimpleAssert.eq(
+                "Native author",
+                original.label()
+                    .author(),
+                "source author survives policy");
+            SimpleAssert.eq(
+                1,
+                original.label()
+                    .cells(),
+                "typed source is still a single cell");
+            String publish = store.commit(original, good, null, () -> {});
+            SimpleAssert.that(
+                publish.isEmpty() || publish.equals("已发布；系统未确认目录持久化"),
+                "first native pair commits, with an explicit durability warning where directory fsync is unavailable");
             SimpleAssert.that(Arrays.equals(good, store.download(original)), "exact typed source and covered bytes");
-            Path record = store.directory().resolve(id + HologramNativePublicStore.SUFFIX);
+            Path record = store.directory()
+                .resolve(id + HologramNativePublicStore.SUFFIX);
             var restart = new HologramNativePublicStore(root);
             restart.initialize();
             SimpleAssert.that(original.equals(restart.load(record)), "ownership and revision survive reopen");
 
             NBTTagCompound marked = (NBTTagCompound) sign.copy();
             marked.setBoolean("dropItem", true);
-            denied(() -> store.prepare(id, owner, "Uploader", 3, publicNativeSign(marked)),
+            denied(
+                () -> store.prepare(id, owner, "Uploader", 3, publicNativeSign(marked)),
                 "typed NBT with a forbidden payload cannot be published");
             NBTTagCompound privateBinding = (NBTTagCompound) sign.copy();
             privateBinding.setString(HologramNetworkBindings.ORIGINAL, "private-binding");
-            denied(() -> store.prepare(id, owner, "Uploader", 3, publicNativeSign(privateBinding)),
+            denied(
+                () -> store.prepare(id, owner, "Uploader", 3, publicNativeSign(privateBinding)),
                 "native private binding is never published unmodified");
 
             var pair = HologramNativePublicArtifact.decode(good);
-            byte[] invalidCover = pair.cover().clone();
+            byte[] invalidCover = pair.cover()
+                .clone();
             invalidCover[invalidCover.length - 1] ^= 1;
-            denied(() -> store.prepare(id, owner, "Uploader", 3,
-                HologramNativePublicArtifact.encode(pair.source(), invalidCover)), "bound cover integrity");
+            denied(
+                () -> store.prepare(
+                    id,
+                    owner,
+                    "Uploader",
+                    3,
+                    HologramNativePublicArtifact.encode(pair.source(), invalidCover)),
+                "bound cover integrity");
             sign.setString("Text1", "Later reviewed revision");
             byte[] later = publicNativeSign(sign);
             var revised = store.prepare(id, owner, "Uploader", 3, later);
-            denied(() -> store.commit(revised, later, original, () -> { throw new IOException("retired fixture task"); }),
+            denied(
+                () -> store.commit(revised, later, original, () -> { throw new IOException("retired fixture task"); }),
                 "cancellation before commit");
-            SimpleAssert.that(Arrays.equals(good, store.download(original)), "cancelled replacement preserves original");
+            SimpleAssert
+                .that(Arrays.equals(good, store.download(original)), "cancelled replacement preserves original");
             store.commit(revised, later, original, () -> {});
             denied(() -> store.download(original), "old version cannot return the next pair");
             SimpleAssert.that(Arrays.equals(later, store.download(revised)), "exact replacement pair");
             denied(() -> store.commit(original, good, original, () -> {}), "old revision cannot replace its successor");
-            System.out.println("[GTMB-NATIVE-PUBLIC] typed sign, original owner, bound cover, restart and fixed-point refusal passed");
+            System.out.println(
+                "[GTMB-NATIVE-PUBLIC] typed sign, original owner, bound cover, restart and fixed-point refusal passed");
         } finally {
             try (var files = Files.walk(root)) {
-                for (Path path : files.sorted(Comparator.reverseOrder()).collect(java.util.stream.Collectors.toList())) Files.deleteIfExists(path);
+                for (Path path : files.sorted(Comparator.reverseOrder())
+                    .collect(java.util.stream.Collectors.toList())) Files.deleteIfExists(path);
             }
         }
     }
@@ -958,8 +986,8 @@ public final class HologramLibraryRegression {
         cell.addProperty("block", "minecraft:standing_sign");
         cell.addProperty("item", "minecraft:sign");
         cell.addProperty("tileNbt", HologramBlueprintNbt.encodeCanonical(nbt));
-        byte[] source = com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintMigration.author(header,
-            new com.google.gson.JsonObject(), 1, i -> cell, () -> true).bytes;
+        byte[] source = com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintMigration
+            .author(header, new com.google.gson.JsonObject(), 1, i -> cell, () -> true).bytes;
         byte[] cover = com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintPng.bind(
             com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintCodecRegression.png(),
             HologramBlueprintArtifact.hash(source));
@@ -1010,24 +1038,30 @@ public final class HologramLibraryRegression {
             download.setLong("sourceRevision", row.getLong("sourceRevision"));
             download.setLong("clientTaskToken", 7L);
             // This entry is already compact, so none of the failures below can be attributed to the old format.
-            denied(() -> runWorker(store, () -> handle(store, reader, download)),
+            denied(
+                () -> runWorker(store, () -> handle(store, reader, download)),
                 "an old automatic download without a positive COPY intent cannot read a compact artifact");
             for (String notCopy : new String[] { "browse", "place", "edit" }) {
                 download.setString(HologramBusinessWirePolicy.DOWNLOAD_INTENT_KEY, notCopy);
-                denied(() -> runWorker(store, () -> handle(store, reader, download)),
+                denied(
+                    () -> runWorker(store, () -> handle(store, reader, download)),
                     "a " + notCopy + " intent never releases full artifact bytes");
             }
             download.setString(HologramBusinessWirePolicy.DOWNLOAD_INTENT_KEY, HologramBusinessWirePolicy.PUBLIC_COPY);
             download.setString("purpose", "preview");
-            denied(() -> runWorker(store, () -> handle(store, reader, download)),
+            denied(
+                () -> runWorker(store, () -> handle(store, reader, download)),
                 "a copy label cannot tunnel unknown request fields");
             download.removeTag("purpose");
             download.setString("clientTaskToken", "7");
-            denied(() -> runWorker(store, () -> handle(store, reader, download)),
+            denied(
+                () -> runWorker(store, () -> handle(store, reader, download)),
                 "an unauthorized task token type cannot allocate a transfer");
             download.setLong("clientTaskToken", 7L);
-            SimpleAssert.that(get(reader, "download") == null && ((Long) get(store, "downloadBytes")) == 0
-                && capture.replies.isEmpty(), "rejected operations have no full opening, chunks or reservations");
+            SimpleAssert.that(
+                get(reader, "download") == null && ((Long) get(store, "downloadBytes")) == 0
+                    && capture.replies.isEmpty(),
+                "rejected operations have no full opening, chunks or reservations");
             runWorker(store, () -> handle(store, reader, download));
             SimpleAssert.eq(1, capture.replies.size(), "download starts with one header");
             NBTTagCompound header = wireReply(capture.replies.remove(0));
@@ -1093,9 +1127,11 @@ public final class HologramLibraryRegression {
                 "public read never rewrites the server's pair");
             SimpleAssert.eq(0, get(store, "activeDownloads"), "successful delivery releases the transfer");
             SimpleAssert.eq(0L, get(store, "downloadBytes"), "successful delivery releases the byte reservation");
-            denied(() -> runWorker(store, () -> handle(store, reader, download)),
+            denied(
+                () -> runWorker(store, () -> handle(store, reader, download)),
                 "the completed exact copy cannot release a second artifact on replay");
-            SimpleAssert.that(get(reader, "download") == null && ((Long) get(store, "downloadBytes")) == 0,
+            SimpleAssert.that(
+                get(reader, "download") == null && ((Long) get(store, "downloadBytes")) == 0,
                 "duplicate copy cannot reserve or emit another full file");
             capture.replies.clear();
             runWorker(store, () -> handle(store, reader, list));
@@ -1142,14 +1178,17 @@ public final class HologramLibraryRegression {
             long now = System.nanoTime();
             for (int i = 0; i < 8 && get(originalPeer, "download") != null; i++)
                 sendDownload.invoke(store, originalPeer, now + TimeUnit.MILLISECONDS.toNanos(100L * i));
-            SimpleAssert.that(capture.replies.stream().anyMatch(r -> "downloadDone".equals(r.getString("op"))
-                && r.getLong("clientTaskToken") == 11L), "real COPY completed before its idle mailbox was evicted");
+            SimpleAssert.that(
+                capture.replies.stream()
+                    .anyMatch(r -> "downloadDone".equals(r.getString("op")) && r.getLong("clientTaskToken") == 11L),
+                "real COPY completed before its idle mailbox was evicted");
 
             evictCopyMailbox(store, reader, peers, capacity, channels, pump);
             capture.replies.clear();
             store.submit(reader, completed, false);
             Object successorPeer = peers.get(reader.getUniqueID());
-            SimpleAssert.that(successorPeer != null && successorPeer != originalPeer,
+            SimpleAssert.that(
+                successorPeer != null && successorPeer != originalPeer,
                 "same live connection obtained a different mailbox");
             pump.invoke(store);
             assertNoPublicCopy(store, capture, "completed COPY remains consumed without a resident mailbox");
@@ -1167,8 +1206,10 @@ public final class HologramLibraryRegression {
             capture.replies.clear();
             store.submit(reader, fresh, false);
             pump.invoke(store);
-            SimpleAssert.that(capture.replies.stream().anyMatch(r -> "downloadBegin".equals(r.getString("op"))
-                && r.getLong("clientTaskToken") == 13L), "fresh explicit COPY on that connection still opens");
+            SimpleAssert.that(
+                capture.replies.stream()
+                    .anyMatch(r -> "downloadBegin".equals(r.getString("op")) && r.getLong("clientTaskToken") == 13L),
+                "fresh explicit COPY on that connection still opens");
             invoke(store, "clearDownload", peers.get(reader.getUniqueID()));
         });
     }
@@ -1179,8 +1220,10 @@ public final class HologramLibraryRegression {
             EntityPlayerMP observer = connectedLibraryPlayer("CopyChurn" + i, channels);
             store.submit(observer, HologramLibraryProtocol.request("configGet"), false);
         }
-        SimpleAssert.that(peers.get(reader.getUniqueID()) == null && reader.playerNetServerHandler.netManager.channel()
-            .isOpen(), "production LRU evicted the idle mailbox without ending its authenticated connection");
+        SimpleAssert.that(
+            peers.get(reader.getUniqueID()) == null && reader.playerNetServerHandler.netManager.channel()
+                .isOpen(),
+            "production LRU evicted the idle mailbox without ending its authenticated connection");
         pump.invoke(store);
     }
 
@@ -1188,7 +1231,11 @@ public final class HologramLibraryRegression {
         throws Exception {
         SimpleAssert.eq(0, get(store, "activeDownloads"), reason + ": no transfer");
         SimpleAssert.eq(0L, get(store, "downloadBytes"), reason + ": no byte reservation");
-        SimpleAssert.that(capture.replies.stream().noneMatch(r -> r.getString("op").startsWith("download")),
+        SimpleAssert.that(
+            capture.replies.stream()
+                .noneMatch(
+                    r -> r.getString("op")
+                        .startsWith("download")),
             reason + ": no header, chunk, or completion");
     }
 

@@ -42,11 +42,29 @@ final class HologramCasingFallback {
         Target target = search.target;
         if (search.ambiguous || target == null
             || target.meta < 0
-            || target.meta > 15
+            || target.meta > 15 && !registeredBareFrame(target.block, target.meta)
             || (target.block.hasTileEntity(target.meta)
                 && !HologramFrameSupport.inertFrameBlock(target.block, target.meta)))
             return null;
         return target;
+    }
+
+    /**
+     * GT's registered, uncovered frames store the material ID in the full block metadata. This is not
+     * permission for a general extended-metadata block or for frames carrying a tile/cover.
+     */
+    private static boolean registeredBareFrame(Block block, int meta) {
+        if (block != gregtech.api.GregTechAPI.sBlockFrames
+            || block.getClass() != gregtech.common.blocks.BlockFrameBox.class
+            || (meta & ~gregtech.common.blocks.BlockFrameBox.MATERIAL_MASK) != 0
+            || meta >= gregtech.api.GregTechAPI.sGeneratedMaterials.length
+            || block.hasTileEntity(meta)) return false;
+        var material = gregtech.common.blocks.BlockFrameBox.getMaterial(meta);
+        var item = net.minecraft.item.Item.getItemFromBlock(block);
+        return material != null && material.mMetaItemSubID == meta
+            && item instanceof gregtech.common.blocks.ItemFrames
+            && Block.getBlockFromItem(item) == block
+            && item.getMetadata(meta) == meta;
     }
 
     static final class Target {

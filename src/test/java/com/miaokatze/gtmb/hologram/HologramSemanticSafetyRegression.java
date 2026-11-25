@@ -75,6 +75,10 @@ final class HologramSemanticSafetyRegression {
             Map<IHatchElement<?>, Integer> overlapping = new LinkedHashMap<>();
             overlapping.put(HatchElement.Energy, 1);
             overlapping.put(combined, 1);
+            verifySparsePreset(
+                presetSession(unsafe, overlapping, energyStack).capture.cells.get(0).element,
+                energyStack);
+            verifyTurbineOrGroups(unsafe);
             for (int path = 0; path < 3; path++) {
                 HologramSession session = presetSession(unsafe, overlapping, energyStack);
                 if (path == 1) session.pins.put(0, energyStack.copy());
@@ -163,7 +167,7 @@ final class HologramSemanticSafetyRegression {
                 separate.presetSupported && separate.autoTargets.size() == 2,
                 "independent requirements still allocate distinct physical hatches");
             boundedPreset(unsafe, energy, energyId, energyStack, mufflerStack);
-        } catch (ReflectiveOperationException failure) {
+        } catch (ReflectiveOperationException | java.io.IOException failure) {
             throw new AssertionError("native hatch quota accounting", failure);
         } finally {
             GregTechAPI.sBlockMachines = previousMachines;
@@ -278,6 +282,125 @@ final class HologramSemanticSafetyRegression {
         return session;
     }
 
+    private static void verifySparsePreset(IStructureElement<?> declaration, ItemStack hatch)
+        throws java.io.IOException {
+        HologramNativePresetIndex index = new HologramNativePresetIndex();
+        index.record(declaration, 72, null, true, false);
+        index.record(declaration, 412, null, true, false);
+        var settings = new net.minecraft.nbt.NBTTagCompound();
+        settings.setInteger("hatchTier", HologramCellPolicy.hatchTier(hatch));
+        int[] lookups = { 0 };
+        var prepared = index.prepare(settings, Collections.emptyMap(), position -> {
+            lookups[0]++;
+            return Collections.singletonList(hatch);
+        });
+        SimpleAssert.eq(1, lookups[0], "sparse native preset asks once for the same declaration");
+        SimpleAssert.that(
+            Arrays.equals(new int[] { hatch.getItemDamage() }, prepared.stockIds()),
+            "stock request contains the native model only");
+        var placed = prepared.resolve(new int[] { 1 }, false);
+        SimpleAssert.that(
+            placed.complete() && placed.choices()
+                .size() == 1
+                && placed.choices()
+                    .get(0)
+                    .index() == 72
+                && placed.choices()
+                    .get(0)
+                    .facing() == -1,
+            "one legal hatch satisfies overlapping native quotas");
+        SimpleAssert.that(
+            !prepared.resolve(new int[] { 0 }, false)
+                .complete(),
+            "insufficient stock never creates a partial preset");
+        SimpleAssert.that(
+            prepared.resolve(null, true)
+                .complete(),
+            "creative bypasses stock");
+        var already = index.prepare(
+            settings,
+            Collections.singletonMap(72, hatch.getItemDamage()),
+            position -> { throw new AssertionError("satisfied quotas must not query candidates"); });
+        SimpleAssert.that(
+            already.stockIds().length == 0 && already.resolve(new int[0], false)
+                .complete()
+                && already.resolve(new int[0], false)
+                    .choices()
+                    .isEmpty(),
+            "manual choices remain intact");
+        ItemStack tagged = hatch.copy();
+        var extras = new net.minecraft.nbt.NBTTagCompound();
+        extras.setString("variant", "exact");
+        tagged.setTagCompound(extras);
+        Map<Integer, ItemStack> exact = new LinkedHashMap<>();
+        exact.put(72, tagged);
+        exact.put(412, hatch);
+        var saved = index.captureProfile(
+            exact,
+            settings,
+            slot -> { throw new AssertionError("no installed slot requires work while saving"); });
+        var savedRows = saved.getTagList("entries", 10);
+        SimpleAssert.eq(2, savedRows.tagCount(), "exact profile saving does not collapse tagged and bare models");
+        extras.setString("variant", "source changed");
+        SimpleAssert.eq(
+            "exact",
+            savedRows.getCompoundTagAt(0)
+                .getCompoundTag("tag")
+                .getString("variant"),
+            "profile retains its own exact NBT");
+        index.record(declaration, 900, null, false, true);
+        var unknown = index.prepare(
+            settings,
+            Collections.emptyMap(),
+            position -> { throw new AssertionError("unread native site did not fail closed"); });
+        SimpleAssert.that(
+            !unknown.resolve(new int[0], false)
+                .complete(),
+            "unknown native positions block estimates");
+    }
+
+    private static void verifyTurbineOrGroups(sun.misc.Unsafe unsafe) throws InstantiationException {
+        SimpleAssert.eq(
+            Arrays.asList("Input", "Output", "Dynamo"),
+            HologramGtsrBasicHatchPolicy.GROUPS,
+            "turbine formation requires three logical groups, not every atLeast leaf");
+        for (String name : Arrays.asList("InputHatch", "SteamInputBus", "PressureSteamInput", "OverpressureInput"))
+            SimpleAssert.eq(0, HologramGtsrBasicHatchPolicy.group(name), "native turbine input alternative: " + name);
+        for (String name : Arrays.asList("OutputHatch", "CoolingHatch"))
+            SimpleAssert.eq(1, HologramGtsrBasicHatchPolicy.group(name), "native turbine output alternative: " + name);
+        SimpleAssert.eq(2, HologramGtsrBasicHatchPolicy.group("DynamoOutput"), "native turbine dynamo role");
+        SimpleAssert.eq(-1, HologramGtsrBasicHatchPolicy.group("Energy"), "unrelated role is not inferred");
+        Map<String, IHatchElement<?>> bare = new LinkedHashMap<>();
+        bare.put("InputHatch", HatchElement.InputHatch);
+        bare.put("OutputHatch", HatchElement.OutputHatch);
+        bare.put("DynamoOutput", HatchElement.Dynamo);
+        SimpleAssert.that(
+            !HologramGtsrBasicHatchPolicy.knownU(bare)
+                && !HologramGtsrBasicHatchPolicy.capturedController(new Object()),
+            "stock role names alone cannot activate the pinned turbine adapter");
+        var input = (IMetaTileEntity) unsafe
+            .allocateInstance(gregtech.api.metatileentity.implementations.MTEHatchInput.class);
+        var output = (IMetaTileEntity) unsafe
+            .allocateInstance(gregtech.api.metatileentity.implementations.MTEHatchOutput.class);
+        var dynamo = (IMetaTileEntity) unsafe
+            .allocateInstance(gregtech.api.metatileentity.implementations.MTEHatchDynamo.class);
+        var energy = (IMetaTileEntity) unsafe.allocateInstance(MTEHatchEnergy.class);
+        SimpleAssert.that(
+            Arrays.equals(
+                new boolean[] { true, false, false },
+                HologramGtsrBasicHatchPolicy.provedGroups(bare, input, true))
+                && Arrays.equals(
+                    new boolean[] { false, true, false },
+                    HologramGtsrBasicHatchPolicy.provedGroups(bare, output, true))
+                && Arrays.equals(
+                    new boolean[] { false, false, true },
+                    HologramGtsrBasicHatchPolicy.provedGroups(bare, dynamo, true))
+                && Arrays.equals(
+                    new boolean[] { false, false, false },
+                    HologramGtsrBasicHatchPolicy.provedGroups(bare, energy, true)),
+            "GT input, output and dynamo prototypes keep distinct roles; energy input is not a dynamo");
+    }
+
     private static void standardHatchUnions() {
         int energyId = 32752, mufflerId = 32753;
         Block previousMachines = GregTechAPI.sBlockMachines;
@@ -367,6 +490,7 @@ final class HologramSemanticSafetyRegression {
         IStructureElement<Object> element = StructureUtility.isAir();
         AtomicInteger callbacks = new AtomicInteger();
         HologramHatchPolicy.declare(builder, Collections.singletonList(HatchElement.Muffler), true);
+        HologramHatchPolicy.requirements(builder, Collections.singletonMap(HatchElement.Muffler, 1));
         HologramHatchPolicy.andFunction(builder, context -> {
             callbacks.incrementAndGet();
             return (java.util.function.Predicate<ItemStack>) stack -> true;
@@ -374,7 +498,14 @@ final class HologramSemanticSafetyRegression {
         HologramHatchPolicy.built(builder, element);
         SimpleAssert.that(
             HologramHatchPolicy.predicate(element, null, null) == null,
-            "unknown Function invalidates the recoverable declaration");
+            "unknown Function stays unavailable for automatic candidate planning");
+        SimpleAssert.that(
+            HologramHatchPolicy.structuralPredicate(element, null, null) != null
+                && HologramHatchPolicy.declared(element)
+                    .contains(HatchElement.Muffler)
+                && HologramHatchPolicy.requirements(element)
+                    .get(HatchElement.Muffler) == 1,
+            "an additive funding filter cannot erase the same native adder and its declared role");
         HologramHatchPolicy.declare(builder, Collections.singletonList(HatchElement.Muffler), true);
         HologramHatchPolicy.andBiFunction(builder, (context, trigger) -> {
             callbacks.incrementAndGet();
@@ -383,9 +514,16 @@ final class HologramSemanticSafetyRegression {
         HologramHatchPolicy.built(builder, element);
         SimpleAssert.that(
             HologramHatchPolicy.predicate(element, null, null) == null,
-            "unknown BiFunction invalidates the recoverable declaration");
-        SimpleAssert.that(callbacks.get() == 0, "display and planning never evaluate unknown filters");
+            "unknown BiFunction stays unavailable for automatic candidate planning");
+        SimpleAssert.that(
+            HologramHatchPolicy.structuralPredicate(element, null, null) != null,
+            "the trigger-aware filter also leaves explicit native fitting rules intact");
         HologramHatchPolicy.reset(builder);
+        HologramHatchPolicy.built(builder, element);
+        SimpleAssert.that(
+            HologramHatchPolicy.structuralPredicate(element, null, null) == null,
+            "replacing the native adder invalidates structural proof");
+        SimpleAssert.that(callbacks.get() == 0, "display and planning never evaluate unknown filters");
     }
 
     private static void metadataRemainsProvenance() {

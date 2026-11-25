@@ -98,7 +98,9 @@ final class HologramLocalPreviewStagesProbe {
     private final boolean postFocus = construction || Boolean.getBoolean(FLAG + "PostFocus");
     private final NativeParity parity = NativeParity.configured();
     private final boolean fixedNativeEbf = fixedNativeEbfEnabled();
+    private final boolean worldProjectionOnly = HologramControllerWorldProjectionProbe.enabled() && !fixedNativeEbf;
     private HologramEbfFixedControls fixedEbf;
+    private HologramControllerWorldProjectionProbe controllerWorldProjection;
     private volatile NBTTagList ebfServerInventory, ebfInventoryBaseline;
     private volatile int ebfServerSlot = -1;
     private volatile UUID fixedEbfActor;
@@ -175,6 +177,12 @@ final class HologramLocalPreviewStagesProbe {
         yaw = mc.thePlayer.rotationYaw;
         pitch = mc.thePlayer.rotationPitch;
         actorName = mc.thePlayer.getCommandSenderName();
+        if (worldProjectionOnly) require(
+            Boolean.getBoolean("miaotest.host.environment") && parity == null
+                && !construction
+                && timingMode.isEmpty()
+                && !workbenchStages,
+            "World-only projection requires an isolated host and no alternate fixture profile");
         if (fixedNativeEbf) {
             fixedEbfActor = mc.thePlayer.getUniqueID();
             require(
@@ -280,17 +288,19 @@ final class HologramLocalPreviewStagesProbe {
             if (parity == NativeParity.SOLAR || parity == NativeParity.ENTANGLER)
                 ((BaseMetaTileEntity) world.getTileEntity(x, y, z)).disableWorking();
             world.markBlockForUpdate(x, y, z);
-            if (construction) {
+            if (construction || worldProjectionOnly) {
                 require(
                     actor instanceof EntityPlayerMP && !(actor instanceof FakePlayer)
                         && !actor.capabilities.isCreativeMode
-                        && stones(actor) == 0,
-                    "Construction proof requires the real survival actor with no existing stones");
+                        && (construction ? stones(actor) == 0
+                            : actor.getUniqueID()
+                                .equals(UUID.fromString(System.getProperty("miaotest.host.actorUuid")))),
+                    "Owned inventory fixture requires the exact real survival actor");
                 serverActor = (EntityPlayerMP) actor;
                 serverToolBefore = actor.inventory.getStackInSlot(toolSlot);
                 serverStoneBefore = actor.inventory.getStackInSlot(stoneSlot);
                 actor.inventory.setInventorySlotContents(toolSlot, new ItemStack(ProjectorRegistry.projector));
-                actor.inventory.setInventorySlotContents(stoneSlot, new ItemStack(Blocks.stone));
+                if (construction) actor.inventory.setInventorySlotContents(stoneSlot, new ItemStack(Blocks.stone));
                 actor.inventoryContainer.detectAndSendChanges();
             }
             controllerItem = item;
@@ -360,14 +370,31 @@ final class HologramLocalPreviewStagesProbe {
                 + HologramClient.worldInputFocused()
                 + ", outbound="
                 + packets());
+        if (controllerWorldProjection != null) {
+            if (!controllerWorldProjection.step(mc)) return false;
+            zero("fixedEbfWorldProjection");
+            if (!finish(mc)) return false;
+            if (worldProjectionOnly) evidence.put("serverFixtureInventoryRestored", true);
+            evidence.put("passed", true);
+            return true;
+        }
         if (!timingMode.isEmpty()) return timingStep(mc);
         if (stage == 0) {
             if (!fixtureReady || !(mc.theWorld.getTileEntity(x, y, z) instanceof BaseMetaTileEntity base)
                 || !fixtureController(base)
-                || !postFocus && !HologramClient.worldInputFocused()) return false;
-            if (construction
-                && (!ItemNekoHologramProjector.isProjector(mc.thePlayer.getHeldItem()) || stones(mc.thePlayer) != 1))
+                || !postFocus && !worldProjectionOnly && !HologramClient.worldInputFocused()) return false;
+            ItemStack heldTool = mc.thePlayer.getHeldItem();
+            if (construction && (!ItemNekoHologramProjector.isProjector(heldTool) || stones(mc.thePlayer) != 1))
                 return false;
+            if (worldProjectionOnly) {
+                // Let the normal selected server item tick assign the identity and synchronize it before opening.
+                // Opening on a just-delivered unlinked stack races its valid replacement by inventory sync.
+                if (!nativeProjector(heldTool) || HologramClientStockNative.canonicalTool(
+                    heldTool.getTagCompound()
+                        .getString("gtitHologramToolId"))
+                    == null) return false;
+                evidence.put("serverAssignedProjectorIdentitySynchronized", true);
+            }
             if (fixedNativeEbf) {
                 var stock = mc.thePlayer.inventory.writeToNBT(new NBTTagList());
                 if (ebfServerInventory == null || ebfServerSlot != toolSlot || !stock.equals(ebfServerInventory))
@@ -381,7 +408,7 @@ final class HologramLocalPreviewStagesProbe {
                 evidence.put("ownedControllerFixtureSetupCount", 1);
             }
             observeOutbound();
-            if (!construction && !fixedNativeEbf)
+            if (!construction && !fixedNativeEbf && !worldProjectionOnly)
                 mc.thePlayer.inventory.setInventorySlotContents(toolSlot, fixtureTool);
             look(mc, x + .5, y + .5, z + .5);
             require(hitAt(mc, x, y, z), "EntityRenderer crosshair missed the real controller");
@@ -393,9 +420,18 @@ final class HologramLocalPreviewStagesProbe {
             if (workbenchStages) workbench = new HologramWorkbenchStagesWitness(null, controllerClicked);
             controllerClickTick = mc.thePlayer.ticksExisted;
             controllerDrawsAtStart = MiaoVisonLiteRenderer.previewDirectMeshDraws;
-            if (postFocus) HologramScreen.localController(base, mc.thePlayer.dimension, mc.objectMouseOver.sideHit)
+            boolean realClick = !postFocus && (!worldProjectionOnly || HologramClient.worldInputFocused());
+            if (realClick) rightClick(mc);
+            else HologramScreen.localController(base, mc.thePlayer.dimension, mc.objectMouseOver.sideHit)
                 .openFrom(mc.currentScreen);
-            else rightClick(mc);
+            if (worldProjectionOnly) {
+                evidence.put("serverSynchronizedProjector", true);
+                evidence.put("nativeWorldInputExercised", realClick);
+                evidence.put(
+                    "input",
+                    realClick ? "ordinary PlayerControllerMP right-click"
+                        : "production local controller screen, real ray and held tool, OS focus not required");
+            }
             evidence.put("controllerScreenOpenedDuringClick", mc.currentScreen instanceof HologramScreen);
             zero("controllerOpening");
             stage++;
@@ -445,6 +481,10 @@ final class HologramLocalPreviewStagesProbe {
                     "Fixed EBF server stock proof missing");
                 evidence.put("serverStockAndEmptyFootprintUnchangedAfterSetup", true);
                 zero("fixedEbfPreviewVerified");
+                if (HologramControllerWorldProjectionProbe.enabled()) {
+                    controllerWorldProjection = new HologramControllerWorldProjectionProbe(mc, controller, evidence);
+                    return false;
+                }
                 mc.displayGuiScreen(null);
                 zero("fixedEbfPreviewClosed");
                 require(finish(mc), "Fixed EBF owned cleanup did not complete");
@@ -453,6 +493,12 @@ final class HologramLocalPreviewStagesProbe {
             }
             if (parity != null) return parityStep(mc, state);
             if (controllerDrawn != state || !controllerFrameCaptured) return false;
+            if (worldProjectionOnly) {
+                requireLiveController(mc);
+                zero("controllerPresented");
+                controllerWorldProjection = new HologramControllerWorldProjectionProbe(mc, controller, evidence);
+                return false;
+            }
             Map<String, Object> footprint = new LinkedHashMap<>();
             evidence.put("controllerNativeFootprint", footprint);
             requireNativeFootprint(state, footprint);
@@ -1653,7 +1699,7 @@ final class HologramLocalPreviewStagesProbe {
 
     boolean finish(Minecraft mc) throws Exception {
         if (finished) return true;
-        if (construction) {
+        if (construction || worldProjectionOnly) {
             restoreServerInventory = true;
             if (mc.thePlayer != null && (!serverInventoryRestored
                 || !ItemStack.areItemStacksEqual(originalTool, mc.thePlayer.inventory.getStackInSlot(toolSlot))))

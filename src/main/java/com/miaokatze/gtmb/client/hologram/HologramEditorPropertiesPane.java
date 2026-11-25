@@ -75,14 +75,21 @@ final class HologramEditorPropertiesPane {
             HologramState.Cell cell = ui.session.selectedCell();
             if (cell == null || cell.localObservationMissing()) return "";
             int tier = cell.displayInteger(true, "siteHatchTier", -1);
-            return "现场仓室 · " + (tier >= 0 && tier < gregtech.api.enums.GTValues.VN.length
-                ? gregtech.api.enums.GTValues.VN[tier] : "等级未知")
-                + " · 朝" + ui.config.directionName(cell.actualFacing);
-        }).widthRel(1f).height(20).setEnabledIf(w -> {
-            HologramState.Cell cell = ui.session.selectedCell();
-            return ui.host.parent().localControllerStandard() && cell != null && !cell.localObservationMissing()
-                && cell.displayInteger(true, "siteHatchTier", -1) >= 0;
-        }));
+            return "现场仓室 · "
+                + (tier >= 0 && tier < gregtech.api.enums.GTValues.VN.length ? gregtech.api.enums.GTValues.VN[tier]
+                    : "等级未知")
+                + " · 朝"
+                + ui.config.directionName(cell.actualFacing);
+        })
+            .widthRel(1f)
+            .height(20)
+            .setEnabledIf(w -> {
+                HologramState.Cell cell = ui.session.selectedCell();
+                return ui.host.parent()
+                    .localControllerStandard() && cell != null
+                    && !cell.localObservationMissing()
+                    && cell.displayInteger(true, "siteHatchTier", -1) >= 0;
+            }));
         target.child(meOutputCapacity(true));
         target.child(meOutputCapacity(false));
         Flow grade = row();
@@ -92,8 +99,9 @@ final class HologramEditorPropertiesPane {
         grade.child(action(81, () -> {
             NBTTagCompound cap = ui.config.primaryCapability();
             return cap == null ? "无独立等级" : ui.config.optionLabel(cap);
-        }, () -> ui.session.configurationEditable() && ui.config.primaryCapability() != null, () -> "从此能力的真实选项中选择，或填写原始正整数。")
-            .expanded());
+        },
+            () -> ui.session.configurationEditable() && ui.config.primaryCapability() != null,
+            () -> "从此能力的真实选项中选择，或填写原始正整数。").expanded());
         grade.child(action(82, () -> "+", () -> canStep(1), () -> "连续提高本结构声明的等级。").width(24));
         target.child(grade);
         target.child(
@@ -103,20 +111,16 @@ final class HologramEditorPropertiesPane {
                 () -> ui.session.selectedNativeEditable(),
                 () -> ui.config.candidateNote()));
         Flow facing = row();
-        facing.setEnabledIf(
-            w -> ui.session.cellTag()
-                .getIntArray("hatchFacings").length > 0);
+        facing.setEnabledIf(w -> ui.session.hatchFacings().length > 0);
         sizingSections.add(facing);
         facing.child(action(99, () -> {
-            int[] legal = ui.session.cellTag()
-                .getIntArray("hatchFacings");
+            int[] legal = ui.session.hatchFacings();
             return legal.length == 0 ? "仓室朝向不可用"
                 : "仓室朝向：" + ui.config.directionName(
                     ui.session.cellTag()
                         .getInteger("hatchFacing"));
         },
-            () -> ui.session.selectedNativeEditable() && ui.session.cellTag()
-                .getIntArray("hatchFacings").length > 0,
+            () -> ui.session.selectedNativeEditable() && ui.session.hatchFacings().length > 0,
             () -> "只轮换当前设备与声明共同允许的朝向；仅修改当前格。").expanded());
         facing.child(
             action(
@@ -185,8 +189,13 @@ final class HologramEditorPropertiesPane {
                     .caption()));
         sizingSections.add(observed);
         source.child(observed);
-        source.child(HologramEditorNativeTheme.label(() -> HologramScreen.localSiteCaption(ui.session.state().data))
-            .widthRel(1f).height(24).setEnabledIf(w -> ui.host.parent().localControllerStandard()));
+        source.child(
+            HologramEditorNativeTheme.label(() -> HologramScreen.localSiteCaption(ui.session.state().data))
+                .widthRel(1f)
+                .height(24)
+                .setEnabledIf(
+                    w -> ui.host.parent()
+                        .localControllerStandard()));
         source.child(
             label(
                 () -> ui.session.selectedCell() != null && ui.session.selectedCell().sourceMissing
@@ -202,9 +211,11 @@ final class HologramEditorPropertiesPane {
                 action(
                     70 + i,
                     () -> (ui.session.state().data.getInteger("mode") == mode ? "✓ " : "") + modeNames[mode],
-                    () -> ui.session.configurationEditable() && (mode != 2 || !ui.session.state().data.getBoolean("virtual")),
+                    () -> ui.session.configurationEditable()
+                        && (mode != 2 || !ui.session.state().data.getBoolean("virtual")),
                     () -> mode == 2 && ui.session.state().data.getBoolean("virtual") ? "虚拟预设不支持拆除；请先建立实体控制器。"
-                        : ui.session.configurationEditable() ? "只修改规划模式；施工须另行核对材料。" : ui.session.editingReason()).expanded());
+                        : ui.session.configurationEditable() ? "只修改规划模式；施工须另行核对材料。" : ui.session.editingReason())
+                            .expanded());
         }
         source.child(modes);
         Flow structure = section();
@@ -244,7 +255,8 @@ final class HologramEditorPropertiesPane {
         source.child(
             action(
                 60,
-                () -> ui.host.parent().localControllerStandard() ? "现场 / 规划信道" : "结构等级 / 信道",
+                () -> ui.host.parent()
+                    .localControllerStandard() ? "现场 / 规划信道" : "结构等级 / 信道",
                 () -> !ui.session.state().data.getBoolean("virtual")
                     || !ui.session.state().data.getString("activeStructure")
                         .isEmpty(),
@@ -291,7 +303,8 @@ final class HologramEditorPropertiesPane {
         prepare();
         ListWidget<IWidget, ?> list = list("materials");
         Flow materials = section();
-        materials.child(action(78, () -> "材料来源", () -> ui.session.configurationEditable(), () -> "主背包、容器、ME 终端开关与优先次序。"));
+        materials
+            .child(action(78, () -> "材料来源", () -> ui.session.configurationEditable(), () -> "主背包、容器、ME 终端开关与优先次序。"));
         materials.child(action(94, () -> "仓室预设", this::canHatchPreset, this::hatchPresetReason));
         materials.child(
             action(
@@ -360,11 +373,19 @@ final class HologramEditorPropertiesPane {
 
     private String constructionActionLabel() {
         NBTTagCompound state = ui.session.state().data;
-        if(ui.session.state().nativeViewport!=null)return "查看蓝图材料";
+        if (ui.session.state().nativeViewport != null) return "查看蓝图材料";
+        if (finishedWholeNativePlacement()) return HologramUiText.projectorOr("stock.view_materials", "查看材料");
         return ui.review.placementReviewActive() ? "继续放置预检"
             : state.getBoolean("virtual") && !state.getBoolean("virtualPlacement") ? "从蓝图库放置"
                 : state.getBoolean("virtual") && !state.getBoolean("virtualLocked") ? "世界右键确定位置"
                     : new String[] { "确认构建", "确认替换", "确认拆除" }[Math.floorMod(state.getInteger("mode"), 3)];
+    }
+
+    private boolean finishedWholeNativePlacement() {
+        if (!ui.session.state().data.getBoolean("nativeBuildSatisfied")) return false;
+        HologramScreen root = ui.host == null ? null : ui.host.parent();
+        return root != null && HologramPlacementConfirmation
+            .finishedWholeNativePlacement(ui.session.state(), ui.config.configuration(), root.hasLocalNativeChoices());
     }
 
     private boolean canReviewConstruction() {
@@ -380,8 +401,10 @@ final class HologramEditorPropertiesPane {
     }
 
     private String constructionReason() {
-        if(ui.session.state().nativeViewport!=null)return "按当前蓝图版本查看材料，不提交施工。";
-        if (ui.review.nativeMaterialInspectionReady()) return "可先查看原生结构材料；仍需完成核验再确认施工。";
+        if (ui.session.state().nativeViewport != null) return "按当前蓝图版本查看材料，不提交施工。";
+        if (finishedWholeNativePlacement()) return "";
+        if (ui.review.nativeMaterialInspectionReady())
+            return ui.session.nativeConstructionEditable(ui.config.configuration()) ? "" : "可先查看材料。";
         NBTTagCompound state = ui.session.state().data;
         if (!ui.session.editable()) return ui.session.editingReason();
         if (state.getBoolean("virtual") && !state.getBoolean("virtualPlacement")) return "从蓝图库选择蓝图进入世界放置。";
@@ -390,7 +413,7 @@ final class HologramEditorPropertiesPane {
         String localBlocker = HologramPlacementConfirmation.localStructureReviewBlocker(ui.session.state());
         if (!localBlocker.isEmpty()) return localBlocker;
         if (!state.getBoolean("supported") && state.getInteger("mode") != 0) return "当前结构不支持此施工模式。";
-        return "核对真实材料与改动；在原材料确认窗口最终确认后才施工。";
+        return "";
     }
 
     private boolean canHatchPreset() {
@@ -404,7 +427,7 @@ final class HologramEditorPropertiesPane {
         if (ui.session.state().data.getBoolean("virtual")) return "仓室预设只用于完整实体结构；虚拟蓝图请逐格选择设备或编辑来源声明。";
         if (ui.session.state().data.getInteger("mode") == 2) return "拆除模式不能应用仓室预设。";
         if (!ui.session.state().data.getBoolean("supported")) return "结构尚未完整采集，请完成采集后使用仓室预设。";
-        return "基础声明配额或本机精确搭配；无需选中格，应用仍按当前结构匹配设备、等级与数量。";
+        return "";
     }
 
     private void prepare() {

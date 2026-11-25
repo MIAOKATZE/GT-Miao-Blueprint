@@ -57,6 +57,7 @@ public final class HologramClientP0Regression {
             try {
                 singleton.set(null, minecraft);
                 localControllerHeader();
+                firstHeldToolIdentity();
                 localControllerSignals();
                 actualCaptureLifecycle();
                 nonblockingReceive(unsafe, minecraft);
@@ -68,6 +69,29 @@ public final class HologramClientP0Regression {
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("client P0 production lifecycle", failure);
         }
+    }
+
+    private static void firstHeldToolIdentity() {
+        ItemStack original = new ItemStack(Items.stick);
+        ItemStack synced = original.copy();
+        NBTTagCompound tag = new NBTTagCompound();
+        tag.setString("gtitHologramToolId", "6bd50ebc-8119-4ff9-9f00-39567ea77212");
+        synced.setTagCompound(tag);
+        SimpleAssert.that(
+            HologramScreen.sameToolWithFirstIdentity(original, synced),
+            "normal server assignment of the first held tool ID must not dismiss the native structure");
+        synced.getTagCompound()
+            .setBoolean("changed", true);
+        SimpleAssert.that(
+            !HologramScreen.sameToolWithFirstIdentity(original, synced),
+            "a different stored target or configuration must not be adopted as the same tool");
+        synced.getTagCompound()
+            .removeTag("changed");
+        synced.getTagCompound()
+            .setString("gtitHologramToolId", "not a canonical tool ID");
+        SimpleAssert.that(
+            !HologramScreen.sameToolWithFirstIdentity(original, synced),
+            "unrecognized identities cannot become construction authority");
     }
 
     private static void localControllerSignals() throws ReflectiveOperationException {
@@ -122,40 +146,37 @@ public final class HologramClientP0Regression {
         source.zCoord = -8;
         HologramLocalControllerCapture task = new HologramLocalControllerCapture(source, 4, 2);
         NBTTagCompound opening = task.opening();
-        SimpleAssert.that(task.readyCapabilities() == null, "an unopened native declaration cannot claim resolved channels");
+        SimpleAssert
+            .that(task.readyCapabilities() == null, "an unopened native declaration cannot claim resolved channels");
         SimpleAssert.that(opening.getBoolean("localStandardController"), "native workbench recognizes local source");
         SimpleAssert.that(opening.getBoolean("capturePending"), "local geometry generation temporarily gates edits");
         SimpleAssert.eq("projection", opening.getString("editorWorkspace"), "preserve original structure workspace");
         SimpleAssert.eq(-8, opening.getInteger("z"), "display follows the source controller anchor");
-        SimpleAssert.eq(gregtech.api.enums.GTValues.VN.length - 1, opening.getInteger("hatchTierMax"),
+        SimpleAssert.eq(
+            gregtech.api.enums.GTValues.VN.length - 1,
+            opening.getInteger("hatchTierMax"),
             "the local preset selector displays the real GT voltage range without a server query");
-        SimpleAssert.that(!opening.getBoolean("presetAvailable"),
+        SimpleAssert.that(
+            !opening.getBoolean("presetAvailable"),
             "the tier catalogue alone does not prove authoritative declared quotas");
         NBTTagCompound scope = new NBTTagCompound();
-        SimpleAssert.that(HologramScreen.ordinaryNativeSubmit(opening, scope, false),
+        SimpleAssert.that(
+            HologramScreen.ordinaryNativeSubmit(opening, scope, false),
             "full ordinary mode can proceed to the supported short request only");
         scope.setIntArray("selectedIndices", new int[] { 2, 4 });
-        SimpleAssert.that(!HologramScreen.ordinaryNativeSubmit(opening, scope, false),
+        SimpleAssert.that(
+            !HologramScreen.ordinaryNativeSubmit(opening, scope, false),
             "an exact selected scope cannot accidentally become a whole native operation");
-        NBTTagCompound live = new NBTTagCompound();
-        live.setBoolean("target", true);
-        live.setBoolean("supported", true);
-        live.setBoolean("noHatches", false);
-        live.setInteger("mode", 0);
-        live.setInteger("main", 1);
-        live.setInteger("facing", 0);
-        live.setTag("channels", new NBTTagCompound());
-        NBTTagCompound preset = (NBTTagCompound) live.copy();
-        preset.setBoolean("applyHatchPreset", true);
-        preset.setInteger("hatchTier", 3);
-        preset.setIntArray("selectedIndices", new int[] { 7 });
-        NBTTagCompound approved = HologramClient.controllerHatchPresetOptions(preset, live);
-        SimpleAssert.that(approved != null && approved.getBoolean("applyHatchPreset")
-            && approved.getInteger("hatchTier") == 3 && approved.getIntArray("selectedIndices").length == 0,
-            "explicit application forwards exact tier at whole-structure scope without stale local indices");
-        live.getCompoundTag("channels").setInteger("coil", 2);
-        SimpleAssert.that(HologramClient.controllerHatchPresetOptions(preset, live) == null,
-            "authority must not apply a local preset to a different channel configuration");
+        NBTTagCompound preset = (NBTTagCompound) opening.copy();
+        preset.setBoolean("presetActive", true);
+        scope.removeTag("selectedIndices");
+        SimpleAssert.that(
+            !HologramScreen.ordinaryNativeSubmit(preset, scope, false),
+            "a preset without native proof cannot be submitted");
+        preset.setBoolean("nativePresetExact", true);
+        SimpleAssert.that(
+            HologramScreen.ordinaryNativeSubmit(preset, scope, true),
+            "the native preset uses the supported short request");
         for (String serverField : new String[] { "controllerOpenId", "controllerOpening", "snapshotPending",
             "planRevision", "placementReviewNonce", "toolId" })
             SimpleAssert.that(!opening.hasKey(serverField), "local preview cannot invent " + serverField);

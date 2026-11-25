@@ -52,6 +52,12 @@ public final class HologramTutorialIssue100Probe {
     private volatile boolean exactWorldOwned;
     private volatile String serverFailure;
     private volatile HologramLocalPreviewStagesProbe localPreviewStages;
+    private static final boolean TURBINE = Boolean
+        .getBoolean(com.miaokatze.gtmb.hologram.HologramTurbineStockWorldProbe.FLAG);
+    private volatile com.miaokatze.gtmb.hologram.HologramTurbineStockWorldProbe turbine;
+    private volatile HologramOwnedLargeBlueprintProbe largeBlueprint;
+    private HologramTurbineBasicClientProbe turbineBasic;
+    private HologramTurbineWireWitness turbineWire;
     private final Map<String, Object> preparedStockReceipt = new LinkedHashMap<>();
     private volatile HologramEbfPreparedStock preparedStock;
     private Path save;
@@ -96,6 +102,15 @@ public final class HologramTutorialIssue100Probe {
         require(
             !HologramLocalPreviewStagesProbe.fixedNativeEbfEnabled() || HologramLocalPreviewStagesProbe.enabled(),
             "Fixed native EBF requires the existing lease-owned local-preview route");
+        if (TURBINE) require(
+            Boolean.getBoolean("miaotest.host.environment") && !HologramLocalPreviewStagesProbe.enabled()
+                && !Boolean.getBoolean(HologramEbfPreparedStock.FLAG),
+            "Turbine stock run requires its own fresh host-owned world and no other preview/fixture profile");
+        if (HologramOwnedLargeBlueprintProbe.ENABLED) require(
+            Boolean.getBoolean("miaotest.host.environment") && !TURBINE
+                && !HologramLocalPreviewStagesProbe.enabled()
+                && !Boolean.getBoolean(HologramEbfPreparedStock.FLAG),
+            "Large blueprint requires an exclusive fresh host-owned world");
         HologramTutorialIssue100Probe probe = new HologramTutorialIssue100Probe();
         FMLCommonHandler.instance()
             .bus()
@@ -106,9 +121,26 @@ public final class HologramTutorialIssue100Probe {
 
     @SubscribeEvent
     public void serverTick(TickEvent.ServerTickEvent event) {
-        if (complete || stage == 0 || event.phase != TickEvent.Phase.END) return;
+        if (complete || stage == 0
+            || (TURBINE || HologramOwnedLargeBlueprintProbe.ENABLED) && (stage >= 6 || serverFailure != null)
+            || event.phase != TickEvent.Phase.END) return;
         if (exactWorldOwned) {
             try {
+                if (HologramOwnedLargeBlueprintProbe.ENABLED) {
+                    var probe = largeBlueprint;
+                    if (probe == null) largeBlueprint = probe = new HologramOwnedLargeBlueprintProbe(
+                        save,
+                        UUID.fromString(System.getProperty("miaotest.host.actorUuid")));
+                    probe.server(server.worldServerForDimension(0));
+                    return;
+                }
+                if (TURBINE) {
+                    var probe = turbine;
+                    if (probe == null) turbine = probe = new com.miaokatze.gtmb.hologram.HologramTurbineStockWorldProbe(
+                        UUID.fromString(System.getProperty("miaotest.host.actorUuid")));
+                    probe.step(server.worldServerForDimension(0));
+                    return;
+                }
                 if (preparedStock != null && !preparedStock.verifyServer(server.worldServerForDimension(0))) return;
                 HologramLocalPreviewStagesProbe local = localPreviewStages;
                 if (local != null) local.setup(server);
@@ -206,8 +238,14 @@ public final class HologramTutorialIssue100Probe {
                 receipt.put("ownedSave", save.toString());
                 receipt.put(
                     "actorMode",
-                    preparedStock == null ? "SURVIVAL; no OP or inventory fixture changes"
-                        : "SURVIVAL; no OP; explicit pre-login vanilla playerdata fixture, no live inventory injection");
+                    HologramOwnedLargeBlueprintProbe.ENABLED ? "Owned creative preview and placement fixture"
+                        : TURBINE
+                            ? "Owned turbine fixture: creative initial construction; survival repair; fixture stock"
+                            : HologramControllerWorldProjectionProbe.enabled()
+                                && !HologramLocalPreviewStagesProbe.fixedNativeEbfEnabled()
+                                    ? "Owned survival projection fixture; one server-synced projector, restored on exit"
+                                    : preparedStock == null ? "SURVIVAL; no OP or inventory fixture changes"
+                                        : "SURVIVAL; no OP; explicit pre-login vanilla playerdata fixture, no live inventory injection");
                 transition(1);
                 launchedWorld = true;
                 mc.launchIntegratedServer(
@@ -218,6 +256,27 @@ public final class HologramTutorialIssue100Probe {
             } else if (stage == 1) {
                 if (!exactWorldOwned || mc.theWorld == null || mc.thePlayer == null || mc.thePlayer.ticksExisted < 60)
                     return;
+                if (HologramOwnedLargeBlueprintProbe.ENABLED) {
+                    var probe = largeBlueprint;
+                    if (probe != null && probe.client(mc, receipt)) transition(6);
+                    return;
+                }
+                if (TURBINE) {
+                    var probe = turbine;
+                    if (probe != null) {
+                        if (turbineWire == null) turbineWire = new HologramTurbineWireWitness(mc, probe);
+                        turbineWire.step(mc, probe);
+                    }
+                    if (probe != null && com.miaokatze.gtmb.hologram.HologramTurbineStockWorldProbe.BASIC) {
+                        if (turbineBasic == null) turbineBasic = new HologramTurbineBasicClientProbe();
+                        turbineBasic.step(mc, probe);
+                    }
+                    if (probe != null && probe.done()) {
+                        receipt.put("turbineStockWorld", probe.receipt());
+                        transition(6);
+                    }
+                    return;
+                }
                 require(!mc.thePlayer.capabilities.isCreativeMode, "Business actor must remain survival");
                 if (HologramLocalPreviewStagesProbe.enabled()) {
                     if (localPreviewStages == null) {
@@ -226,9 +285,10 @@ public final class HologramTutorialIssue100Probe {
                         localPreviewStages = new HologramLocalPreviewStagesProbe(mc, output, receipt);
                     }
                     if (!localPreviewStages.step(mc)) return;
-                    if (HologramLocalPreviewStagesProbe.fixedNativeEbfEnabled()) {
+                    if (HologramLocalPreviewStagesProbe.fixedNativeEbfEnabled()
+                        || HologramControllerWorldProjectionProbe.enabled()) {
                         transition(6);
-                        return; // separate preview-only EBF terminal; no Issue100 playback runs afterward
+                        return; // Preview-only profiles end without the Issue100 tutorial playback.
                     }
                 }
                 inventoryBefore = inventory(mc);
@@ -452,6 +512,9 @@ public final class HologramTutorialIssue100Probe {
     private void closeWorld(Minecraft mc) throws Exception {
         if (!unloadRequested) {
             if (localPreviewStages != null && !localPreviewStages.finish(mc)) return;
+            if (largeBlueprint != null) largeBlueprint.clientCleanup(mc);
+            if (turbineBasic != null) turbineBasic.close(mc);
+            if (turbineWire != null) turbineWire.close();
             if (screen != null) {
                 receipt.put(
                     "terminalTutorialDiagnostic",
@@ -520,7 +583,25 @@ public final class HologramTutorialIssue100Probe {
             "artifact",
             ArtifactIdentity.capture(HologramTutorialIssue100Probe.class)
                 .asMap());
-        if (HologramLocalPreviewStagesProbe.fixedNativeEbfEnabled()) {
+        if (HologramOwnedLargeBlueprintProbe.ENABLED) {
+            receipt.put("schema", "gtmb-owned-native-blueprint-construction-v1");
+            receipt.put(
+                "businessTransport",
+                "Production integrated construction (no upload by design); dispatched via normal material confirmation callback");
+            Files.write(
+                output.resolve("gtmb-large-blueprint-world.json"),
+                json(receipt),
+                java.nio.file.StandardOpenOption.CREATE_NEW);
+        } else if (TURBINE) {
+            receipt.put("schema", "gtmb-gtsr-native-turbine-stock-world-v1");
+            receipt.put(
+                "businessTransport",
+                "Production integrated Action PROBE/BEGIN and reply transport on exact connected actor; real Lifecycle budget; no physical button click or external TCP");
+            Files.write(
+                output.resolve("gtmb-turbine-stock-world.json"),
+                json(receipt),
+                java.nio.file.StandardOpenOption.CREATE_NEW);
+        } else if (HologramLocalPreviewStagesProbe.fixedNativeEbfEnabled()) {
             boolean coil = HologramEbfFixedControls.coilOnlyEnabled();
             receipt.put("schema", coil ? HologramEbfFixedControls.COIL_SCHEMA : "gtmb-stock-ebf-native-controls-v1");
             Files.write(

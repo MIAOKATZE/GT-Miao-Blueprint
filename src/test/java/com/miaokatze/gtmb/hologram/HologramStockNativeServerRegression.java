@@ -6,8 +6,8 @@ package com.miaokatze.gtmb.hologram;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Consumer;
 import java.util.UUID;
+import java.util.function.Consumer;
 
 import net.minecraft.block.Block;
 import net.minecraft.entity.player.EntityPlayerMP;
@@ -58,18 +58,31 @@ final class HologramStockNativeServerRegression {
         channel.set(null, wire);
         try {
             int[] next = new int[3];
-            former.machine.getExtendedFacing().getWorldOffset(new int[] { 0, -1, 0 }, next);
+            former.machine.getExtendedFacing()
+                .getWorldOffset(new int[] { 0, -1, 0 }, next);
             int x = first[0], y = 64 + first[1], z = first[2];
             int x2 = next[0], y2 = 64 + next[1], z2 = next[2];
             var stock = player.inventory.mainInventory;
             stock[1] = new ItemStack(item, 24, 0);
-            UUID realTool = UUID.fromString(stock[former.slot].getTagCompound().getString(HologramSessionKeys.TOOL_ID));
+            UUID realTool = UUID.fromString(
+                stock[former.slot].getTagCompound()
+                    .getString(HologramSessionKeys.TOOL_ID));
+            HologramNativePresetStockRegression.run(unsafe, world, player, former, context, realTool);
             long generation = endpoint.constructionScope.generation;
-            var rememberedProbe = verifyWarmAdmission(handler, context, wire, player, former, hatch, world,
-                realTool, generation);
+            var rememberedProbe = verifyWarmAdmission(
+                handler,
+                context,
+                wire,
+                player,
+                former,
+                hatch,
+                world,
+                realTool,
+                generation);
             world.setBlock(x, y, z, Blocks.air, 0, 3);
             world.setBlock(x2, y2, z2, Blocks.air, 0, 3);
-            int writes = world.writes().size();
+            int writes = world.writes()
+                .size();
             var stopped = new Key(UUID.randomUUID(), 30, generation);
             var wrongEpoch = new Key(UUID.randomUUID(), 31, generation + 1);
             var wrongTool = new Key(UUID.randomUUID(), 32, generation);
@@ -81,9 +94,12 @@ final class HologramStockNativeServerRegression {
             send(handler, context, confirm(stopped, realTool, player.dimension, former, hatch));
             send(handler, context, HologramStockNativeWire.control(stopped, Command.STOP));
             tick();
-            SimpleAssert.that(wire.has(stopped, Phase.STOPPED, 0) && !wire.has(stopped, Phase.ACCEPTED, 0)
-                && world.writes().size() == writes && stock[1].stackSize == 24
-                && HologramWorkspace.find(endpoint.actor) == null,
+            SimpleAssert.that(
+                wire.has(stopped, Phase.STOPPED, 0) && !wire.has(stopped, Phase.ACCEPTED, 0)
+                    && world.writes()
+                        .size() == writes
+                    && stock[1].stackSize == 24
+                    && HologramWorkspace.find(endpoint.actor) == null,
                 "queued STOP tombstones known confirmation before any temporary session, write or debit");
             send(handler, context, confirm(stopped, realTool, player.dimension, former, hatch));
             tick();
@@ -94,8 +110,12 @@ final class HologramStockNativeServerRegression {
             incompatible.setTag("cells", new NBTTagList());
             send(handler, context, incompatible);
             tick();
-            SimpleAssert.that(wire.has(wrongTool, Phase.REFUSED, 0) && wire.none(wrongEpoch) && wire.none(unexpected)
-                && world.writes().size() == writes && stock[1].stackSize == 24,
+            SimpleAssert.that(
+                wire.has(wrongTool, Phase.REFUSED, 0) && wire.none(wrongEpoch)
+                    && wire.none(unexpected)
+                    && world.writes()
+                        .size() == writes
+                    && stock[1].stackSize == 24,
                 "old scope, forged tool and nested/mixed legacy action cannot enter any placement route");
 
             var eventField = MinecraftForge.class.getDeclaredField("EVENT_BUS");
@@ -105,15 +125,21 @@ final class HologramStockNativeServerRegression {
             int[] notified = { 0 };
             Block casing = GregTechAPI.sBlockCasings12;
             unsafe.putObjectVolatile(busBase, busOffset, new EventBus() {
+
                 @Override
                 public boolean post(Event event) {
-                    if (event instanceof BlockEvent.PlaceEvent place && place.world == world && place.player == player
-                        && place.x == x && place.y == y && place.z == z && world.getBlock(x, y, z) == casing
+                    if (event instanceof BlockEvent.PlaceEvent place && place.world == world
+                        && place.player == player
+                        && place.x == x
+                        && place.y == y
+                        && place.z == z
+                        && world.getBlock(x, y, z) == casing
                         && notified[0] == 0) {
                         notified[0]++;
                         SimpleAssert.eq(24, stock[1].stackSize, "real callback sees no speculative debit");
                         var scratch = HologramWorkspace.find(endpoint.actor);
-                        SimpleAssert.that(scratch != null && scratch.stockNativePrivate && scratch.capture != null,
+                        SimpleAssert.that(
+                            scratch != null && scratch.stockNativePrivate && scratch.capture != null,
                             "the actual transaction scratch is private, even while receiving a Forge callback");
                         HologramService.openSettings(player);
                         HologramService.openAir(player);
@@ -127,8 +153,9 @@ final class HologramStockNativeServerRegression {
                         var area = new NBTTagCompound();
                         area.setString("action", "beginAreaSelection");
                         HologramNetwork.dispatchWorkspaceAction(player, area);
-                        SimpleAssert.that(HologramWorkspace.find(endpoint.actor) == scratch && !scratch.open
-                            && !HologramWorkspace.AREAS.containsKey(endpoint.actor),
+                        SimpleAssert.that(
+                            HologramWorkspace.find(endpoint.actor) == scratch && !scratch.open
+                                && !HologramWorkspace.AREAS.containsKey(endpoint.actor),
                             "real generic Area/State routing cannot borrow, mutate or publish the private stock seat");
                         saturateQueries(handler, context, generation);
                         send(handler, context, HologramStockNativeWire.control(real, Command.STOP));
@@ -142,30 +169,61 @@ final class HologramStockNativeServerRegression {
             } finally {
                 unsafe.putObjectVolatile(busBase, busOffset, previous);
             }
-            SimpleAssert.that(notified[0] == 1 && world.writes().size() == writes + 1 && stock[1].stackSize == 23
-                && world.getBlock(x, y, z) == casing && world.getBlock(x2, y2, z2) == Blocks.air
-                && wire.has(real, Phase.ACCEPTED, 0) && wire.has(real, Phase.ACTIVE, 1),
+            SimpleAssert.that(
+                notified[0] == 1 && world.writes()
+                    .size() == writes + 1
+                    && stock[1].stackSize == 23
+                    && world.getBlock(x, y, z) == casing
+                    && world.getBlock(x2, y2, z2) == Blocks.air
+                    && wire.has(real, Phase.ACCEPTED, 0)
+                    && wire.has(real, Phase.ACTIVE, 1),
                 "the issued real Forge permit settles atomically; callback STOP beats saturated STATUS and blocks next cell");
             tick();
             send(handler, context, HologramStockNativeWire.control(real, Command.STATUS));
             tick();
-            SimpleAssert.that(wire.has(real, Phase.STOPPED, 1) && world.writes().size() == writes + 1
-                && HologramWorkspace.find(endpoint.actor) == null, "owner status reports exact persisted one-cell prefix");
+            SimpleAssert.that(
+                wire.has(real, Phase.STOPPED, 1) && world.writes()
+                    .size() == writes + 1 && HologramWorkspace.find(endpoint.actor) == null,
+                "owner status reports exact persisted one-cell prefix");
 
             stock[1] = new ItemStack(item, 24, 0);
             send(handler, context, confirm(finishing, realTool, player.dimension, former, hatch));
             for (int i = 0; i < 4 && !wire.has(finishing, Phase.COMPLETE, 1); i++) tick();
-            SimpleAssert.that(wire.has(finishing, Phase.COMPLETE, 1)
-                && world.getBlock(x2, y2, z2) == casing && stock[1].stackSize == 23
-                && !HologramConstructionJournal.pending(player) && HologramWorkspace.find(endpoint.actor) == null,
+            SimpleAssert.that(
+                wire.has(finishing, Phase.COMPLETE, 1) && world.getBlock(x2, y2, z2) == casing
+                    && stock[1].stackSize == 23
+                    && !HologramConstructionJournal.pending(player)
+                    && HologramWorkspace.find(endpoint.actor) == null,
                 "new explicit fully-funded short confirmation reaches actual second write and exact debit without old quote");
 
-            verifyInventoryAndPolicy(handler, context, wire, player, former, hatch, world, x, y, z, item,
-                generation, realTool);
+            verifyInventoryAndPolicy(
+                handler,
+                context,
+                wire,
+                player,
+                former,
+                hatch,
+                world,
+                x,
+                y,
+                z,
+                item,
+                generation,
+                realTool);
             verifyColdProof(handler, context, wire, player, former, hatch, world, item, generation, realTool);
             verifyExpiredReceipts(handler, context, wire, endpoint, former, hatch, finishing, realTool);
-            verifySameChannelLifetime(unsafe, handler, context, wire, player, former, hatch, world, endpoint,
-                rememberedProbe, realTool);
+            verifySameChannelLifetime(
+                unsafe,
+                handler,
+                context,
+                wire,
+                player,
+                former,
+                hatch,
+                world,
+                endpoint,
+                rememberedProbe,
+                realTool);
             com.miaokatze.gtmb.client.hologram.HologramStockNativeClientRegression.run();
         } finally {
             channel.set(null, oldChannel);
@@ -174,23 +232,34 @@ final class HologramStockNativeServerRegression {
 
     private static Confirmation verifyWarmAdmission(HologramNetwork.ServerHandler handler, MessageContext context,
         RecordingChannel wire, EntityPlayerMP player, HologramSession former,
-        HologramStockNativeConstruction.HatchChoice hatch, HologramPlacementFixtureWorld world,
-        UUID tool, long generation) throws ReflectiveOperationException {
-        int writes = world.writes().size();
+        HologramStockNativeConstruction.HatchChoice hatch, HologramPlacementFixtureWorld world, UUID tool,
+        long generation) throws ReflectiveOperationException {
+        int writes = world.writes()
+            .size();
         var early = declaration(new Key(UUID.randomUUID(), 21, generation), tool, player.dimension, former, hatch);
         send(handler, context, HologramStockNativeWire.confirm(early));
         tick();
-        SimpleAssert.that(wire.has(early.key(), Phase.NEEDS_PROOF, 0) && world.writes().size() == writes,
+        SimpleAssert.that(
+            wire.has(early.key(), Phase.NEEDS_PROOF, 0) && world.writes()
+                .size() == writes,
             "the shared current generation without native proof cannot warm or start native");
 
         Key refusedNonce = new Key(UUID.randomUUID(), 22, 0);
         var refused = declaration(refusedNonce, UUID.randomUUID(), player.dimension, former, hatch);
         send(handler, context, HologramStockNativeWire.probe(refused));
         tick();
-        SimpleAssert.that(wire.has(refused.forGeneration(generation).key(), Phase.REFUSED, 0),
+        SimpleAssert.that(
+            wire.has(
+                refused.forGeneration(generation)
+                    .key(),
+                Phase.REFUSED,
+                0),
             "authenticated probe with a different tool is refused");
         int beforeRetry = wire.replies.size();
-        send(handler, context, HologramStockNativeWire.probe(declaration(refusedNonce, tool, player.dimension, former, hatch)));
+        send(
+            handler,
+            context,
+            HologramStockNativeWire.probe(declaration(refusedNonce, tool, player.dimension, former, hatch)));
         tick();
         SimpleAssert.eq(beforeRetry, wire.replies.size(), "refused nonce cannot remint after the tool matches");
 
@@ -198,10 +267,13 @@ final class HologramStockNativeServerRegression {
         send(handler, context, HologramStockNativeWire.probe(onlyProbe));
         tick();
         var onlyReady = onlyProbe.forGeneration(generation);
-        SimpleAssert.that(wire.has(onlyReady.key(), Phase.CAPABLE, 0), "native probe reports exactly its own capability");
+        SimpleAssert
+            .that(wire.has(onlyReady.key(), Phase.CAPABLE, 0), "native probe reports exactly its own capability");
         send(handler, context, HologramStockNativeWire.confirm(onlyReady));
         tick();
-        SimpleAssert.that(wire.has(onlyReady.key(), Phase.UNKNOWN, -1) && world.writes().size() == writes,
+        SimpleAssert.that(
+            wire.has(onlyReady.key(), Phase.UNKNOWN, -1) && world.writes()
+                .size() == writes,
             "CAPABLE alone cannot convert into a plain BEGIN with the same nonce");
 
         var lost = declaration(new Key(UUID.randomUUID(), 24, 0), tool, player.dimension, former, hatch);
@@ -212,13 +284,23 @@ final class HologramStockNativeServerRegression {
         tick();
         send(handler, context, HologramStockNativeWire.confirmAfterProbe(lost.forGeneration(generation)));
         tick();
-        SimpleAssert.that(wire.has(lost.forGeneration(generation).key(), Phase.UNKNOWN, -1)
-            && world.writes().size() == writes, "superseded lost proof cannot reclaim its earlier channel nonce");
+        SimpleAssert.that(
+            wire.has(
+                lost.forGeneration(generation)
+                    .key(),
+                Phase.UNKNOWN,
+                -1)
+                && world.writes()
+                    .size() == writes,
+            "superseded lost proof cannot reclaim its earlier channel nonce");
         var matched = allowed.forGeneration(generation);
         send(handler, context, HologramStockNativeWire.confirmAfterProbe(matched));
         for (int i = 0; i < 4 && !wire.has(matched.key(), Phase.COMPLETE, 0); i++) tick();
-        SimpleAssert.that(wire.has(matched.key(), Phase.ACCEPTED, 0) && wire.has(matched.key(), Phase.COMPLETE, 0)
-            && world.writes().size() == writes, "genuine exact first owned action establishes warm ready on matched shell");
+        SimpleAssert.that(
+            wire.has(matched.key(), Phase.ACCEPTED, 0) && wire.has(matched.key(), Phase.COMPLETE, 0)
+                && world.writes()
+                    .size() == writes,
+            "genuine exact first owned action establishes warm ready on matched shell");
 
         var expiry = declaration(new Key(UUID.randomUUID(), 26, 0), tool, player.dimension, former, hatch);
         send(handler, context, HologramStockNativeWire.probe(expiry));
@@ -231,11 +313,19 @@ final class HologramStockNativeServerRegression {
         int replies = wire.replies.size();
         send(handler, context, HologramStockNativeWire.probe(expiry));
         tick();
-        SimpleAssert.eq(replies, wire.replies.size(), "real expiry evicts proof body but old nonce still cannot remint");
+        SimpleAssert
+            .eq(replies, wire.replies.size(), "real expiry evicts proof body but old nonce still cannot remint");
         send(handler, context, HologramStockNativeWire.confirmAfterProbe(expiry.forGeneration(generation)));
         tick();
-        SimpleAssert.that(wire.has(expiry.forGeneration(generation).key(), Phase.REFUSED, 0)
-            && world.writes().size() == writes, "expired body cannot be reconstructed from its retained nonce");
+        SimpleAssert.that(
+            wire.has(
+                expiry.forGeneration(generation)
+                    .key(),
+                Phase.REFUSED,
+                0)
+                && world.writes()
+                    .size() == writes,
+            "expired body cannot be reconstructed from its retained nonce");
         return expiry;
     }
 
@@ -243,7 +333,8 @@ final class HologramStockNativeServerRegression {
         MessageContext context, RecordingChannel wire, EntityPlayerMP player, HologramSession former,
         HologramStockNativeConstruction.HatchChoice hatch, HologramPlacementFixtureWorld world,
         HologramWorkspace.ActionEndpoint initial, Confirmation replay, UUID tool) throws ReflectiveOperationException {
-        int writes = world.writes().size(), initialDimension = player.dimension;
+        int writes = world.writes()
+            .size(), initialDimension = player.dimension;
         var channel = initial.connection.netManager.channel();
         var serviceField = HologramNetwork.class.getDeclaredField("stockNativeServer");
         serviceField.setAccessible(true);
@@ -260,27 +351,34 @@ final class HologramStockNativeServerRegression {
         player.dimension = away.provider.dimensionId;
         HologramWorkspace.publishActionDimension(player);
         var intermediate = HologramWorkspace.captureActionEndpoint(initial.connection);
-        SimpleAssert.that(intermediate != null && intermediate.world == away
-            && intermediate.constructionScope.generation != initial.constructionScope.generation,
+        SimpleAssert.that(
+            intermediate != null && intermediate.world == away
+                && intermediate.constructionScope.generation != initial.constructionScope.generation,
             "the same real physical channel entered a different live world scope");
         player.worldObj = world;
         player.dimension = initialDimension;
         HologramWorkspace.publishActionDimension(player);
         var current = HologramWorkspace.captureActionEndpoint(initial.connection);
-        SimpleAssert.that(current != null && current.world == initial.world && current.connection == initial.connection
-            && current.connection.netManager.channel() == channel
-            && initial.constructionScope.generation != current.constructionScope.generation,
+        SimpleAssert.that(
+            current != null && current.world == initial.world
+                && current.connection == initial.connection
+                && current.connection.netManager.channel() == channel
+                && initial.constructionScope.generation != current.constructionScope.generation,
             "same physical Netty channel has a newly published world scope after two transitions");
         long generation = current.constructionScope.generation;
         tick();
         SimpleAssert.eq(beforeRotation, wire.replies.size(), "rotating before the queued probe runs emits no reply");
         send(handler, context, HologramStockNativeWire.probe(queuedOnInitial));
         tick();
-        SimpleAssert.eq(beforeRotation, wire.replies.size(),
+        SimpleAssert.eq(
+            beforeRotation,
+            wire.replies.size(),
             "authenticated queued PROBE dropped before dispatch cannot remint in the successor scope");
         send(handler, context, HologramStockNativeWire.probe(replay));
         tick();
-        SimpleAssert.eq(beforeRotation, wire.replies.size(),
+        SimpleAssert.eq(
+            beforeRotation,
+            wire.replies.size(),
             "processed zero-gen old PROBE cannot remint after A→B→A on the same socket");
 
         var unready = declaration(new Key(UUID.randomUUID(), 43, generation), tool, player.dimension, former, hatch);
@@ -292,13 +390,27 @@ final class HologramStockNativeServerRegression {
         send(handler, context, HologramStockNativeWire.probe(next));
         tick();
         send(handler, context, HologramStockNativeWire.confirmAfterProbe(next.forGeneration(generation)));
-        for (int i = 0; i < 4 && !wire.has(next.forGeneration(generation).key(), Phase.COMPLETE, 0); i++) tick();
-        SimpleAssert.that(wire.has(next.forGeneration(generation).key(), Phase.COMPLETE, 0),
+        for (int i = 0; i < 4 && !wire.has(
+            next.forGeneration(generation)
+                .key(),
+            Phase.COMPLETE,
+            0); i++) tick();
+        SimpleAssert.that(
+            wire.has(
+                next.forGeneration(generation)
+                    .key(),
+                Phase.COMPLETE,
+                0),
             "a fresh higher native nonce may establish the new scope explicitly");
         var pending = declaration(new Key(UUID.randomUUID(), 45, 0), tool, player.dimension, former, hatch);
         send(handler, context, HologramStockNativeWire.probe(pending));
         tick();
-        SimpleAssert.that(wire.has(pending.forGeneration(generation).key(), Phase.CAPABLE, 0),
+        SimpleAssert.that(
+            wire.has(
+                pending.forGeneration(generation)
+                    .key(),
+                Phase.CAPABLE,
+                0),
             "original authority has a pending proof before the in-process reset");
 
         var queuedAtReset = declaration(new Key(UUID.randomUUID(), 46, 0), tool, player.dimension, former, hatch);
@@ -307,32 +419,52 @@ final class HologramStockNativeServerRegression {
         SimpleAssert.eq(1, probeSlots.size(), "same endpoint has an actual admitted probe to discard at reset");
         HologramNetwork.clearServerQueues(); // Neither tick nor dispatch the newest probe before resetting.
         tick();
-        SimpleAssert.eq(beforeResetReplay, wire.replies.size(), "in-process reset drops the queued proof without a reply");
+        SimpleAssert
+            .eq(beforeResetReplay, wire.replies.size(), "in-process reset drops the queued proof without a reply");
         send(handler, context, HologramStockNativeWire.probe(queuedAtReset));
         tick();
-        SimpleAssert.eq(beforeResetReplay, wire.replies.size(),
+        SimpleAssert.eq(
+            beforeResetReplay,
+            wire.replies.size(),
             "in-process reset cannot forget the queued nonce that was never dispatched");
         send(handler, context, HologramStockNativeWire.probe(pending));
         tick();
-        SimpleAssert.eq(beforeResetReplay, wire.replies.size(),
+        SimpleAssert.eq(
+            beforeResetReplay,
+            wire.replies.size(),
             "in-process reset cannot remint a dispatched pending nonce on the same socket");
         var staleWarm = declaration(new Key(UUID.randomUUID(), 47, generation), tool, player.dimension, former, hatch);
         send(handler, context, HologramStockNativeWire.confirm(staleWarm));
         tick();
-        SimpleAssert.that(wire.has(staleWarm.key(), Phase.NEEDS_PROOF, 0),
+        SimpleAssert.that(
+            wire.has(staleWarm.key(), Phase.NEEDS_PROOF, 0),
             "reset invalidates native warm permission, never the connection's monotone high-water");
         var fresh = declaration(new Key(UUID.randomUUID(), 48, 0), tool, player.dimension, former, hatch);
         send(handler, context, HologramStockNativeWire.probe(fresh));
         tick();
-        SimpleAssert.that(wire.has(fresh.forGeneration(generation).key(), Phase.CAPABLE, 0)
-            && world.writes().size() == writes && player.inventory.mainInventory[1].stackSize == 24
-            && HologramWorkspace.find(initial.actor) == null,
+        SimpleAssert.that(
+            wire.has(
+                fresh.forGeneration(generation)
+                    .key(),
+                Phase.CAPABLE,
+                0)
+                && world.writes()
+                    .size() == writes
+                && player.inventory.mainInventory[1].stackSize == 24
+                && HologramWorkspace.find(initial.actor) == null,
             "a new nonce still gets only a capability receipt, with no world, stock or workspace change");
     }
 
-    private static void saturateQueries(HologramNetwork.ServerHandler handler, MessageContext context, long generation) {
-        send(handler, context, HologramStockNativeWire.control(new Key(UUID.randomUUID(), 111, generation), Command.STATUS));
-        send(handler, context, HologramStockNativeWire.control(new Key(UUID.randomUUID(), 112, generation), Command.STATUS));
+    private static void saturateQueries(HologramNetwork.ServerHandler handler, MessageContext context,
+        long generation) {
+        send(
+            handler,
+            context,
+            HologramStockNativeWire.control(new Key(UUID.randomUUID(), 111, generation), Command.STATUS));
+        send(
+            handler,
+            context,
+            HologramStockNativeWire.control(new Key(UUID.randomUUID(), 112, generation), Command.STATUS));
     }
 
     private static void verifyInventoryAndPolicy(HologramNetwork.ServerHandler handler, MessageContext context,
@@ -342,20 +474,24 @@ final class HologramStockNativeServerRegression {
         var originalInventory = player.inventory;
         var originalSlots = originalInventory.mainInventory;
         var projector = originalSlots[former.slot];
-        var savedTag = (NBTTagCompound) projector.getTagCompound().copy();
+        var savedTag = (NBTTagCompound) projector.getTagCompound()
+            .copy();
         world.setBlock(x, y, z, Blocks.air, 0, 3);
-        int writes = world.writes().size();
+        int writes = world.writes()
+            .size();
         originalSlots[1] = new ItemStack(item, 24, 0);
         try {
             Key changedArray = new Key(UUID.randomUUID(), 36, generation);
             wire.observe = response -> {
-                if (response.key().equals(changedArray) && response.phase() == Phase.ACCEPTED)
+                if (response.key()
+                    .equals(changedArray) && response.phase() == Phase.ACCEPTED)
                     originalInventory.mainInventory = originalSlots.clone();
             };
             send(handler, context, confirm(changedArray, realTool, player.dimension, former, hatch));
             tick();
-            SimpleAssert.that(wire.has(changedArray, Phase.STOPPED, 0)
-                && originalInventory.mainInventory != originalSlots, "admitted job stops on backing array substitution");
+            SimpleAssert.that(
+                wire.has(changedArray, Phase.STOPPED, 0) && originalInventory.mainInventory != originalSlots,
+                "admitted job stops on backing array substitution");
             originalInventory.mainInventory = originalSlots;
 
             Key changedInventory = new Key(UUID.randomUUID(), 37, generation);
@@ -363,13 +499,14 @@ final class HologramStockNativeServerRegression {
             replacement.mainInventory = originalSlots;
             replacement.currentItem = originalInventory.currentItem;
             wire.observe = response -> {
-                if (response.key().equals(changedInventory) && response.phase() == Phase.ACCEPTED)
-                    player.inventory = replacement;
+                if (response.key()
+                    .equals(changedInventory) && response.phase() == Phase.ACCEPTED) player.inventory = replacement;
             };
             send(handler, context, confirm(changedInventory, realTool, player.dimension, former, hatch));
             tick();
-            SimpleAssert.that(wire.has(changedInventory, Phase.STOPPED, 0)
-                && player.inventory == replacement, "admitted job stops on inventory identity swap with same array and tool");
+            SimpleAssert.that(
+                wire.has(changedInventory, Phase.STOPPED, 0) && player.inventory == replacement,
+                "admitted job stops on inventory identity swap with same array and tool");
             player.inventory = originalInventory;
             wire.observe = null;
 
@@ -379,7 +516,8 @@ final class HologramStockNativeServerRegression {
             Key noMain = new Key(UUID.randomUUID(), 38, generation);
             send(handler, context, confirm(noMain, realTool, player.dimension, former, hatch));
             tick();
-            SimpleAssert.that(wire.has(noMain, Phase.REFUSED, 0) && !HologramMaterials.read(projector).main,
+            SimpleAssert.that(
+                wire.has(noMain, Phase.REFUSED, 0) && !HologramMaterials.read(projector).main,
                 "confirmed default does not turn main inventory back on for this projector");
             settings.main = true;
             settings.containers = true;
@@ -388,13 +526,16 @@ final class HologramStockNativeServerRegression {
             Key containerFirst = new Key(UUID.randomUUID(), 39, generation);
             var requested = confirm(containerFirst, realTool, player.dimension, former, hatch);
             requested.setInteger("priority", 1);
-            requested.setInteger("sources",1 | (1<<3)); // well-formed stale snapshot: omits the active container source.
+            requested.setInteger("sources", 1 | (1 << 3)); // well-formed stale snapshot: omits the active container
+                                                           // source.
             send(handler, context, requested);
             tick();
-            SimpleAssert.that(wire.has(containerFirst, Phase.REFUSED, 0)
-                && HologramMaterials.read(projector).priority == 1 && world.writes().size() == writes
-                && originalSlots[1].stackSize == 24
-                && HologramWorkspace.find(player.getUniqueID()) == null,
+            SimpleAssert.that(
+                wire.has(containerFirst, Phase.REFUSED, 0) && HologramMaterials.read(projector).priority == 1
+                    && world.writes()
+                        .size() == writes
+                    && originalSlots[1].stackSize == 24
+                    && HologramWorkspace.find(player.getUniqueID()) == null,
                 "a confirmed main-only mask that omits a newly enabled container source is refused without rewriting the projector");
         } finally {
             wire.observe = null;
@@ -406,19 +547,39 @@ final class HologramStockNativeServerRegression {
 
     private static void verifyColdProof(HologramNetwork.ServerHandler handler, MessageContext context,
         RecordingChannel wire, EntityPlayerMP player, HologramSession former,
-        HologramStockNativeConstruction.HatchChoice hatch, HologramPlacementFixtureWorld world,
-        Item item, long generation, UUID tool) {
+        HologramStockNativeConstruction.HatchChoice hatch, HologramPlacementFixtureWorld world, Item item,
+        long generation, UUID tool) {
         player.inventory.mainInventory[1] = new ItemStack(item, 24, 0);
-        int before = world.writes().size();
+        int before = world.writes()
+            .size();
         var old = new Key(UUID.randomUUID(), 40, 0);
-        var declared = new Confirmation(old, player.dimension, tool, former.x, former.y, former.z,
-            former.side, former.slot, former.facing, 1, false, false, 0, hatch.dx, hatch.dy, hatch.dz, hatch.facing);
+        var declared = new Confirmation(
+            old,
+            player.dimension,
+            tool,
+            former.x,
+            former.y,
+            former.z,
+            former.side,
+            former.slot,
+            former.facing,
+            1,
+            false,
+            false,
+            0,
+            hatch.dx,
+            hatch.dy,
+            hatch.dz,
+            hatch.facing);
         var exact = declared.forGeneration(generation);
         send(handler, context, HologramStockNativeWire.probe(declared));
         tick();
-        SimpleAssert.that(wire.has(exact.key(), Phase.CAPABLE, 0) && world.writes().size() == before
-            && HologramWorkspace.find(player.getUniqueID()) == null
-            && player.inventory.mainInventory[1].stackSize == 24, "actual one confirmed cold PROBE never opens or writes");
+        SimpleAssert.that(
+            wire.has(exact.key(), Phase.CAPABLE, 0) && world.writes()
+                .size() == before
+                && HologramWorkspace.find(player.getUniqueID()) == null
+                && player.inventory.mainInventory[1].stackSize == 24,
+            "actual one confirmed cold PROBE never opens or writes");
         int count = wire.replies.size();
         send(handler, context, HologramStockNativeWire.probe(declared));
         tick();
@@ -427,24 +588,53 @@ final class HologramStockNativeServerRegression {
         changed.setInteger("hatchFacing", (hatch.facing + 1) % 6);
         send(handler, context, changed);
         tick();
-        SimpleAssert.that(wire.has(exact.key(), Phase.REFUSED, 0) && world.writes().size() == before,
+        SimpleAssert.that(
+            wire.has(exact.key(), Phase.REFUSED, 0) && world.writes()
+                .size() == before,
             "changed confirmed pose cannot use the nonce");
 
-        var clean = new Confirmation(new Key(UUID.randomUUID(), 41, 0), player.dimension, tool,
-            former.x, former.y, former.z, former.side, former.slot, former.facing, 1, false, false, 0,
-            hatch.dx, hatch.dy, hatch.dz, hatch.facing);
+        var clean = new Confirmation(
+            new Key(UUID.randomUUID(), 41, 0),
+            player.dimension,
+            tool,
+            former.x,
+            former.y,
+            former.z,
+            former.side,
+            former.slot,
+            former.facing,
+            1,
+            false,
+            false,
+            0,
+            hatch.dx,
+            hatch.dy,
+            hatch.dz,
+            hatch.facing);
         send(handler, context, HologramStockNativeWire.probe(clean));
         tick();
         send(handler, context, HologramStockNativeWire.confirmAfterProbe(clean.forGeneration(generation)));
-        for (int i = 0; i < 4 && !wire.has(clean.forGeneration(generation).key(), Phase.COMPLETE, 1); i++) tick();
-        SimpleAssert.that(wire.has(clean.forGeneration(generation).key(), Phase.COMPLETE, 1)
-            && world.writes().size() == before + 1 && player.inventory.mainInventory[1].stackSize == 23,
+        for (int i = 0; i < 4 && !wire.has(
+            clean.forGeneration(generation)
+                .key(),
+            Phase.COMPLETE,
+            1); i++) tick();
+        SimpleAssert.that(
+            wire.has(
+                clean.forGeneration(generation)
+                    .key(),
+                Phase.COMPLETE,
+                1)
+                && world.writes()
+                    .size() == before + 1
+                && player.inventory.mainInventory[1].stackSize == 23,
             "actual same nonce and shape after the cold probe reaches the real normal native write and debit");
     }
 
     private static void verifyExpiredReceipts(HologramNetwork.ServerHandler handler, MessageContext context,
         RecordingChannel wire, HologramWorkspace.ActionEndpoint endpoint, HologramSession former,
-        HologramStockNativeConstruction.HatchChoice hatch, Key completed, UUID realTool) throws ReflectiveOperationException {
+        HologramStockNativeConstruction.HatchChoice hatch, Key completed, UUID realTool)
+        throws ReflectiveOperationException {
         var serviceField = HologramNetwork.class.getDeclaredField("stockNativeServer");
         serviceField.setAccessible(true);
         var detailCache = HologramStockNativeServer.class.getDeclaredField("settled");
@@ -454,7 +644,10 @@ final class HologramStockNativeServerRegression {
         send(handler, context, HologramStockNativeWire.control(completed, Command.STATUS));
         tick();
         Reply exact = wire.replies.get(wire.replies.size() - 1);
-        SimpleAssert.that(exact.key().equals(completed) && exact.phase() == Phase.COMPLETE && exact.placed() == 1,
+        SimpleAssert.that(
+            exact.key()
+                .equals(completed) && exact.phase() == Phase.COMPLETE
+                && exact.placed() == 1,
             "after detailed result expiry, only the exact gate settlement can supply known progress");
         var gate = HologramWorkspace.constructionGate(endpoint);
         for (long sequence = 1000; sequence < 1300; sequence++) {
@@ -466,7 +659,10 @@ final class HologramStockNativeServerRegression {
         send(handler, context, confirm(completed, realTool, endpoint.player.dimension, former, hatch));
         tick();
         Reply expired = wire.replies.get(wire.replies.size() - 1);
-        SimpleAssert.that(expired.key().equals(completed) && expired.phase() == Phase.UNKNOWN && expired.placed() == -1,
+        SimpleAssert.that(
+            expired.key()
+                .equals(completed) && expired.phase() == Phase.UNKNOWN
+                && expired.placed() == -1,
             "old BEGIN after both bounded caches expire is unknown, never a false refusal or count of zero");
     }
 
@@ -477,8 +673,24 @@ final class HologramStockNativeServerRegression {
 
     private static Confirmation declaration(Key key, UUID tool, int dimension, HologramSession source,
         HologramStockNativeConstruction.HatchChoice hatch) {
-        return new Confirmation(key, dimension, tool, source.x, source.y, source.z,
-            source.side, source.slot, source.facing, 1, false, false, 0, hatch.dx, hatch.dy, hatch.dz, hatch.facing);
+        return new Confirmation(
+            key,
+            dimension,
+            tool,
+            source.x,
+            source.y,
+            source.z,
+            source.side,
+            source.slot,
+            source.facing,
+            1,
+            false,
+            false,
+            0,
+            hatch.dx,
+            hatch.dy,
+            hatch.dz,
+            hatch.facing);
     }
 
     private static void send(HologramNetwork.ServerHandler handler, MessageContext context, NBTTagCompound tag) {
@@ -513,23 +725,31 @@ final class HologramStockNativeServerRegression {
 
         @Override
         public void sendTo(IMessage message, EntityPlayerMP target) {
-            SimpleAssert.that(target == player && message instanceof HologramNetwork.State,
+            SimpleAssert.that(
+                target == player && message instanceof HologramNetwork.State,
                 "real stock receipt owner, no unrelated message");
             var tag = ((HologramNetwork.State) message).tag;
             Reply reply = HologramStockNativeWire.readReply(tag);
-            SimpleAssert.that(reply != null && tag.getBoolean("serverRulesOnly") && !tag.hasKey("cells"),
+            SimpleAssert.that(
+                reply != null && tag.getBoolean("serverRulesOnly") && !tag.hasKey("cells"),
                 "every actual native wire reply is small and sessionless, never any geometry baseline");
             replies.add(reply);
             if (observe != null) observe.accept(reply);
         }
 
         boolean has(Key key, Phase phase, int placed) {
-            return replies.stream().anyMatch(reply -> reply.key().equals(key) && reply.phase() == phase
-                && reply.placed() == placed);
+            return replies.stream()
+                .anyMatch(
+                    reply -> reply.key()
+                        .equals(key) && reply.phase() == phase
+                        && reply.placed() == placed);
         }
 
         boolean none(Key key) {
-            return replies.stream().noneMatch(reply -> reply.key().equals(key));
+            return replies.stream()
+                .noneMatch(
+                    reply -> reply.key()
+                        .equals(key));
         }
     }
 }

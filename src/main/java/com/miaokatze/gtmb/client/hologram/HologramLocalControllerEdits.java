@@ -14,6 +14,7 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
+import com.miaokatze.gtmb.hologram.HologramNativePresetIndex;
 import com.miaokatze.gtmb.hologram.HologramPreviewHatchFacings;
 
 import gregtech.api.GregTechAPI;
@@ -26,7 +27,7 @@ final class HologramLocalControllerEdits {
 
     static boolean handles(String operation) {
         return switch (operation) {
-            case "pin", "sourcePin", "customPin", "restoreCell", "clearPin", "hatchFacing", "hatchPreset", "clearHatchPreset" -> true;
+            case "pin", "sourcePin", "customPin", "restoreCell", "clearPin", "hatchFacing" -> true;
             default -> false;
         };
     }
@@ -38,31 +39,38 @@ final class HologramLocalControllerEdits {
 
     static HologramState apply(HologramState base, HologramState initial, String operation, NBTTagCompound request,
         java.util.function.Consumer<HologramState.Cell> onEdit) throws IOException {
+        return apply(base, initial, operation, request, cell -> cell, onEdit);
+    }
+
+    @FunctionalInterface
+    interface DeclarationDetails {
+
+        HologramState.Cell read(HologramState.Cell cell) throws IOException;
+    }
+
+    static HologramState apply(HologramState base, HologramState initial, String operation, NBTTagCompound request,
+        DeclarationDetails details, java.util.function.Consumer<HologramState.Cell> onEdit) throws IOException {
         if (initial == null || base.cells.size() != initial.cells.size() || base.data.getBoolean("capturePending"))
             throw new IOException("请先等待本地结构采集完成");
         if (base.data.getInteger("mode") == 2) throw new IOException("拆除模式不接受建造目标");
         int primary = request.hasKey("selected", 3) ? request.getInteger("selected") : -1;
-        boolean tierPreset = "hatchPreset".equals(operation), clearPreset = "clearHatchPreset".equals(operation);
         boolean restore = "restoreCell".equals(operation) || "clearPin".equals(operation);
         Set<Integer> indices = new LinkedHashSet<>();
-        if (tierPreset || clearPreset) {
-            for (HologramState.Cell cell : base.cells)
-                if (!cell.anchor && !cell.candidates.isEmpty()) indices.add(cell.index);
-        } else {
-            if (primary < 0 || primary >= base.cells.size()) throw new IOException("请先选中结构格");
-            indices.add(primary);
-            if (!"hatchFacing".equals(operation) && !"pin".equals(operation))
-                for (int index : request.getIntArray("selectedIndices"))
-                    if (index >= 0 && index < base.cells.size()) indices.add(index);
+        if (primary < 0 || primary >= base.cells.size()) throw new IOException("请先选中结构格");
+        indices.add(primary);
+        if (!"hatchFacing".equals(operation) && !"pin".equals(operation)) {
+            for (int index : request.getIntArray("selectedIndices"))
+                if (index >= 0 && index < base.cells.size()) indices.add(index);
         }
         ItemStack picked = ItemStack.loadItemStackFromNBT(request.getCompoundTag("expectedSample"));
         NBTTagList rows = new NBTTagList();
         for (int index : indices) {
             HologramState.Cell current = base.cells.get(index);
             if (current.anchor) continue;
-            NBTTagCompound row = current.tag(), original = initial.cells.get(index)
-                .tag();
-            if (restore || clearPreset && "preset".equals(row.getString("pinScope"))) {
+            HologramState.Cell captured = initial.cells.get(index);
+            if (!restore) current = details.read(current);
+            NBTTagCompound row = current.tag(), original = captured.tag();
+            if (restore) {
                 row = original;
             } else if ("hatchFacing".equals(operation)) {
                 int facing = request.getInteger("facing");
@@ -72,27 +80,14 @@ final class HologramLocalControllerEdits {
                     || !(current.targetStack.getItem() instanceof ItemMachines)
                     || facing >= 0 && !allowsFacing(row, facing)) throw new IOException("该结构格不支持所选方向");
                 setFacing(row, original, current.targetStack, facing);
-            } else if (tierPreset) {
-                if ("manual".equals(row.getString("pinScope"))) continue;
-                int[] tiers = row.getIntArray("candidateTiers");
-                int tier = request.getInteger("tier"), choice = -1;
-                int offered = nativeCandidateCount(row, current.candidates.size());
-                for (int i = 0; i < tiers.length && i < offered; i++) {
-                    if (tiers[i] == tier || request.getBoolean("downgrade") && tiers[i] >= 0
-                        && tiers[i] < tier
-                        && (choice == -1 || tiers[i] > tiers[choice])) choice = i;
-                    if (tiers[i] == tier) break;
-                }
-                if (choice < 0) continue;
-                pin(row, original, current.candidates.get(choice), choice, "preset");
             } else if ("pin".equals(operation)) {
                 int choice = request.hasKey("choiceindex", 3) ? request.getInteger("choiceindex")
                     : request.getInteger("choice");
                 if (choice < 0 || choice >= current.candidates.size()) throw new IOException("方块候选已变化");
                 pin(row, original, current.candidates.get(choice), choice, "manual");
-            } else if (!clearPreset) {
+            } else {
                 pin(row, original, picked, -1, "manual");
-            } else continue;
+            }
             row.setInteger("index", index);
             rows.appendTag(row);
         }
@@ -104,10 +99,7 @@ final class HologramLocalControllerEdits {
         patch.setLong("baseRevision", base.data.getLong("planRevision"));
         patch.setLong("planRevision", base.data.getLong("planRevision") + 1);
         patch.setTag("cells", rows);
-        if (tierPreset || clearPreset) {
-            patch.setBoolean("presetActive", tierPreset);
-            if (tierPreset) patch.setInteger("hatchTier", request.getInteger("tier"));
-        }
+        patch.setBoolean("nativeBuildSatisfied", false);
         patch.setString("status", "已更新本地结构规划");
         HologramState result = HologramState.apply(base, patch);
         if (onEdit != null) for (int i = 0; i < rows.tagCount(); i++) onEdit.accept(
@@ -124,20 +116,22 @@ final class HologramLocalControllerEdits {
     /** One already validated local candidate row; never accepts a file/inventory sample or broad scope. */
     static NBTTagCompound selectedRow(HologramState.Cell current, HologramState.Cell initial, String operation,
         NBTTagCompound request) throws IOException {
-        if (!selectedOnly(operation) || current.anchor || initial.index != current.index
-            || !request.hasKey("selected", 3) || request.getInteger("selected") != current.index)
-            throw new IOException("所选结构格已变化");
+        if (!selectedOnly(operation) || current.anchor
+            || initial.index != current.index
+            || !request.hasKey("selected", 3)
+            || request.getInteger("selected") != current.index) throw new IOException("所选结构格已变化");
         NBTTagCompound row = current.tag(), original = initial.tag();
         if ("pin".equals(operation)) {
-            if (!request.hasKey("choiceindex", 3) && !request.hasKey("choice", 3))
-                throw new IOException("方块候选已变化");
+            if (!request.hasKey("choiceindex", 3) && !request.hasKey("choice", 3)) throw new IOException("方块候选已变化");
             int choice = request.hasKey("choiceindex", 3) ? request.getInteger("choiceindex")
                 : request.getInteger("choice");
             if (choice < 0 || choice >= current.candidates.size()) throw new IOException("方块候选已变化");
             pin(row, original, current.candidates.get(choice), choice, "manual");
         } else {
             int facing = request.getInteger("facing");
-            if (!request.hasKey("facing", 3) || facing < -1 || facing > 5 || current.targetStack == null
+            if (!request.hasKey("facing", 3) || facing < -1
+                || facing > 5
+                || current.targetStack == null
                 || !(current.targetStack.getItem() instanceof ItemMachines)
                 || facing >= 0 && !allowsFacing(row, facing)) throw new IOException("该结构格不支持所选方向");
             setFacing(row, original, current.targetStack, facing);
@@ -159,12 +153,50 @@ final class HologramLocalControllerEdits {
         return HologramState.apply(base, patch);
     }
 
-    private static int nativeCandidateCount(NBTTagCompound row, int size) {
-        if (!row.hasKey("nativeCandidateCount")) return size;
-        if (!row.hasKey("nativeCandidateCount", 3) || row.getTagList("candidates", 10)
-            .tagCount() != size) return 0;
-        int count = row.getInteger("nativeCandidateCount");
-        return count >= 0 && count <= size ? count : 0;
+    static HologramState replaceNativePreset(HologramState base, HologramState initial, Set<Integer> previous,
+        java.util.List<HologramNativePresetIndex.Choice> choices, int tier, boolean enabled) throws IOException {
+        if (initial == null || !initial.session.equals(base.session) || initial.cells.size() != base.cells.size())
+            throw new IOException("结构目标已变化");
+        java.util.Map<Integer, NBTTagCompound> changed = new java.util.LinkedHashMap<>();
+        for (int index : previous) {
+            HologramState.Cell current = base.cells.get(index);
+            if (!"preset".equals(current.pinScope)) continue;
+            NBTTagCompound row = initial.cells.get(index)
+                .tag();
+            row.setInteger("index", index);
+            changed.put(index, row);
+        }
+        for (var pick : choices) {
+            int i = pick.index(), id = pick.itemId(), direction = pick.facing();
+            if (i < 0 || i >= base.cells.size()
+                || id < 0
+                || id >= GregTechAPI.METATILEENTITIES.length
+                || direction < -1
+                || direction > 5
+                || GregTechAPI.METATILEENTITIES[id] == null) throw new IOException("仓室目标无效");
+            var current = base.cells.get(i);
+            if (current.anchor || "manual".equals(current.pinScope)) throw new IOException("仓室目标与手选位置冲突");
+            NBTTagCompound original = initial.cells.get(i)
+                .tag(), row = (NBTTagCompound) original.copy();
+            ItemStack stack = GregTechAPI.METATILEENTITIES[id].getStackForm(1);
+            if (stack == null || !(stack.getItem() instanceof ItemMachines)
+                || stack.hasTagCompound()
+                || stack.getItemDamage() != id) throw new IOException("仓室身份已变化");
+            pin(row, original, stack, -1, "preset");
+            if (direction >= 0) row.setIntArray("hatchFacings", new int[] { direction });
+            setFacing(row, original, stack, direction);
+            row.setInteger("index", i);
+            changed.put(i, row);
+        }
+        NBTTagList rows = new NBTTagList();
+        for (NBTTagCompound row : changed.values()) rows.appendTag(row);
+        HologramState result = applySelectedRows(base, rows, base.data.getLong("planRevision") + 1);
+        NBTTagCompound metadata = new NBTTagCompound();
+        metadata.setBoolean("presetActive", enabled);
+        metadata.setBoolean("nativePresetExact", enabled);
+        metadata.setBoolean("nativeBuildSatisfied", false);
+        if (enabled) metadata.setInteger("hatchTier", tier);
+        return result.withMetadata(metadata);
     }
 
     private static void pin(NBTTagCompound row, NBTTagCompound original, ItemStack sample, int choice, String scope)
