@@ -527,7 +527,17 @@ final class HologramLibraryWorkflow {
             && s.blueprintSaveReceipt.equals(request.getString("saveReceipt"))
             && s.blueprintSaveLocalId.equals(
                 request.hasKey("replaceLocalId", 8) ? request.getString("replaceLocalId")
-                    : request.getString("localId"));
+                    : request.getString("localId"))
+            && saveTaskMatches(s, request);
+    }
+
+    private static boolean saveTaskMatches(HologramSession s, NBTTagCompound request) {
+        // A later scan can reset the UI's correlation token without replacing the staged disk receipt.
+        Long staged = HologramLibraryFacade.stagedSaveTask(s.player, s.id, s.blueprintSaveReceipt);
+        long issued = staged == null ? s.blueprintClientTaskToken : staged.longValue();
+        return request.hasKey("clientTaskToken")
+            ? request.hasKey("clientTaskToken", 4) && request.getLong("clientTaskToken") == issued
+            : issued == 0;
     }
 
     static boolean libraryDraftPrepared(EntityPlayerMP player, NBTTagCompound request, String hash) {

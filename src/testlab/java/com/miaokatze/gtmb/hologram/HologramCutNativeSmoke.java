@@ -199,7 +199,11 @@ public final class HologramCutNativeSmoke {
             "first in first out order");
         NBTTagCompound invalid = request("paste", UUID.randomUUID());
         invalid.setString("id", REQUEST_A.toString());
+        require(original.hasKey("sequence", 4) && original.getLong("sequence") > 0, "exact FIFO clipboard sequence");
+        invalid.setLong("entrySequence", original.getLong("sequence"));
+        invalid.setInteger("originX", 752);
         invalid.setInteger("originY", 256);
+        invalid.setInteger("originZ", 720);
         require(
             !HologramCutService.execute(player, invalid)
                 .getBoolean("success"),
@@ -214,6 +218,7 @@ public final class HologramCutNativeSmoke {
             .setInventorySlotContents(0, new ItemStack(Items.gold_ingot, 9));
         NBTTagCompound paste = request("paste", UUID.randomUUID());
         paste.setString("id", REQUEST_A.toString());
+        paste.setLong("entrySequence", original.getLong("sequence"));
         paste.setInteger("originX", 752);
         paste.setInteger("originY", 200);
         paste.setInteger("originZ", 720);
@@ -277,6 +282,13 @@ public final class HologramCutNativeSmoke {
         success(liquid, "flowing water cut");
         NBTTagCompound liquidPaste = request("paste", UUID.randomUUID());
         liquidPaste.setString("id", liquid.getString("id"));
+        NBTTagList fluidSummaries = liquid.getTagList("entries", 10);
+        for (int i = 0; i < fluidSummaries.tagCount(); i++) {
+            NBTTagCompound row = fluidSummaries.getCompoundTagAt(i);
+            if (liquidPaste.getString("id").equals(row.getString("id")) && row.hasKey("sequence", 4))
+                liquidPaste.setLong("entrySequence", row.getLong("sequence"));
+        }
+        require(liquidPaste.getLong("entrySequence") > 0, "exact flowing fluid clipboard sequence");
         liquidPaste.setInteger("originX", 780);
         liquidPaste.setInteger("originY", 200);
         liquidPaste.setInteger("originZ", 724);

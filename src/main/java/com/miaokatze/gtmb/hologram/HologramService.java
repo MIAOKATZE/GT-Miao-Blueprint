@@ -4,15 +4,22 @@
 package com.miaokatze.gtmb.hologram;
 
 import java.util.Map;
+import java.util.UUID;
 
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.entity.player.EntityPlayerMP;
+import net.minecraft.entity.player.InventoryPlayer;
+import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
+import net.minecraft.network.NetHandlerPlayServer;
 import net.minecraft.tileentity.TileEntity;
+import net.minecraft.world.World;
+import net.minecraftforge.common.util.FakePlayer;
 
 import com.gtnewhorizon.structurelib.alignment.constructable.IConstructable;
+import com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector;
 
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
 import gregtech.api.metatileentity.implementations.MTEEnhancedMultiBlockBase;
@@ -54,6 +61,45 @@ public final class HologramService {
 
     public static boolean isAreaSelecting(EntityPlayer player, ItemStack stack) {
         return HologramWorkspace.isAreaSelecting(player, stack);
+    }
+
+    /** Called by the selected item's normal server inventory tick; vanilla slot sync carries the identity. */
+    public static void initializeHeldProjectorIdentity(EntityPlayerMP player, World world, int slot, ItemStack tool) {
+        if (player == null || player instanceof FakePlayer || world == null || world.isRemote || player.worldObj != world
+            || player.isDead || slot < 0 || slot >= InventoryPlayer.getHotbarSize() || tool == null || tool.stackSize <= 0)
+            return;
+        Item item = tool.getItem();
+        if (!(item instanceof ItemNekoHologramProjector)) return;
+        NBTTagCompound tag = tool.getTagCompound();
+        if (!missingToolIdentity(tag)) return;
+        InventoryPlayer inventory = player.inventory;
+        ItemStack[] main = inventory == null ? null : inventory.mainInventory;
+        if (main == null || slot >= main.length || inventory.player != player || inventory.currentItem != slot
+            || main[slot] != tool) return;
+        int dimension = player.dimension;
+        NetHandlerPlayServer handler = player.playerNetServerHandler;
+        // Normal FML player login has already published this scope; inventory ticks can never create one.
+        var endpoint = HologramWorkspace.captureActionEndpoint(handler);
+        if (endpoint == null || endpoint.player != player || endpoint.world != world
+            || HologramWorkspace.constructionGate(endpoint) == null) return;
+        // The scope check includes callback-capable transport getters. Recheck the exact local stack afterwards.
+        if (player.worldObj != world || world.isRemote || player.dimension != dimension || player.isDead
+            || player.playerNetServerHandler != handler || handler.playerEntity != player
+            || player.inventory != inventory || inventory.player != player || inventory.mainInventory != main
+            || inventory.currentItem != slot || main[slot] != tool || tool.getItem() != item || tool.stackSize <= 0
+            || tool.getTagCompound() != tag || !missingToolIdentity(tag)) return;
+        String id = UUID.randomUUID().toString();
+        if (tag == null) {
+            tag = new NBTTagCompound();
+            tag.setString(HologramSessionKeys.TOOL_ID, id);
+            tool.setTagCompound(tag);
+        } else tag.setString(HologramSessionKeys.TOOL_ID, id);
+        inventory.markDirty();
+    }
+
+    private static boolean missingToolIdentity(NBTTagCompound tag) {
+        return tag == null || !tag.hasKey(HologramSessionKeys.TOOL_ID)
+            || tag.hasKey(HologramSessionKeys.TOOL_ID, 8) && tag.getString(HologramSessionKeys.TOOL_ID).isEmpty();
     }
 
     public static void toggleAreaSelection(EntityPlayerMP player) {

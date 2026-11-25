@@ -20,6 +20,17 @@ final class HologramPresetWorkflow {
 
     private HologramPresetWorkflow() {}
 
+    private static final String PUBLIC_COPY_REQUIRED = "服务器蓝图不会自动传送；请手动下载，或从客户端蓝图库使用已保存的副本。";
+
+    static boolean publicLibraryId(String id) {
+        return id != null && id.startsWith("public_");
+    }
+
+    /** Out-of-band explanation only; a refusal must not install a new opening or create a snapshot. */
+    static void refusePublicHydration(net.minecraft.entity.player.EntityPlayerMP player) {
+        player.addChatMessage(new ChatComponentText("[猫猫全息·服务器蓝图库] " + PUBLIC_COPY_REQUIRED));
+    }
+
     /** Capture current server targets; all inventory and device data come from server-owned state. */
 
     static void savePreset(HologramSession s, String name) {
@@ -148,6 +159,10 @@ final class HologramPresetWorkflow {
     }
 
     static void loadPreset(HologramSession s, String id, boolean selectOnly) {
+        if (!selectOnly && HologramLibraryFacade.enabled() && publicLibraryId(id)) {
+            s.status = PUBLIC_COPY_REQUIRED;
+            return;
+        }
         try {
             HologramRuntimeMetrics.loadStage(HologramRuntimeMetrics.LoadStage.SERVER_CANONICAL_BEGIN, s, -1, 0);
             HologramPresets.Preset preset = HologramLibraryFacade.get(s.player, id);
@@ -236,6 +251,10 @@ final class HologramPresetWorkflow {
     }
 
     static HologramSession editPreset(HologramSession previous, String id) {
+        if (HologramLibraryFacade.enabled() && publicLibraryId(id)) {
+            refusePublicHydration(previous.player);
+            return previous;
+        }
         if (!HologramWorkspace.presentationAllowed(previous)) return previous;
         int x = previous.target != null || previous.virtual ? previous.x
             : net.minecraft.util.MathHelper.floor_double(previous.player.posX);

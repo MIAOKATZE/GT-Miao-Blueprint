@@ -20,6 +20,7 @@ import java.util.function.Predicate;
 import net.minecraft.entity.item.EntityItem;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.entity.player.EntityPlayerMP;
+import net.minecraft.entity.player.InventoryPlayer;
 import net.minecraft.inventory.IInventory;
 import net.minecraft.item.ItemBlock;
 import net.minecraft.item.ItemStack;
@@ -1142,6 +1143,12 @@ public final class HologramMaterials {
             };
         }
 
+        boolean scopedMain(EntityPlayerMP actor, Settings exactSettings, int slot) {
+            return actor == player && actor.worldObj == recoveryWorld && exactSettings == settings
+                && slot == protectedSlot && settings.main && !settings.containers && !settings.me
+                && containers.isEmpty() && terminal == null && terminalStack == null;
+        }
+
         /** Must follow the service's main inventory snapshot restore, before returning fallback materials. */
         public void afterInventoryRestore() {
             if (reservations != null) reservations.invalidateStock();
@@ -1392,6 +1399,56 @@ public final class HologramMaterials {
         }
     }
 
+    /** One exact survival shell, held logically until the driver has finished every world callback. */
+    static final class ScopedMainClaim {
+
+        private final InventoryPlayer inventory;
+        private final ItemStack[] slots;
+        private final int index, count;
+        private final ItemStack live, before;
+
+        private ScopedMainClaim(InventoryPlayer inventory, ItemStack[] slots, int index, ItemStack live) {
+            this.inventory = inventory;
+            this.slots = slots;
+            this.index = index;
+            this.live = live;
+            count = live.stackSize;
+            before = live.copy();
+        }
+
+        static ScopedMainClaim observe(EntityPlayerMP actor, InventoryPlayer inventory, ItemStack[] slots,
+            int protectedSlot, ItemStack wanted) {
+            if (actor.inventory != inventory || inventory.mainInventory != slots) return null;
+            for (int i = 0; i < slots.length; i++) {
+                ItemStack item = slots[i];
+                if (i == protectedSlot || item == null || item.stackSize <= 0 || item.hasTagCompound()
+                    || !HologramValues.same(item, wanted)) continue;
+                ScopedMainClaim exact = new ScopedMainClaim(inventory, slots, i, item);
+                if (HologramValues.same(exact.before, wanted) && exact.matches(actor)) return exact;
+            }
+            return null;
+        }
+
+        private boolean sameSlot(EntityPlayerMP actor) {
+            return actor.inventory == inventory && inventory.mainInventory == slots && slots[index] == live
+                && live.stackSize == count && count > 0 && !live.hasTagCompound();
+        }
+
+        boolean matches(EntityPlayerMP actor) {
+            // The selected and copied specimen are already proved exact to the pin, with no optional NBT.
+            // Recheck the actual stored stack fields, never call an Item's damage/predicate provider here.
+            return sameSlot(actor) && ItemStack.areItemStacksEqual(live, before) && sameSlot(actor);
+        }
+
+        /** Only after fingerprint + lease proof. From here through receipt retirement there are no providers. */
+        private boolean debit(EntityPlayerMP actor) {
+            if (!sameSlot(actor)) return false;
+            live.stackSize = count - 1;
+            if (count == 1) slots[index] = null;
+            return true;
+        }
+    }
+
     public static final class Transaction implements IItemSource {
 
         private final Context context;
@@ -1418,6 +1475,15 @@ public final class HologramMaterials {
             journal = value;
             checkpoint();
             return this;
+        }
+
+        void scopedJournal(NBTTagCompound value) {
+            journal = value;
+            journal.setTag("heldInventory", journal.getTagList("beforeInventory", 10).copy());
+        }
+
+        void beforeScopedWorldMutation() {
+            journal.setString("phase", "world-pending");
         }
 
         boolean hasJournal() {
@@ -1524,6 +1590,10 @@ public final class HologramMaterials {
             journal.setTag("payment", ledger);
             journal
                 .setTag("heldInventory", HologramConstructionJournal.inventory(context.player.inventory.mainInventory));
+        }
+
+        NBTTagCompound journalReceipt() {
+            return journal;
         }
 
         void beforeWorldMutation() {
@@ -1725,6 +1795,24 @@ public final class HologramMaterials {
                 .consume();
             if (receipt == null) return false;
             cachedEnergyReceipts.add(receipt);
+            return true;
+        }
+
+        /**
+         * The scoped plain path never lends this transaction to placement callbacks. There is no resource payment
+         * to refund; close only this undurable journal, optionally charging the already validated original slot.
+         */
+        boolean finishScopedPlain(ScopedMainClaim claim) {
+            if (journal == null || closed || uncertain() || journal.getBoolean("durable")
+                || !containerItems.isEmpty() || !containerStates.isEmpty()
+                || !meItems.isEmpty() || !meFluids.isEmpty() || !meEssentia.isEmpty()
+                || !cachedEnergyReceipts.isEmpty() || energyTaken.signum() != 0 || terminalState != null
+                || terminalSupplies[0] != 0 || terminalSupplies[1] != 0) return false;
+            NBTTagCompound owner = HologramConstructionJournal.owner(context.player);
+            if (owner.getTag(HologramConstructionJournal.KEY) != journal
+                || claim != null && !claim.debit(context.player)) return false;
+            owner.removeTag(HologramConstructionJournal.KEY);
+            closed = true;
             return true;
         }
 

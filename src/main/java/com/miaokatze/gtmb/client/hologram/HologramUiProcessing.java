@@ -829,11 +829,12 @@ final class HologramUiProcessing {
                     ui.session.state().data.getTagList("blueprintNbtKeys", 8)
                         .copy());
                 ui.identity.deidentificationSaveOptions(savePreset);
-                ui.library.libraryResult(ui.session.notice(id == 140 ? "正在保存，请等待服务器确认" : "正在另存为新蓝图，请等待服务器确认"));
-                HologramLibraryClient.INSTANCE
-                    .expectDraftDownload(ui.session.state(), ui.preview.yaw(), ui.preview.pitch());
-                ui.session.send("saveBlueprintAs", savePreset, true);
-                ui.library.presetSaveSequence(ui.session.sequence());
+                if (ui.session.isTutorial()) {
+                    // Tutorial commands use a local simulation sink, not a server or library transfer owner.
+                    ui.library.libraryResult(ui.session.notice(id == 140 ? "正在保存" : "正在另存为新蓝图"));
+                    ui.session.send("saveBlueprintAs", savePreset, true);
+                    ui.library.presetSaveSequence(ui.session.sequence());
+                } else ui.library.saveBlueprintLocally(savePreset, id == 140);
                 return true;
             default:
                 return false;

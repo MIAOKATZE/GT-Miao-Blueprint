@@ -79,6 +79,11 @@ final class HologramNativeCompactStart {
             receipt.send(p, id, false, "紧凑原生放置未启用或选项不受支持。");
             return;
         }
+        String scopedRefusal = HologramWorkspace.legacyConstructionRefusal(p);
+        if (scopedRefusal != null) {
+            receipt.send(p, id, false, scopedRefusal);
+            return;
+        }
         HologramSession previous = HologramWorkspace.find(p.getUniqueID());
         if (previous != null
             && (previous.player != p || !HologramSessionPolicy.valid(previous)
@@ -190,6 +195,11 @@ final class HologramNativeCompactStart {
     }
 
     private boolean advance(HologramSession s) {
+        String scopedRefusal = HologramWorkspace.legacyConstructionRefusal(s.player);
+        if (scopedRefusal != null) {
+            finish(false, scopedRefusal);
+            return true;
+        }
         if (!current()) {
             finish(false, "原生控制器、投影仪或声明已变化。");
             return true;

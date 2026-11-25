@@ -101,6 +101,11 @@ final class HologramNativeReadyPlacement {
         if (!canonicalId(id) || HologramProjectedPlacementService.consumed(player, id)) return;
         // Retire on first intake, including refusal and disconnect. Replays never produce a second admission.
         HologramProjectedPlacementService.retire(player, id);
+        String scopedRefusal = HologramWorkspace.legacyConstructionRefusal(player);
+        if (scopedRefusal != null) {
+            receipt.send(player, id, false, scopedRefusal);
+            return;
+        }
         HologramSession s = HologramWorkspace.find(player.getUniqueID());
         String refusal;
         try {
@@ -236,6 +241,8 @@ final class HologramNativeReadyPlacement {
 
     private boolean step(int rows, long deadline, LongSupplier clock) throws IOException {
         HologramSession s = session;
+        String scopedRefusal = HologramWorkspace.legacyConstructionRefusal(s.player);
+        if (scopedRefusal != null) throw new IOException(scopedRefusal);
         if (!ordinary && (!enabled() || clock.getAsLong() - started >= LIFETIME_NANOS)
             || s.capture != capture
             || s.nativeReadyBill != bill
@@ -292,6 +299,7 @@ final class HologramNativeReadyPlacement {
         if (HologramConstructionJournal.pending(s.player)) throw new IOException(RECOVERY_PENDING);
         s.work = work;
         HologramPlacementJobs.begin(s, null);
+        if (s.job != 1) throw new IOException(s.status);
         HologramStructureProjection.dismissOperationReview(s);
         return true;
     }

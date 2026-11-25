@@ -6,7 +6,6 @@ package com.miaokatze.gtmb.client.hologram;
 import java.io.IOException;
 import java.lang.reflect.Proxy;
 import java.util.Arrays;
-import java.util.Base64;
 import java.util.Collections;
 
 import net.minecraft.block.Block;
@@ -17,8 +16,6 @@ import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
 import com.miaokatze.gtmb.hologram.HologramControllerTarget;
-import com.miaokatze.gtmb.hologram.HologramProjectedPlacement;
-import com.miaokatze.gtmb.hologram.HologramSnapshotCodec;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
 import gregtech.api.GregTechAPI;
@@ -365,7 +362,7 @@ public final class HologramControllerDetailsRegression {
                         .tag()
                         .getBoolean("hasFacingPin"),
                 "restore default restores the original target and clears the hatch override");
-            legacyBackpackReview(machines);
+            localBackpackIntentWithoutLegacyPlacement(machines);
         } catch (IOException failure) {
             throw new AssertionError("local controller hatch facing edits", failure);
         } finally {
@@ -374,7 +371,7 @@ public final class HologramControllerDetailsRegression {
     }
 
     /** Run the same sparse backpack edit and the same full-plan compiler as explicit local Confirm. */
-    private static void legacyBackpackReview(Block machines) throws IOException {
+    private static void localBackpackIntentWithoutLegacyPlacement(Block machines) throws IOException {
         IMetaTileEntity[] prototypes = GregTechAPI.METATILEENTITIES;
         int id = Math.min(prototypes.length - 1, Short.MAX_VALUE);
         while (id > 1 && (prototypes[id] != null || prototypes[id - 1] != null)) id--;
@@ -421,75 +418,43 @@ public final class HologramControllerDetailsRegression {
             header.setTag("cells", rows);
             HologramState baseline = new HologramState(header);
             HologramState pinnedMachine = drag(baseline, baseline, backpack, 0, 0);
-            SimpleAssert.eq(
-                0,
-                HologramScreen.nativeReviewChoices(pinnedMachine, Collections.singletonList(0), 0, 0, false)
-                    .tagCount(),
-                "flag off keeps the ordinary local review for a real non-hatch backpack machine");
             HologramState mixed = drag(pinnedMachine, baseline, backpack, 1, 1);
-            SimpleAssert.eq(
-                0,
-                HologramScreen.nativeReviewChoices(mixed, Arrays.asList(0, 1), 0, 3, false)
-                    .tagCount(),
-                "legacy selection preserves both edits, not a subset consisting only of the hatch");
-            NBTTagCompound frozen = (NBTTagCompound) mixed.data.copy();
-            NBTTagList edited = new NBTTagList();
-            for (HologramState.Cell cell : mixed.cells) edited.appendTag(cell.tag());
-            frozen.setTag("cells", edited);
-            frozen.setInteger("scope", 3);
-            frozen.setInteger("selected", 0);
-            HologramProjectedPlacement.Plan plan = HologramProjectedPlacement
-                .compileDisplayed(frozen, new int[] { 15, 64, 0 }, 256, () -> true);
-            SimpleAssert.eq(
-                2,
-                plan.cells()
-                    .size(),
-                "legacy family review includes both original mixed placements");
-            HologramProjectedPlacement.Cell first = plan.cells()
-                .get(0),
-                second = plan.cells()
-                    .get(1);
-            SimpleAssert.that(
-                first.x() == 1 && first.damage() == machineId
-                    && second.x() == 2
-                    && second.damage() == hatchId
-                    && retained.equals(
-                        HologramSnapshotCodec.decode(
-                            Base64.getDecoder()
-                                .decode(first.itemState())))
-                    && second.itemState()
-                        .isEmpty(),
-                "exact machine NBT and the separate pure hatch survive legacy compilation at their own positions");
+            NBTTagCompound full = new NBTTagCompound();
+            NBTTagCompound family = new NBTTagCompound();
+            family.setInteger("scope", 3);
+            family.setInteger("selected", 0);
+            SimpleAssert.eq("", HologramScreen.nativeConstructionUnavailable(baseline.data, full, false, false),
+                "an unedited, ordinary full controller stays eligible for the short native request");
+            deniedLegacyConstruction(baseline, full, false, true);
+            deniedLegacyConstruction(baseline, family, false, false);
+            deniedLegacyConstruction(pinnedMachine, full, true, false);
+            deniedLegacyConstruction(mixed, family, true, false);
+
+            HologramState.Cell first = mixed.cells.get(0), second = mixed.cells.get(1);
+            SimpleAssert.that(first.x == 16 && first.targetStack.getItemDamage() == machineId
+                && retained.equals(first.targetStack.getTagCompound())
+                && second.x == 17 && second.targetStack.getItemDamage() == hatchId
+                && !second.targetStack.hasTagCompound(),
+                "refusing the old geometry review leaves both exact local edits and their separate coordinates intact");
+
             HologramState pure = drag(baseline, baseline, backpack, 1, 1);
-            for (boolean compact : new boolean[] { false, true }) {
-                NBTTagList choices = HologramScreen
-                    .nativeReviewChoices(pure, Collections.singletonList(1), 0, 2, compact);
-                NBTTagCompound choice = choices.getCompoundTagAt(0);
-                SimpleAssert.that(
-                    choices.tagCount() == 1 && choice.getInteger("hatch") == hatchId
-                        && Arrays.equals(new int[] { 17, 64, 0 }, choice.getIntArray("xyz")),
-                    "pure manual hatch still uses its exact protected native review with either flag");
-                refusesNativeReview(pure, Collections.singletonList(1), 0, 3, compact);
-            }
+            deniedLegacyConstruction(pure, full, true, false);
             NBTTagCompound presetActive = new NBTTagCompound();
             presetActive.setBoolean("presetActive", true);
-            HologramState presetAndManual = pure.withMetadata(presetActive);
-            SimpleAssert.eq(
-                0,
-                HologramScreen.nativeReviewChoices(presetAndManual, Collections.singletonList(1), 0, 0, false)
-                    .tagCount(),
-                "flag off keeps the full preset plus manual plan rather than just the per-position pin");
-            refusesNativeReview(presetAndManual, Collections.singletonList(1), 0, 0, true);
+            deniedLegacyConstruction(pure.withMetadata(presetActive), full, true, false);
+            deniedLegacyConstruction(baseline.withMetadata(presetActive), full, false, false);
             HologramState tagged = drag(baseline, baseline, backpack, 2, 0);
-            SimpleAssert.eq(
-                0,
-                HologramScreen.nativeReviewChoices(tagged, Collections.singletonList(0), 0, 0, false)
-                    .tagCount(),
-                "a tagged manual hatch retains the disabled flag's whole legacy review");
-            refusesNativeReview(tagged, Collections.singletonList(0), 0, 0, true);
-            refusesNativeReview(mixed, Arrays.asList(0, 1), 0, 0, true);
-            refusesNativeReview(mixed, Arrays.asList(0, 1), 1, 2, false);
-            refusesNativeReview(mixed, Arrays.asList(0, 2), 0, 0, false);
+            deniedLegacyConstruction(tagged, full, true, false);
+            SimpleAssert.eq(retained, tagged.cells.get(0).targetStack.getTagCompound(),
+                "retiring the transport does not sanitize tagged hatch edits out of the local document");
+            for (int mode : new int[] { 1, 2 }) {
+                NBTTagCompound destructive = new NBTTagCompound();
+                destructive.setInteger("mode", mode);
+                deniedLegacyConstruction(baseline.withMetadata(destructive), full, false, false);
+            }
+            NBTTagCompound selection = new NBTTagCompound();
+            selection.setIntArray("selectedIndices", new int[] { 0, 1 });
+            deniedLegacyConstruction(baseline, selection, false, false);
         } finally {
             prototypes[machineId] = null;
             prototypes[hatchId] = null;
@@ -505,12 +470,10 @@ public final class HologramControllerDetailsRegression {
         return HologramLocalControllerEdits.apply(state, baseline, "customPin", request);
     }
 
-    private static void refusesNativeReview(HologramState state, Iterable<Integer> rows, int mode, int scope,
-        boolean compact) {
-        try {
-            HologramScreen.nativeReviewChoices(state, rows, mode, scope, compact);
-            throw new AssertionError("native route admitted invalid/incompatible choice: " + mode + "/" + scope);
-        } catch (IOException expected) {}
+    private static void deniedLegacyConstruction(HologramState state, NBTTagCompound settings, boolean edited,
+        boolean compatibility) {
+        SimpleAssert.that(!HologramScreen.nativeConstructionUnavailable(state.data, settings, edited, compatibility)
+            .isEmpty(), "unsupported native action must visibly refuse instead of changing or serializing the plan");
     }
 
     private static HologramState edit(HologramState state, HologramState baseline, String op, String key, int value)

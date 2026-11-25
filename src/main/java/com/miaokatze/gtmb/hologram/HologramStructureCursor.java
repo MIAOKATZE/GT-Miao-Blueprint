@@ -62,35 +62,53 @@ final class HologramStructureCursor {
         return elements.length;
     }
 
+    /**
+     * An independently authorized single-step cursor consumes the exact object it was given. The backing slot's
+     * identity check is only a fence; an exchanged element cannot supply callbacks or affect the cursor.
+     */
+    boolean consumePinned(World world, ExtendedFacing facing, int x, int y, int z, IStructureWalker walker,
+        int expectedIndex, IStructureElement<?> expected) {
+        if (expected == null || index != expectedIndex || index >= elements.length || elements[index] != expected)
+            return false;
+        // Proved construction is not a StructureLib debug visitor. A World callback can enable
+        // instrumentation after the input fence; do not dispatch an arbitrary event during this pinned step.
+        advanceElement(world, facing, x, y, z, walker, expected, false);
+        return true;
+    }
+
     /** Budget includes navigation entries and repeated/overlapping positions, not only newly captured cells. */
-    @SuppressWarnings("unchecked")
     boolean advance(World world, ExtendedFacing facing, int x, int y, int z, IStructureWalker walker, int budget,
         long deadline) {
         int start = index;
         while (index < elements.length && index - start < budget) {
             if (index > start && System.nanoTime() >= deadline) return false;
-            IStructureElement element = elements[index];
-            if (element.isNavigating()) {
-                abc[0] = (element.resetA() ? base[0] : abc[0]) + element.getStepA();
-                abc[1] = (element.resetB() ? base[1] : abc[1]) + element.getStepB();
-                abc[2] = (element.resetC() ? base[2] : abc[2]) + element.getStepC();
-            } else {
-                facing.getWorldOffset(abc, xyz);
-                int xx = xyz[0] + x, yy = xyz[1] + y, zz = xyz[2] + z;
-                boolean keepWalking;
-                if (world.blockExists(xx, yy, zz)) {
-                    if (StructureLibAPI.isInstrumentEnabled()) StructureElementVisitedEvent
-                        .fireEvent(world, xx, yy, zz, abc[0] - base[0], abc[1] - base[1], abc[2] - base[2], element);
-                    keepWalking = walker.visit(element, world, xx, yy, zz, abc[0], abc[1], abc[2]);
-                } else keepWalking = walker.blockNotLoaded(element, world, xx, yy, zz, abc[0], abc[1], abc[2]);
-                abc[0]++;
-                if (!keepWalking) {
-                    index = elements.length;
-                    return true;
-                }
-            }
-            index++;
+            advanceElement(world, facing, x, y, z, walker, elements[index], true);
         }
         return index == elements.length;
+    }
+
+    @SuppressWarnings("unchecked")
+    private void advanceElement(World world, ExtendedFacing facing, int x, int y, int z, IStructureWalker walker,
+        IStructureElement element, boolean instrument) {
+        if (element.isNavigating()) {
+            abc[0] = (element.resetA() ? base[0] : abc[0]) + element.getStepA();
+            abc[1] = (element.resetB() ? base[1] : abc[1]) + element.getStepB();
+            abc[2] = (element.resetC() ? base[2] : abc[2]) + element.getStepC();
+        } else {
+            facing.getWorldOffset(abc, xyz);
+            int xx = xyz[0] + x, yy = xyz[1] + y, zz = xyz[2] + z;
+            boolean keepWalking;
+            if (world.blockExists(xx, yy, zz)) {
+                if (instrument && StructureLibAPI.isInstrumentEnabled()) StructureElementVisitedEvent
+                    .fireEvent(world, xx, yy, zz, abc[0] - base[0], abc[1] - base[1], abc[2] - base[2], element);
+                keepWalking = walker.visit(element, world, xx, yy, zz, abc[0], abc[1], abc[2]);
+            } else keepWalking = walker.blockNotLoaded(element, world, xx, yy, zz, abc[0], abc[1], abc[2]);
+            abc[0]++;
+            if (!keepWalking) {
+                index = elements.length;
+                return;
+            }
+        }
+        index++;
     }
 }

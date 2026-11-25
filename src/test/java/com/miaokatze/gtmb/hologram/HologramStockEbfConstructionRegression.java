@@ -1,0 +1,521 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Additional terms: see AGPL-ADDITIONAL-TERMS.md in the project root.
+
+package com.miaokatze.gtmb.hologram;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.UUID;
+
+import net.minecraft.block.Block;
+import net.minecraft.entity.Entity;
+import net.minecraft.init.Blocks;
+import net.minecraft.item.ItemStack;
+import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.network.NetworkManager;
+import net.minecraft.tileentity.TileEntity;
+import net.minecraft.world.ChunkCoordIntPair;
+import net.minecraft.world.ChunkPosition;
+import net.minecraft.world.World;
+import net.minecraft.world.WorldProviderSurface;
+import net.minecraft.world.chunk.Chunk;
+import net.minecraft.world.chunk.storage.ExtendedBlockStorage;
+import net.minecraft.world.gen.ChunkProviderServer;
+import net.minecraft.world.storage.MapStorage;
+import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.event.world.BlockEvent;
+
+import com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing;
+import com.miaokatze.gtmb.hologram.HologramStockEbfProfile.Installed;
+import com.miaokatze.gtmb.hologram.HologramStockNativeConstruction.State;
+import com.miaokatze.gtmb.testutil.MinecraftTestBootstrap;
+import com.miaokatze.gtmb.testutil.SimpleAssert;
+
+import cpw.mods.fml.common.eventhandler.Event;
+import cpw.mods.fml.common.eventhandler.EventBus;
+import gregtech.api.GregTechAPI;
+import gregtech.api.metatileentity.BaseMetaTileEntity;
+import io.netty.channel.ChannelInboundHandlerAdapter;
+import io.netty.channel.embedded.EmbeddedChannel;
+
+/** Dedicated offline owner → private job → native ItemCasings setter → real scoped debit. Not a loaded game. */
+public final class HologramStockEbfConstructionRegression {
+
+    private HologramStockEbfConstructionRegression() {}
+
+    public static void main(String[] args) {
+        int status = 0;
+        try {
+            if (MinecraftTestBootstrap.enter(HologramStockEbfConstructionRegression.class, args)) {
+                HologramStockEbfProfileRegression.run(HologramStockEbfConstructionRegression::contracts);
+                System.out.println("HologramStockEbfConstructionRegression passed (offline stock writes and debits)");
+            }
+        } catch (Throwable failure) {
+            failure.printStackTrace(System.err);
+            status = 1;
+        }
+        System.exit(status);
+    }
+
+    private static void contracts(sun.misc.Unsafe unsafe, RawWorld world,
+        BaseMetaTileEntity controller, ExtendedFacing facing, List<Installed> installed)
+        throws IOException, ReflectiveOperationException {
+        var previousStorage = HologramConstructionJournal.STORAGE_ROOT.get();
+        HologramConstructionJournal.STORAGE_ROOT.set(Files.createTempDirectory("gtmb-stock-ebf-offline-"));
+        // The shared fixture factory only wires an offline actor/embedded connection. Bind it to the real
+        // loaded-section fixture before publishing any authenticated construction owner.
+        var player = HologramLibraryServiceRegression.placementPlayer(
+            unsafe, HologramPlacementFixtureWorld.create(unsafe), "RealStockEbfEngine");
+        player.worldObj = world;
+        var network = player.playerNetServerHandler.netManager;
+        network.setNetHandler(player.playerNetServerHandler);
+        var reentry = new TransportProbe(network);
+        try {
+            SimpleAssert.that(network.getClass() == NetworkManager.class && network.channel() == reentry
+                && reentry.isOpen(), "real NetworkManager retains an open embedded transport with a single late probe");
+            var exactHatches = new BaseMetaTileEntity[installed.size()];
+            for (int i = 0; i < installed.size(); i++) {
+                var keep = installed.get(i);
+                int[] pos = coordinate(controller, facing, keep.a(), keep.b(), keep.c());
+                exactHatches[i] = (BaseMetaTileEntity) world.getTileEntity(pos[0], pos[1], pos[2]);
+            }
+            player.capabilities.allowEdit = true;
+            player.capabilities.isCreativeMode = false;
+            player.posX = controller.xCoord + .5;
+            player.posY = controller.yCoord + .5;
+            player.posZ = controller.zCoord + .5;
+            var main = player.inventory.mainInventory;
+            String id = UUID.randomUUID().toString();
+            var projectorTag = new NBTTagCompound();
+            projectorTag.setString(HologramSessionKeys.TOOL_ID, id);
+            main[0].setTagCompound(projectorTag);
+            main[1] = new ItemStack(GregTechAPI.sBlockCasings1, 12, 11);
+            main[2] = new ItemStack(GregTechAPI.sBlockCasings5, 16, 1); // Wrong heat.
+            HologramWorkspace.publishActionEndpoint(player, false);
+            var endpoint = HologramWorkspace.captureActionEndpoint(player.playerNetServerHandler);
+            var gate = HologramWorkspace.constructionGate(endpoint);
+            SimpleAssert.that(gate != null, "headless fixture publishes real authenticated endpoint owner");
+            var configuration = new HologramStockNativeEntry.EbfConfig(6, installed);
+            var wrong = typed(endpoint, controller, facing, id, request(1), configuration);
+            try {
+                HologramStockNativeEntry.begin(wrong);
+                throw new AssertionError("wrong coil inventory must never start actual EBF");
+            } catch (IOException refused) {
+                SimpleAssert.that(world.writes().isEmpty() && HologramWorkspace.find(endpoint.actor) == null,
+                    "fully funded admission refuses the wrong stock identity before reserving scratch or writing");
+            }
+            main[2].setItemDamage(9);
+            var firstRequest = request(2);
+            var job = HologramStockNativeEntry.begin(typed(endpoint, controller, facing, id, firstRequest, configuration));
+            SimpleAssert.that(job.owns(HologramWorkspace.find(endpoint.actor)) && world.writes().isEmpty()
+                && !job.stop(endpoint, request(3)), "same owner gate privately reserves only the exact EBF request; wrong STOP inert");
+            var firstCasing = coordinate(controller, facing, -1, -3, 0);
+            SimpleAssert.eq(State.ACTIVE, job.tick(Long.MAX_VALUE, 32, 1), "real first permit commits only one casing");
+            SimpleAssert.that(job.placed() == 1 && world.writes().size() == 1
+                && world.getBlock(firstCasing[0], firstCasing[1], firstCasing[2]) == GregTechAPI.sBlockCasings1
+                && world.getBlockMetadata(firstCasing[0], firstCasing[1], firstCasing[2]) == 11
+                && main[1].stackSize == 11 && main[2].stackSize == 16,
+                "sealed source order gives the first native heatproof world write and one exact debit");
+            var firstCoil = coordinate(controller, facing, -1, -2, 0);
+            for (int i = 0; i < 12 && main[2].stackSize == 16; i++) job.tick(Long.MAX_VALUE, 32, 1);
+            SimpleAssert.that(world.getBlock(firstCoil[0], firstCoil[1], firstCoil[2]) == GregTechAPI.sBlockCasings5
+                && world.getBlockMetadata(firstCoil[0], firstCoil[1], firstCoil[2]) == 9 && main[2].stackSize == 15,
+                "real stock coil setter uses selected LuV meta and deducts one coil, never another stock");
+            int prefix = job.placed();
+            int casingPrefix = 12 - main[1].stackSize;
+            int coilPrefix = 16 - main[2].stackSize;
+            int previousWrites = world.writes().size();
+            SimpleAssert.that(job.stop(endpoint, firstRequest) && job.tick(Long.MAX_VALUE, 32, 8) == State.STOPPED
+                && gate.query(endpoint.constructionScope, firstRequest).outcome.committedTransactions == prefix
+                && world.writes().size() == previousWrites && HologramWorkspace.find(endpoint.actor) == null,
+                "exact owner STOP retires the job, retains only the committed prefix, and prevents another permit");
+
+            // A real Forge callback changes a different coil while observing an installed candidate.
+            main[1] = new ItemStack(GregTechAPI.sBlockCasings1, 12, 11);
+            main[2] = new ItemStack(GregTechAPI.sBlockCasings5, 16, 9);
+            var otherCoil = coordinate(controller, facing, 1, -1, 2);
+            var secondRequest = request(4);
+            var rolledBack = HologramStockNativeEntry.begin(
+                typed(endpoint, controller, facing, id, secondRequest, configuration));
+            var field = MinecraftForge.class.getDeclaredField("EVENT_BUS");
+            Object eventBase = unsafe.staticFieldBase(field);
+            long eventOffset = unsafe.staticFieldOffset(field);
+            EventBus previousBus = MinecraftForge.EVENT_BUS;
+            int[][] attempted = { null };
+            unsafe.putObjectVolatile(eventBase, eventOffset, new EventBus() {
+                @Override
+                public boolean post(Event event) {
+                    if (attempted[0] == null && event instanceof BlockEvent.PlaceEvent place && place.world == world
+                        && place.player == player) {
+                        attempted[0] = new int[] { place.x, place.y, place.z };
+                        if (java.util.Arrays.equals(attempted[0], otherCoil))
+                            throw new AssertionError("late coil must be distinct from the candidate");
+                        SimpleAssert.that(world.getBlock(place.x, place.y, place.z) != Blocks.air
+                            && main[1].stackSize == 12 && main[2].stackSize == 16,
+                            "Forge sees the single real setter before exact stock payment");
+                        world.setBlock(otherCoil[0], otherCoil[1], otherCoil[2], GregTechAPI.sBlockCasings5, 1, 3);
+                    }
+                    return false;
+                }
+            });
+            try {
+                SimpleAssert.eq(State.STOPPED, rolledBack.tick(Long.MAX_VALUE, 32, 1),
+                    "late mixed coil causes rollback and no new permits");
+            } finally {
+                unsafe.putObjectVolatile(eventBase, eventOffset, previousBus);
+            }
+            SimpleAssert.that(attempted[0] != null && world.getBlock(attempted[0][0], attempted[0][1], attempted[0][2])
+                == Blocks.air && world.getBlockMetadata(otherCoil[0], otherCoil[1], otherCoil[2]) == 1
+                && main[1].stackSize == 12 && main[2].stackSize == 16 && rolledBack.placed() == 0
+                && !HologramConstructionJournal.pending(player)
+                && gate.query(endpoint.constructionScope, secondRequest).outcome.committedTransactions == 0,
+                "restores only the owned candidate, preserves independent coil mutation, and debits neither material");
+            world.setBlock(otherCoil[0], otherCoil[1], otherCoil[2], Blocks.air, 0, 3);
+
+            var finalRequest = request(5);
+            var complete = HologramStockNativeEntry.begin(
+                typed(endpoint, controller, facing, id, finalRequest, configuration));
+            State state = State.ACTIVE;
+            for (int i = 0; i < 16 && state == State.ACTIVE; i++) state = complete.tick(Long.MAX_VALUE, 32, 8);
+            SimpleAssert.that(state == State.COMPLETE && prefix + complete.placed() == 28
+                && casingPrefix + 12 - (main[1] == null ? 0 : main[1].stackSize) == 12
+                && coilPrefix + 16 - (main[2] == null ? 0 : main[2].stackSize) == 16
+                && gate.query(endpoint.constructionScope, finalRequest).outcome.committedTransactions == complete.placed()
+                && HologramWorkspace.find(endpoint.actor) == null && !HologramConstructionJournal.pending(player),
+                "new deliberate request completes exactly the remaining shell, all 28 debits and no stray journal");
+            var lastCoilRead = coordinate(controller, facing, 1, -1, 2);
+            var changedCoil = coordinate(controller, facing, -1, -2, 0);
+            verifyLateRawReentry(unsafe, world, controller, facing, endpoint, id, configuration, request(6), firstCasing,
+                lastCoilRead, false,
+                () -> world.seed(changedCoil[0], changedCoil[1], changedCoil[2], GregTechAPI.sBlockCasings5, 1));
+            SimpleAssert.eq(1, world.getBlockMetadata(changedCoil[0], changedCoil[1], changedCoil[2]),
+                "raw late coil edit remains independently owned");
+            world.seed(changedCoil[0], changedCoil[1], changedCoil[2], GregTechAPI.sBlockCasings5, 9);
+            var energy = installed.get(0);
+            var changedHatch = coordinate(controller, facing, energy.a(), energy.b(), energy.c());
+            verifyLateRawReentry(unsafe, world, controller, facing, endpoint, id, configuration, request(7), firstCasing,
+                lastCoilRead, false, () -> world.seedTile(changedHatch[0], changedHatch[1], changedHatch[2], null));
+            SimpleAssert.that(world.getTileEntity(changedHatch[0], changedHatch[1], changedHatch[2]) == null
+                && !exactHatches[0].isInvalid(), "raw hatch loss is detected despite the original tile still being valid");
+            world.seedTile(changedHatch[0], changedHatch[1], changedHatch[2], exactHatches[0]);
+
+            for (int i = 0; i < installed.size(); i++) {
+                var keep = installed.get(i);
+                int[] pos = coordinate(controller, facing, keep.a(), keep.b(), keep.c());
+                var tile = (BaseMetaTileEntity) world.getTileEntity(pos[0], pos[1], pos[2]);
+                SimpleAssert.that(tile != null && tile == exactHatches[i] && tile.getMetaTileID() == keep.id()
+                    && tile.getFrontFacing().ordinal() == keep.facing(), "original hatch IDs and poses stay untouched");
+            }
+
+            verifyLateRawReentry(unsafe, world, controller, facing, endpoint, id, configuration, request(8), firstCasing,
+                lastCoilRead, false, () -> world.seed(changedCoil[0], changedCoil[1], changedCoil[2],
+                    GregTechAPI.sBlockCasings5, 1), reentry);
+            SimpleAssert.that(reentry.fired == 1
+                && world.getBlockMetadata(changedCoil[0], changedCoil[1], changedCoil[2]) == 1,
+                "late Channel.isOpen reentry runs before the last raw witness and cannot debit");
+            world.seed(changedCoil[0], changedCoil[1], changedCoil[2], GregTechAPI.sBlockCasings5, 9);
+            verifyRollbackWithoutVirtualRead(unsafe, world, controller, facing, endpoint, id, configuration,
+                request(9), firstCasing);
+
+            verifyLateRawReentry(unsafe, world, controller, facing, endpoint, id, configuration, request(10), firstCasing,
+                lastCoilRead, true, () -> world.seed(firstCasing[0], firstCasing[1], firstCasing[2], Blocks.dirt, 11));
+            SimpleAssert.that(world.getBlock(firstCasing[0], firstCasing[1], firstCasing[2]) == Blocks.dirt,
+                "a raw contested candidate is retained with its exact receipt, never restored over the foreign block");
+        } finally {
+            HologramWorkspace.revokeActionEndpoint(player);
+            network.channel().close();
+            HologramConstructionJournal.STORAGE_ROOT.set(previousStorage);
+        }
+    }
+
+    private static void verifyLateRawReentry(sun.misc.Unsafe unsafe, RawWorld world, BaseMetaTileEntity controller,
+        ExtendedFacing facing, HologramWorkspace.ActionEndpoint endpoint, String id,
+        HologramStockNativeEntry.EbfConfig configuration, HologramConstructionTaskGate.Request key,
+        int[] candidate, int[] lastCoil, boolean contestedCandidate, Runnable foreignMutation)
+        throws IOException, ReflectiveOperationException {
+        verifyLateRawReentry(unsafe, world, controller, facing, endpoint, id, configuration, key, candidate,
+            lastCoil, contestedCandidate, foreignMutation, null);
+    }
+
+    private static void verifyLateRawReentry(sun.misc.Unsafe unsafe, RawWorld world, BaseMetaTileEntity controller,
+        ExtendedFacing facing, HologramWorkspace.ActionEndpoint endpoint, String id,
+        HologramStockNativeEntry.EbfConfig configuration, HologramConstructionTaskGate.Request key,
+        int[] candidate, int[] lastCoil, boolean contestedCandidate, Runnable foreignMutation, TransportProbe transport)
+        throws IOException, ReflectiveOperationException {
+        int x = candidate[0], y = candidate[1], z = candidate[2];
+        world.seed(x, y, z, Blocks.air, 0);
+        var stock = endpoint.player.inventory.mainInventory;
+        stock[1] = new ItemStack(GregTechAPI.sBlockCasings1, 12, 11);
+        stock[2] = new ItemStack(GregTechAPI.sBlockCasings5, 16, 9);
+        var owned = HologramStockNativeEntry.begin(typed(endpoint, controller, facing, id, key, configuration));
+        int before = world.writes().size();
+        var bus = MinecraftForge.class.getDeclaredField("EVENT_BUS");
+        var base = unsafe.staticFieldBase(bus);
+        long offset = unsafe.staticFieldOffset(bus);
+        EventBus previous = MinecraftForge.EVENT_BUS;
+        int[] phase = { 0 };
+        unsafe.putObjectVolatile(base, offset, new EventBus() {
+            @Override
+            public boolean post(Event event) {
+                if (phase[0] == 0 && event instanceof BlockEvent.PlaceEvent place && place.world == world
+                    && place.player == endpoint.player && place.x == x && place.y == y && place.z == z) {
+                    phase[0] = 1;
+                    Runnable change = () -> {
+                        phase[0] = 2;
+                        foreignMutation.run();
+                    };
+                    world.watchLateCandidate(candidate, lastCoil, transport == null ? change : () -> transport.onOpen = change);
+                }
+                return false;
+            }
+        });
+        try {
+            SimpleAssert.eq(contestedCandidate ? State.RECOVERY_PENDING : State.STOPPED,
+                owned.tick(Long.MAX_VALUE, 32, 1),
+                "late change after the full virtual dependency read is settled only with exact ownership");
+        } finally {
+            unsafe.putObjectVolatile(base, offset, previous);
+        }
+        var gate = HologramWorkspace.constructionGate(endpoint);
+        SimpleAssert.that(phase[0] == 2 && stock[1].stackSize == 12 && stock[2].stackSize == 16 && owned.placed() == 0,
+            "the raw witness ran after the final virtual callback and prevented both debits");
+        var settled = gate.query(endpoint.constructionScope, key);
+        if (contestedCandidate) {
+            SimpleAssert.that(world.writes().size() == before + 1 && owned.unsettled() != null
+                && settled.phase == HologramConstructionTaskGate.Phase.RECOVERY_PENDING
+                && HologramConstructionJournal.pending(endpoint.player),
+                "unknown raw candidate leaves the exact permit and receipt pending without rollback");
+        } else {
+            SimpleAssert.that(world.writes().size() == before + 2 && world.getBlock(x, y, z) == Blocks.air
+                && settled.outcome.committedTransactions == 0 && !HologramConstructionJournal.pending(endpoint.player),
+                "actual owned candidate is rolled back when a different raw dependency changed");
+        }
+    }
+
+    private static void verifyRollbackWithoutVirtualRead(sun.misc.Unsafe unsafe, RawWorld world,
+        BaseMetaTileEntity controller, ExtendedFacing facing, HologramWorkspace.ActionEndpoint endpoint, String id,
+        HologramStockNativeEntry.EbfConfig configuration, HologramConstructionTaskGate.Request key, int[] candidate)
+        throws IOException, ReflectiveOperationException {
+        int x = candidate[0], y = candidate[1], z = candidate[2];
+        world.seed(x, y, z, Blocks.air, 0);
+        var stock = endpoint.player.inventory.mainInventory;
+        stock[1] = new ItemStack(GregTechAPI.sBlockCasings1, 12, 11);
+        stock[2] = new ItemStack(GregTechAPI.sBlockCasings5, 16, 9);
+        var owned = HologramStockNativeEntry.begin(typed(endpoint, controller, facing, id, key, configuration));
+        int before = world.writes().size();
+        var bus = MinecraftForge.class.getDeclaredField("EVENT_BUS");
+        var base = unsafe.staticFieldBase(bus);
+        long offset = unsafe.staticFieldOffset(bus);
+        EventBus previous = MinecraftForge.EVENT_BUS;
+        boolean[] veto = { false };
+        unsafe.putObjectVolatile(base, offset, new EventBus() {
+            @Override
+            public boolean post(Event event) {
+                if (!veto[0] && event instanceof BlockEvent.PlaceEvent place && place.world == world
+                    && place.player == endpoint.player && place.x == x && place.y == y && place.z == z) {
+                    veto[0] = true;
+                    world.forbidVirtualCandidate = candidate;
+                    return true;
+                }
+                return false;
+            }
+        });
+        try {
+            SimpleAssert.eq(State.STOPPED, owned.tick(Long.MAX_VALUE, 32, 1), "Forge veto stops exact EBF without debit");
+        } finally {
+            world.forbidVirtualCandidate = null;
+            unsafe.putObjectVolatile(base, offset, previous);
+        }
+        SimpleAssert.that(veto[0] && world.writes().size() == before + 2 && world.getBlock(x, y, z) == Blocks.air
+            && world.getBlockMetadata(x, y, z) == 0 && stock[1].stackSize == 12 && stock[2].stackSize == 16
+            && !HologramConstructionJournal.pending(endpoint.player),
+            "original raw Air is restored and proved without any intervening virtual candidate lookup");
+    }
+
+    /** Real EmbeddedChannel behavior, with only the late armed isOpen call made reentrant. */
+    private static final class TransportProbe extends EmbeddedChannel {
+
+        Runnable onOpen;
+        int fired;
+
+        TransportProbe(NetworkManager network) throws ReflectiveOperationException {
+            super(new ChannelInboundHandlerAdapter());
+            var field = NetworkManager.class.getDeclaredField("channel");
+            field.setAccessible(true);
+            var original = network.channel();
+            field.set(network, this);
+            original.close();
+        }
+
+        @Override
+        public boolean isOpen() {
+            if (onOpen != null) {
+                Runnable mutation = onOpen;
+                onOpen = null;
+                fired++;
+                mutation.run();
+            }
+            return super.isOpen();
+        }
+    }
+
+    private static HologramStockNativeEntry.Submission typed(HologramWorkspace.ActionEndpoint endpoint,
+        BaseMetaTileEntity controller, ExtendedFacing facing, String tool, HologramConstructionTaskGate.Request request,
+        HologramStockNativeEntry.EbfConfig configuration) {
+        var submitted = HologramStockNativeEntry.ebfIngress(endpoint, request, endpoint.constructionScope.generation,
+            controller.xCoord, controller.yCoord, controller.zCoord, 2, 0, facing.ordinal(), 1, false, false,
+            configuration, tool);
+        SimpleAssert.that(submitted != null, "closed EBF request admits current typed #1000 intent");
+        return submitted;
+    }
+
+    private static HologramConstructionTaskGate.Request request(long sequence) {
+        return new HologramConstructionTaskGate.Request(
+            UUID.randomUUID(), sequence, HologramConstructionTaskGate.Kind.INCREMENTAL_NATIVE);
+    }
+
+    private static int[] coordinate(BaseMetaTileEntity controller, ExtendedFacing facing, int a, int b, int c) {
+        int[] result = new int[3];
+        facing.getWorldOffset(new int[] { a, b, c }, result);
+        result[0] += controller.xCoord;
+        result[1] += controller.yCoord;
+        result[2] += controller.zCoord;
+        return result;
+    }
+
+    /** Real loaded Forge backing; overrides the headless setter only to avoid creating/running a server instance. */
+    static final class RawWorld extends HologramServiceEditRegression.ReadOnlyWorld {
+
+        private List<String> writes;
+        private int[] watch, candidate, forbidVirtualCandidate;
+        private Runnable pending;
+        private boolean reachedLastCoil;
+
+        static RawWorld create(sun.misc.Unsafe unsafe, int x, int z) throws ReflectiveOperationException {
+            var created = (RawWorld) unsafe.allocateInstance(RawWorld.class);
+            created.writes = new ArrayList<>();
+            setWorld(created, "provider", new WorldProviderSurface());
+            setWorld(created, "worldAccesses", new ArrayList<>());
+            setWorld(created, "perWorldStorage", new MapStorage(null));
+            created.capturedBlockSnapshots = new ArrayList<>();
+            created.theChunkProviderServer = new ChunkProviderServer(created, null, null);
+            for (int dx = -1; dx <= 1; dx++) for (int dz = -1; dz <= 1; dz++) {
+                var chunk = new Chunk(created, (x >> 4) + dx, (z >> 4) + dz);
+                chunk.isChunkLoaded = true;
+                created.theChunkProviderServer.loadedChunkHashMap.add(
+                    ChunkCoordIntPair.chunkXZ2Int(chunk.xPosition, chunk.zPosition), chunk);
+            }
+            return created;
+        }
+
+        private static void setWorld(RawWorld world, String name, Object value) throws ReflectiveOperationException {
+            var field = World.class.getDeclaredField(name);
+            field.setAccessible(true);
+            field.set(world, value);
+        }
+
+        private Chunk loaded(int x, int z) {
+            return (Chunk) theChunkProviderServer.loadedChunkHashMap.getValueByKey(
+                ChunkCoordIntPair.chunkXZ2Int(x >> 4, z >> 4));
+        }
+
+        void seed(int x, int y, int z, Block block, int meta) {
+            var sections = loaded(x, z).getBlockStorageArray();
+            if (sections[y >> 4] == null) sections[y >> 4] = new ExtendedBlockStorage(y & ~15, false);
+            sections[y >> 4].func_150818_a(x & 15, y & 15, z & 15, block);
+            sections[y >> 4].setExtBlockMetadata(x & 15, y & 15, z & 15, meta);
+        }
+
+        void seedTile(int x, int y, int z, TileEntity tile) {
+            var tiles = loaded(x, z).chunkTileEntityMap;
+            var pos = new ChunkPosition(x & 15, y, z & 15);
+            if (tile == null) tiles.remove(pos);
+            else tiles.put(pos, tile);
+        }
+
+        List<String> writes() {
+            return writes;
+        }
+
+        void watchLateCandidate(int[] currentCandidate, int[] lastCoil, Runnable mutation) {
+            if (Arrays.equals(currentCandidate, lastCoil)) throw new AssertionError("watch must be a distinct coil");
+            watch = lastCoil;
+            candidate = currentCandidate;
+            pending = mutation;
+            reachedLastCoil = false;
+        }
+
+        private static boolean same(int[] point, int x, int y, int z) {
+            return point[0] == x && point[1] == y && point[2] == z;
+        }
+
+        private void rejectRollbackProbe(int x, int y, int z) {
+            if (forbidVirtualCandidate != null && same(forbidVirtualCandidate, x, y, z))
+                throw new AssertionError("rollback used a virtual candidate read instead of exact raw ownership");
+        }
+
+        @Override
+        public boolean blockExists(int x, int y, int z) {
+            rejectRollbackProbe(x, y, z);
+            return y >= 0 && y < 256 && loaded(x, z) != null;
+        }
+
+        @Override
+        public Block getBlock(int x, int y, int z) {
+            rejectRollbackProbe(x, y, z);
+            var block = loaded(x, z).getBlock(x & 15, y, z & 15);
+            if (pending != null) {
+                if (same(watch, x, y, z)) reachedLastCoil = true;
+                else if (reachedLastCoil && same(candidate, x, y, z)) {
+                    var mutation = pending;
+                    pending = null;
+                    mutation.run();
+                }
+            }
+            return block;
+        }
+
+        @Override
+        public int getBlockMetadata(int x, int y, int z) {
+            rejectRollbackProbe(x, y, z);
+            return loaded(x, z).getBlockMetadata(x & 15, y, z & 15);
+        }
+
+        @Override
+        public TileEntity getTileEntity(int x, int y, int z) {
+            rejectRollbackProbe(x, y, z);
+            return loaded(x, z).chunkTileEntityMap.get(new ChunkPosition(x & 15, y, z & 15));
+        }
+
+        @Override
+        public boolean isAirBlock(int x, int y, int z) {
+            return getBlock(x, y, z) == Blocks.air;
+        }
+
+        @Override
+        public boolean canPlaceEntityOnSide(Block block, int x, int y, int z, boolean replace, int side, Entity entity,
+            ItemStack stack) {
+            return block != null && block != Blocks.air && blockExists(x, y, z) && isAirBlock(x, y, z)
+                && getTileEntity(x, y, z) == null;
+        }
+
+        @Override
+        public boolean setBlock(int x, int y, int z, Block block, int meta, int flags) {
+            seed(x, y, z, block, meta);
+            writes.add(x + "," + y + "," + z);
+            return true;
+        }
+
+        @Override
+        public boolean setBlockMetadataWithNotify(int x, int y, int z, int meta, int flags) {
+            seed(x, y, z, getBlock(x, y, z), meta);
+            return true;
+        }
+
+        @Override
+        public void playSoundEffect(double x, double y, double z, String sound, float volume, float pitch) {}
+    }
+}

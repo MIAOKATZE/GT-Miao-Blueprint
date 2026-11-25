@@ -100,6 +100,8 @@ public final class HologramLibrarySocketClientProbe {
                 stage = 3;
                 NBTTagCompound request = HologramLibraryProtocol.request("download");
                 request.setString("id", publicId);
+                request.setLong("clientTaskToken", 7);
+                request.setString("downloadIntent", "publicCopy");
                 HologramNetwork.sendLibrary(request);
             } else if (stage == 3 && "downloadBegin".equals(op) && publicId.equals(reply.getString("id"))) {
                 downloadId = reply.getString("transfer");

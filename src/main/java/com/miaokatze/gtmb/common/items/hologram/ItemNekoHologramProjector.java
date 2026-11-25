@@ -8,6 +8,7 @@ import java.util.Set;
 
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.player.EntityPlayer;
+import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.item.ItemStack;
 import net.minecraft.world.World;
 
@@ -66,6 +67,8 @@ public class ItemNekoHologramProjector extends ItemConstructableTrigger {
     @Override
     public void onUpdate(ItemStack stack, World world, Entity entity, int slot, boolean selected) {
         super.onUpdate(stack, world, entity, slot, selected);
+        if (selected && !world.isRemote && entity instanceof EntityPlayerMP player)
+            HologramService.initializeHeldProjectorIdentity(player, world, slot, stack);
         if (!world.isRemote && entity instanceof EntityPlayer
             && stack.hasTagCompound()
             && stack.getTagCompound()

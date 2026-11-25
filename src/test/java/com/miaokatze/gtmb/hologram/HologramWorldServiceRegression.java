@@ -33,12 +33,16 @@ public final class HologramWorldServiceRegression {
             unsafeField.setAccessible(true);
             sun.misc.Unsafe unsafe = (sun.misc.Unsafe) unsafeField.get(null);
             EntityPlayerMP player = (EntityPlayerMP) unsafe.allocateInstance(FeedbackPlayer.class);
+            UUID actorId = UUID.fromString("204d8323-b5d7-42db-8d11-273ce72bc4a5");
             for (Field field : EntityPlayer.class.getDeclaredFields()) {
                 if (field.getType() != GameProfile.class) continue;
                 field.setAccessible(true);
-                field.set(
-                    player,
-                    new GameProfile(UUID.fromString("204d8323-b5d7-42db-8d11-273ce72bc4a5"), "WorldFlowFixture"));
+                field.set(player, new GameProfile(actorId, "WorldFlowFixture"));
+            }
+            // GameProfile does not initialize the actual Entity UUID when allocated through Unsafe.
+            for (Field field : Entity.class.getDeclaredFields()) if (field.getType() == UUID.class) {
+                field.setAccessible(true);
+                field.set(player, actorId);
             }
             HologramServiceEditRegression.ReadOnlyWorld world = (HologramServiceEditRegression.ReadOnlyWorld) unsafe
                 .allocateInstance(HologramServiceEditRegression.ReadOnlyWorld.class);

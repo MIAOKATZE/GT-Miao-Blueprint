@@ -15,13 +15,14 @@ import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 import net.minecraft.world.WorldServer;
 
+import com.miaokatze.gtmb.api.CutTransforms.Transform;
 import com.miaokatze.gtmb.hologram.HologramSnapshotCodec;
 
 /** Exact server implementation calls for a save-owned lab actor, never a fabricated network connection. */
 final class TestLabBackend {
 
     private final TestLabRuntime runtime;
-    private final Method execute, capture;
+    private final Method execute, capture, transform;
 
     TestLabBackend(TestLabRuntime runtime) throws ReflectiveOperationException {
         this.runtime = runtime;
@@ -39,6 +40,9 @@ final class TestLabBackend {
                 int.class);
         execute.setAccessible(true);
         capture.setAccessible(true);
+        transform = Class.forName("com.miaokatze.gtmb.hologram.HologramCutTransforms").getDeclaredMethod(
+            "apply", NBTTagCompound.class, Transform.class, int.class, int.class, int.class);
+        transform.setAccessible(true);
     }
 
     NBTTagCompound capture(TestLabZone zone, int sx, int sy, int sz) throws Exception {
@@ -58,12 +62,35 @@ final class TestLabBackend {
     }
 
     NBTTagCompound call(NBTTagCompound request) throws Exception {
-        runtime.requireActor();
-        verifyCache();
-        NBTTagCompound reply = (NBTTagCompound) invoke(execute, runtime.actor().player, request.copy());
+        NBTTagCompound reply = reply(request);
         if (!reply.getBoolean("success"))
             throw new IOException("Production cut rejected: " + reply.getString("message"));
         return reply;
+    }
+
+    private NBTTagCompound reply(NBTTagCompound request) throws Exception {
+        runtime.requireActor();
+        verifyCache();
+        return (NBTTagCompound) invoke(execute, runtime.actor().player, request.copy());
+    }
+
+    NBTTagCompound retiredPreview(NBTTagCompound request) throws Exception {
+        if (!"preview".equals(request.getString("action"))) throw new IOException("Expected retired preview action");
+        return reply(request);
+    }
+
+    /** Detached oracle from the live actor's validated save file, not a packet or alternate production route. */
+    NBTTagCompound localClipboardPose(String id, long sequence, Transform pose, int x, int y, int z)
+        throws Exception {
+        runtime.requireActor();
+        NBTTagList entries = HologramSnapshotCodec.decode(cacheBytes()).getTagList("entries", 10);
+        for (int i = 0; i < entries.tagCount(); i++) {
+            NBTTagCompound entry = entries.getCompoundTagAt(i);
+            if (sequence > 0 && id.equals(entry.getString("id")) && entry.hasKey("sequence", 4)
+                && sequence == entry.getLong("sequence"))
+                return (NBTTagCompound) invoke(transform, entry, pose, x, y, z);
+        }
+        throw new IOException("Expected exact retained lab clipboard entry");
     }
 
     /** A failed previous run may retain a real pending transaction: never erase that cache or reset around it. */

@@ -15,6 +15,7 @@ import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
 import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
+import com.miaokatze.gtmb.hologram.HologramBusinessWirePolicy;
 import com.miaokatze.gtmb.testutil.MinecraftTestBootstrap;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
@@ -726,6 +727,26 @@ public final class HologramLibrarySaveLifecycleRegression {
             Method receive = HologramLibraryClient.class.getDeclaredMethod("receive", NBTTagCompound.class);
             receive.setAccessible(true);
             String id = "public_" + java.util.UUID.randomUUID();
+            client.previewPublic(id, false);
+            SimpleAssert.that(client.browsePreviewStatus().contains("下载按钮"),
+                "cold public browse shows the original explicit-download affordance");
+            client.previewPublic(id, true);
+            SimpleAssert.that(client.status().contains("请手动下载"), "cold place asks for a deliberate local copy");
+            java.util.concurrent.atomic.AtomicReference<String> coldEdit = new java.util.concurrent.atomic.AtomicReference<>();
+            client.openPublic(id, ignored -> { throw new AssertionError("no cold public editor bytes"); }, coldEdit::set);
+            SimpleAssert.that(coldEdit.get() != null && coldEdit.get().contains("客户端蓝图库"),
+                "cold public edit reports the real local-copy requirement");
+            SimpleAssert.that(wire.requests.isEmpty() && worker.getQueue().isEmpty() && client.backgroundTaskToken() == 0,
+                "cold browse/place/edit literally send zero packets and acquire no transfer owner");
+            library.rememberPublic("", id); // A legacy remembered public ID, not a downloaded local pair.
+            Method recent = HologramLibraryClient.class.getDeclaredMethod("previewLastLocal", String.class);
+            recent.setAccessible(true);
+            recent.invoke(client, "would-be-legacy-fallback");
+            worker.getQueue().remove().run();
+            drainPublicCopyCallbacks(clientQueue);
+            SimpleAssert.that(wire.requests.isEmpty() && worker.getQueue().isEmpty() && client.backgroundTaskToken() == 0,
+                "cold remembered public ID sends zero packets and never falls back to a different local source");
+
             byte[] json = ("{\"schema\":2,\"blueprint\":{\"schema\":2,\"id\":\"" + id
                 + "\",\"name\":\"Lifecycle\",\"authorName\":\"Fixture\",\"authorUuid\":\""
                 + java.util.UUID.randomUUID()
@@ -740,17 +761,36 @@ public final class HologramLibrarySaveLifecycleRegression {
             java.io.ByteArrayOutputStream png = new java.io.ByteArrayOutputStream();
             javax.imageio.ImageIO.write(cover, "png", png);
             byte[] artifact = HologramBlueprintArtifact.encode(json, png.toByteArray());
+            String sourceHash = com.miaokatze.gtmb.hologram.HologramBlueprintContentHash.of(json, id);
             for (int phase = 0; phase < 5; phase++) {
                 boolean done = phase != 0;
                 set(client, "selectedServer", id);
+                NBTTagList catalog = new NBTTagList();
+                if (phase == 0) {
+                    NBTTagCompound row = new NBTTagCompound();
+                    row.setString("id", id);
+                    row.setString("sourceHash", sourceHash);
+                    row.setLong("sourceRevision", 1L);
+                    catalog.appendTag(row);
+                }
+                set(client, "server", catalog);
                 client.downloadSelected();
                 long task = client.backgroundTaskToken();
+                SimpleAssert.that(task > 0 && wire.requests.size() == 1,
+                    "deliberate Download starts exactly one owned transfer");
+                NBTTagCompound request = wire.requests.remove(0);
                 SimpleAssert.that(
-                    task > 0 && wire.requests.size() == 1
-                        && "download".equals(
-                            wire.requests.remove(0)
-                                .getString("op")),
-                    "download starts once");
+                    request.getLong("clientTaskToken") == task && id.equals(request.getString("id"))
+                        && HologramBusinessWirePolicy.PUBLIC_COPY.equals(
+                            request.getString(HologramBusinessWirePolicy.DOWNLOAD_INTENT_KEY))
+                        && HologramBusinessWirePolicy.libraryRequest(request, HologramBusinessWirePolicy.Owner.NONE,
+                            HologramBusinessWirePolicy.Origin.EXPLICIT_LIBRARY_DOWNLOAD)
+                            == HologramBusinessWirePolicy.Intent.LIBRARY_DOWNLOAD,
+                    "actual explicit download carries the canonical id, owned token, and required copy intent");
+                SimpleAssert.that(phase == 0
+                    ? sourceHash.equals(request.getString("sourceHash")) && request.getLong("sourceRevision") == 1L
+                    : !request.hasKey("sourceHash") && !request.hasKey("sourceRevision"),
+                    "source revision and hash are always exact or both absent");
                 String transfer = java.util.UUID.randomUUID()
                     .toString();
                 NBTTagCompound packet = new NBTTagCompound();
@@ -758,7 +798,7 @@ public final class HologramLibrarySaveLifecycleRegression {
                 packet.setLong("clientTaskToken", task);
                 packet.setString("purpose", "public");
                 packet.setString("id", id);
-                packet.setString("sourceHash", com.miaokatze.gtmb.hologram.HologramBlueprintContentHash.of(json, id));
+                packet.setString("sourceHash", sourceHash);
                 packet.setLong("sourceRevision", 1);
                 packet.setString("transfer", transfer);
                 packet.setInteger("artifactVersion", HologramBlueprintArtifact.VERSION);
@@ -839,6 +879,22 @@ public final class HologramLibrarySaveLifecycleRegression {
                             .run();
                         drainPublicCopyCallbacks(clientQueue);
                         SimpleAssert.eq(0, wire.requests.size(), "refreshing the verified local copy sends no request");
+                        java.util.concurrent.atomic.AtomicReference<byte[]> opened = new java.util.concurrent.atomic.AtomicReference<>();
+                        client.openPublic(id, opened::set, reason -> { throw new AssertionError(reason); });
+                        worker.getQueue().remove().run();
+                        drainPublicCopyCallbacks(clientQueue);
+                        SimpleAssert.that(java.util.Arrays.equals(expected.json, opened.get()) && wire.requests.isEmpty(),
+                            "warm public edit reads the committed deliberate copy, with no transfer");
+                        client.previewPublic(id, true);
+                        worker.getQueue().remove().run();
+                        drainPublicCopyCallbacks(clientQueue);
+                        var display = (HologramLibraryClient.DisplaySource) get(client, "displayPreparing");
+                        SimpleAssert.that(display != null && saved.equals(display.localId)
+                            && display.publicId.isEmpty() && wire.requests.isEmpty(),
+                            "warm place uses the verified indexed private artifact, never public geometry");
+                        client.cancel();
+                        drainPublicCopyCallbacks(clientQueue);
+                        SimpleAssert.that(wire.requests.isEmpty(), "cancelling this local preview sends zero packets");
                         continue;
                     }
                     drainPublicCopyCallbacks(clientQueue);

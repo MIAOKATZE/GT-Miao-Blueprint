@@ -19,11 +19,16 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.network.NetHandlerPlayServer;
 import net.minecraft.network.NetworkManager;
+import net.minecraft.network.play.server.S02PacketChat;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.dedicated.DedicatedServer;
 
 import com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 import com.mojang.authlib.GameProfile;
 
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.embedded.EmbeddedChannel;
 
@@ -178,7 +183,7 @@ final class HologramLibraryServiceRegression {
                 "only exact JSON and verified PNG disk ACK retires the nonce");
             owner.inventory.currentItem = 0;
             set(session, "libraryUiActive", true);
-            exerciseLocalReceipt(owner, other, reconnect, session, request, savedLocal, jsonSha, previewSha);
+            exerciseLocalReceipt(unsafe, owner, other, reconnect, session, request, savedLocal, jsonSha, previewSha);
             NBTTagCompound close = (NBTTagCompound) request.copy();
             close.setString("op", "close");
             HologramService.handle(owner, close);
@@ -290,6 +295,8 @@ final class HologramLibraryServiceRegression {
             HologramService.libraryQuickCancel(owner, quickToken);
             SimpleAssert
                 .that(!HologramService.librarySessionCurrent(owner, ticket), "Escape revokes pending quick activation");
+            retiredDraftSaveActions((HologramSession) quickSession);
+            retiredPublicHydration(unsafe, (HologramSession) quickSession, sessions);
             SimpleAssert.that(!HologramLibraryFacade.enabled(), "headless/integrated path has no dedicated library");
             SimpleAssert.that(
                 !HologramLibraryService.sessionCurrent(owner, request),
@@ -333,6 +340,213 @@ final class HologramLibraryServiceRegression {
                 else sessions.put(ownerId, previous);
             }
         }
+    }
+
+    private static void retiredDraftSaveActions(HologramSession session) throws ReflectiveOperationException {
+        EntityPlayerMP player = session.player;
+        EmbeddedChannel channel = (EmbeddedChannel) player.playerNetServerHandler.netManager.channel();
+        Method dispatch = HologramNetwork.class.getDeclaredMethod("dispatch", EntityPlayerMP.class, NBTTagCompound.class);
+        dispatch.setAccessible(true);
+        channel.runPendingTasks();
+        while (channel.readOutbound() != null) {}
+        String receipt = session.blueprintSaveReceipt;
+        long task = session.blueprintClientTaskToken, sequence = session.uiSequence, revision = session.planRevision;
+        var capture = session.capture;
+        var review = session.ae.review;
+        var coverage = session.voucherCoverageTask;
+        var savePrep = session.structureSavePreparation;
+        boolean dirty = session.blueprintDirty;
+        for (String op : new String[] { "savePreset", "saveBlueprint", "saveBlueprintAs", "saveBlueprintReplace",
+            "updatePreset", "exportDraft", "confirmAeSave", "exportBlueprint" }) {
+            // The integrated share export is genuinely local disk output, not the retired draft transport.
+            if ("exportBlueprint".equals(op) && !HologramLibraryFacade.enabled()) continue;
+            NBTTagCompound request = new NBTTagCompound();
+            request.setString("op", op);
+            request.setString("session", session.id);
+            request.setLong("editorWorkspaceEpoch", session.editorWorkspaceEpoch);
+            request.setLong("uiSequence", sequence + 1L);
+            dispatchLegacyPublicAction(dispatch, player, request);
+            assertPublicHydrationNotice(channel, "retired draft " + op);
+            SimpleAssert.that(HologramWorkspace.find(player.getUniqueID()) == session && session.capture == capture
+                && session.ae.review == review && session.voucherCoverageTask == coverage
+                && session.structureSavePreparation == savePrep && session.blueprintSaveReceipt.equals(receipt)
+                && session.blueprintClientTaskToken == task && session.uiSequence == sequence
+                && session.planRevision == revision && session.blueprintDirty == dirty,
+                op + " creates no preparation, save receipt, or dirty-state change");
+        }
+        try {
+            HologramLibraryFacade.downloadDraft(player, new HologramPresets.Preset(), session.id, revision,
+                "local_" + UUID.randomUUID(), "unissued", 91L);
+            throw new AssertionError("retired post-review port must never enqueue raw JSON");
+        } catch (java.io.IOException expected) {
+            SimpleAssert.that(expected.getMessage().contains("未下载、未保存"),
+                "post-review port refuses before reaching the server library in either mode");
+        }
+    }
+
+    private static void retiredPublicHydration(sun.misc.Unsafe unsafe, HologramSession session,
+        Map<UUID, Object> sessions) throws ReflectiveOperationException {
+        EntityPlayerMP player = session.player;
+        UUID owner = player.getUniqueID();
+        String publicId = "public_" + UUID.randomUUID();
+        Field global = MinecraftServer.class.getDeclaredField("mcServer");
+        global.setAccessible(true);
+        Object originalServer = global.get(null);
+        Method dispatch = HologramNetwork.class.getDeclaredMethod("dispatch", EntityPlayerMP.class, NBTTagCompound.class);
+        dispatch.setAccessible(true);
+        EmbeddedChannel channel = (EmbeddedChannel) player.playerNetServerHandler.netManager.channel();
+        SimpleAssert.that(sessions.get(owner) == session && !session.cancelled && channel.isOpen(),
+            "public refusal fixture starts with the authenticated current session and open transport");
+        channel.runPendingTasks();
+        while (channel.readOutbound() != null) {}
+        long sequence = session.uiSequence, resync = session.snapshotResyncTick;
+        HologramPresets.Preset originalPreset = session.virtualPreset;
+        HologramCapture originalCapture = session.capture;
+        boolean originalOpen = session.open, originalInitial = session.libraryInitialSnapshot;
+        String originalStatus = session.status, originalPurpose = session.openPurpose;
+        ItemStack tool = player.getHeldItem();
+        NBTTagCompound originalTool = (NBTTagCompound) tool.getTagCompound().copy();
+        try {
+            global.set(null, unsafe.allocateInstance(DedicatedServer.class));
+            SimpleAssert.that(HologramLibraryFacade.enabled(), "fixture uses the actual dedicated public mode");
+            retiredDraftSaveActions(session);
+            retiredReadKeepsRemovedProjection(unsafe, dispatch, sessions,
+                (HologramServiceEditRegression.ReadOnlyWorld) player.worldObj, publicId);
+            for (String op : new String[] { "previewPreset", "editPreset", "choosePlacementPreset",
+                "requestFullSnapshot" }) {
+                if ("requestFullSnapshot".equals(op)) {
+                    HologramPresets.Preset remote = new HologramPresets.Preset();
+                    remote.id = publicId;
+                    session.virtualPreset = remote;
+                }
+                HologramPresets.Preset before = session.virtualPreset;
+                NBTTagCompound request = new NBTTagCompound();
+                request.setString("op", op);
+                request.setString("session", session.id);
+                if (!"requestFullSnapshot".equals(op)) request.setString("presetId", publicId);
+                request.setLong("uiSequence", sequence + 1L);
+                dispatchLegacyPublicAction(dispatch, player, request);
+                assertPublicHydrationNotice(channel, op);
+                SimpleAssert.that(sessions.get(owner) == session && session.capture == originalCapture
+                    && session.virtualPreset == before && session.uiSequence == sequence
+                    && session.snapshotResyncTick == resync && session.open == originalOpen
+                    && session.openPurpose.equals(originalPurpose) && session.status.equals(originalStatus)
+                    && session.libraryInitialSnapshot == originalInitial,
+                    op + " leaves current presentation, plan and full-resync watermark untouched");
+            }
+
+            // Direct compatibility producer is fenced too, not merely one network opcode.
+            session.virtualPreset = originalPreset;
+            HologramPresetWorkflow.loadPreset(session, publicId, false);
+            SimpleAssert.that(session.virtualPreset == originalPreset && session.capture == originalCapture
+                && session.status.contains("手动下载"), "direct full public load fails before opening the server library");
+            session.status = originalStatus;
+
+            sessions.remove(owner);
+            NBTTagCompound quick = new NBTTagCompound();
+            quick.setString("action", "quickPlaceLastBlueprint");
+            quick.setString("publicPresetId", publicId);
+            dispatchLegacyPublicAction(dispatch, player, quick);
+            assertPublicHydrationNotice(channel, "quick explicit public source");
+            SimpleAssert.that(sessions.get(owner) == null, "quick public request does not create or activate a workspace");
+
+            quick.removeTag("publicPresetId");
+            tool.getTagCompound().setString(HologramSessionKeys.SELECTED_PRESET, publicId);
+            dispatchLegacyPublicAction(dispatch, player, quick);
+            assertPublicHydrationNotice(channel, "quick remembered public source");
+            SimpleAssert.that(sessions.get(owner) == null, "remembered public id cannot reopen the legacy transfer");
+        } finally {
+            sessions.put(owner, session);
+            tool.setTagCompound(originalTool);
+            session.virtualPreset = originalPreset;
+            session.status = originalStatus;
+            global.set(null, originalServer);
+        }
+    }
+
+    private static void retiredReadKeepsRemovedProjection(sun.misc.Unsafe unsafe, Method dispatch,
+        Map<UUID, Object> sessions, HologramServiceEditRegression.ReadOnlyWorld world, String publicId)
+        throws ReflectiveOperationException {
+        UUID id = UUID.randomUUID();
+        EntityPlayerMP player = player(unsafe, world, id, "RetiredHydrationProjection");
+        EmbeddedChannel channel = (EmbeddedChannel) player.playerNetServerHandler.netManager.channel();
+        try {
+            HologramSession projection = new HologramSession(player, 0, 64, 0, false, 2);
+            projection.target = new net.minecraft.tileentity.TileEntity();
+            projection.target.invalidate();
+            HologramEditorWorkspaceRegistry.activated(projection);
+            sessions.put(id, projection);
+            SimpleAssert.that(HologramEditorWorkspaceRegistry.physicalProjection(projection)
+                && HologramSessionPolicy.controllerReplaced(projection),
+                "retained fixture really is a prune-eligible removed controller");
+            long loadReads = world.loadReads;
+
+            NBTTagCompound preview = new NBTTagCompound();
+            preview.setString("op", "previewPreset");
+            preview.setString("presetId", publicId);
+            preview.setString("session", "wrong-session");
+            dispatchLegacyPublicAction(dispatch, player, preview);
+            preview.setString("session", projection.id);
+            preview.setLong("editorWorkspaceEpoch", projection.editorWorkspaceEpoch + 1L);
+            dispatchLegacyPublicAction(dispatch, player, preview);
+            channel.runPendingTasks();
+            SimpleAssert.that(channel.readOutbound() == null && sessions.get(id) == projection
+                && world.loadReads == loadReads, "wrong session or epoch is silent and cannot trigger retirement");
+
+            preview.setLong("editorWorkspaceEpoch", projection.editorWorkspaceEpoch);
+            dispatchLegacyPublicAction(dispatch, player, preview);
+            assertPublicHydrationNotice(channel, "owned public switch with removed controller");
+            SimpleAssert.that(sessions.get(id) == projection && !projection.cancelled && world.loadReads == loadReads,
+                "refusal occurs before the removed-controller check");
+
+            HologramSession editor = new HologramSession(player, 0, 64, 0, false, 2);
+            editor.virtual = true;
+            editor.virtualPreset = new HologramPresets.Preset();
+            editor.virtualPreset.id = publicId;
+            HologramEditorWorkspaceRegistry.activated(editor);
+            sessions.put(id, editor);
+            SimpleAssert.that(HologramEditorWorkspaceRegistry.retained(id, "projection") == projection,
+                "inactive removed projection and current editor are independent retained states");
+            loadReads = world.loadReads;
+            NBTTagCompound resync = new NBTTagCompound();
+            resync.setString("op", "requestFullSnapshot");
+            resync.setString("session", editor.id);
+            resync.setLong("editorWorkspaceEpoch", editor.editorWorkspaceEpoch);
+            dispatchLegacyPublicAction(dispatch, player, resync);
+            assertPublicHydrationNotice(channel, "public resync with inactive removed projection");
+            SimpleAssert.that(sessions.get(id) == editor && !projection.cancelled && world.loadReads == loadReads,
+                "retired public resync does not prune a different retained presentation");
+
+            HologramWorkspace.pruneRemovedController(player);
+            SimpleAssert.that(sessions.get(id) == editor && projection.cancelled
+                && HologramEditorWorkspaceRegistry.retained(id, "projection") == null,
+                "ordinary maintenance can still retire the removed controller without touching the editor");
+        } finally {
+            sessions.remove(id);
+            HologramEditorWorkspaceRegistry.forget(id);
+            close(player);
+        }
+    }
+
+    private static void dispatchLegacyPublicAction(Method dispatch, EntityPlayerMP player, NBTTagCompound request)
+        throws ReflectiveOperationException {
+        ByteBuf wire = Unpooled.buffer();
+        try {
+            HologramNetwork.Action sent = new HologramNetwork.Action();
+            sent.tag = (NBTTagCompound) request.copy(); // An older registered Action without capability-advertisement.
+            sent.toBytes(wire);
+            HologramNetwork.Action decoded = new HologramNetwork.Action();
+            decoded.fromBytes(wire);
+            dispatch.invoke(null, player, decoded.tag);
+        } finally {
+            wire.release();
+        }
+    }
+
+    private static void assertPublicHydrationNotice(EmbeddedChannel channel, String request) {
+        channel.runPendingTasks();
+        SimpleAssert.that(channel.readOutbound() instanceof S02PacketChat && channel.readOutbound() == null,
+            request + " receives only the ordinary refusal notice, not a reconstructed workspace");
     }
 
     private static void currentSaveUsesWorkspaceIdentity(HologramSession session, HologramPresets.Preset source)
@@ -502,8 +716,73 @@ final class HologramLibraryServiceRegression {
     }
 
     @SuppressWarnings("unchecked")
-    private static void exerciseLocalReceipt(EntityPlayerMP owner, EntityPlayerMP other, EntityPlayerMP reconnect,
-        Object session, NBTTagCompound base, String local, String jsonHash, String pngHash)
+    private static void retiredDraftBypassesFullReceive(sun.misc.Unsafe unsafe, EntityPlayerMP owner,
+        NBTTagCompound activeProof, EmbeddedChannel connection) throws ReflectiveOperationException {
+        Field global = MinecraftServer.class.getDeclaredField("mcServer");
+        global.setAccessible(true);
+        Object originalServer = global.get(null);
+        Field ingress = HologramLibraryFacade.class.getDeclaredField("inbound");
+        ingress.setAccessible(true);
+        java.util.Queue<Object> queue = (java.util.Queue<Object>) ingress.get(null);
+        Field peers = HologramLibraryFacade.class.getDeclaredField("pending");
+        peers.setAccessible(true);
+        Map<UUID, HologramLibraryProtocol.RequestQuota> pending =
+            (Map<UUID, HologramLibraryProtocol.RequestQuota>) peers.get(null);
+        Field globalBudget = HologramLibraryFacade.class.getDeclaredField("inboundQuota");
+        globalBudget.setAccessible(true);
+        HologramLibraryProtocol.RequestQuota total = (HologramLibraryProtocol.RequestQuota) globalBudget.get(null);
+        Field busyReplies = HologramBusyReplies.class.getDeclaredField("pending");
+        busyReplies.setAccessible(true);
+        Map<EntityPlayerMP, Object> busy = (Map<EntityPlayerMP, Object>) busyReplies.get(null);
+        Field noticesField = HologramLibraryFacade.class.getDeclaredField("retiredDraftNotices");
+        noticesField.setAccessible(true);
+        Map<UUID, Object> notices = (Map<UUID, Object>) noticesField.get(null);
+        UUID actor = HologramLibraryFacade.actorId(owner);
+        SimpleAssert.that(!pending.containsKey(actor) && !notices.containsKey(actor),
+            "staged receipt fixture starts without any unowned inbound requests");
+        Object previousBusy = busy.remove(owner);
+        java.util.List<Object> originalQueue = new java.util.ArrayList<>(queue);
+        try {
+            global.set(null, unsafe.allocateInstance(DedicatedServer.class));
+            for (int i = 0; i < HologramLibraryProtocol.CONTROL_REQUESTS; i++)
+                HologramLibraryFacade.receive(owner, HologramLibraryProtocol.request("list"));
+            HologramLibraryProtocol.RequestQuota full = pending.get(actor);
+            int occupied = originalQueue.size() + HologramLibraryProtocol.CONTROL_REQUESTS;
+            SimpleAssert.eq(occupied, queue.size(), "actual receive fills the peer control mailbox");
+            SimpleAssert.that(full != null && !full.acquire(false, false), "ordinary control ingress is at its limit");
+
+            NBTTagCompound export = (NBTTagCompound) activeProof.copy();
+            export.setString("op", "exportDraft");
+            HologramLibraryFacade.receive(owner, export);
+            HologramLibraryFacade.receive(owner, export);
+            SimpleAssert.eq(occupied, queue.size(), "retired export neither evicts nor adds to the full real mailbox");
+            SimpleAssert.that(pending.get(actor) == full && !busy.containsKey(owner) && notices.containsKey(actor),
+                "the active disk token cannot leak into generic busy/error handling");
+            Method flush = HologramLibraryFacade.class.getDeclaredMethod("flushRetiredDraftNotices");
+            flush.setAccessible(true);
+            flush.invoke(null);
+            assertPublicHydrationNotice(connection, "coalesced retired export with an active positive disk token");
+            SimpleAssert.that(!notices.containsKey(actor) && !busy.containsKey(owner),
+                "only a chat notice was issued; no duplicate notice or save terminal remains");
+        } finally {
+            for (Object accepted : new java.util.ArrayList<>(queue)) if (!originalQueue.contains(accepted)
+                && queue.remove(accepted)) {
+                    boolean chunk = (Boolean) get(accepted, "chunk");
+                    var quota = (HologramLibraryProtocol.RequestQuota) get(accepted, "quota");
+                    quota.release(chunk);
+                    total.release(chunk);
+                    if (quota.empty()) pending.remove(actor, quota);
+                }
+            notices.remove(actor);
+            if (previousBusy == null) busy.remove(owner);
+            else busy.put(owner, previousBusy);
+            global.set(null, originalServer);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void exerciseLocalReceipt(sun.misc.Unsafe unsafe, EntityPlayerMP owner, EntityPlayerMP other,
+        EntityPlayerMP reconnect, Object session, NBTTagCompound base, String local, String jsonHash, String pngHash)
         throws ReflectiveOperationException, java.io.IOException {
         Field resultsField = HologramLibraryFacade.class.getDeclaredField("savedResults");
         resultsField.setAccessible(true);
@@ -530,6 +809,34 @@ final class HologramLibraryServiceRegression {
                 .getDeclaredMethod("rememberSavedResult", EntityPlayerMP.class, NBTTagCompound.class);
             remember.setAccessible(true);
             remember.invoke(null, owner, proof);
+            Object activeResult = results.get(owner.getUniqueID());
+            NBTTagCompound activeProof = (NBTTagCompound) get(activeResult, "proof");
+            HologramSession current = (HologramSession) session;
+            long existingTask = current.blueprintClientTaskToken;
+            boolean hadTask = activeProof.hasKey("clientTaskToken");
+            long savedTask = activeProof.getLong("clientTaskToken");
+            // A replay matching the already-bound owner's token must not send a terminal library error.
+            current.blueprintClientTaskToken = 79L;
+            activeProof.setLong("clientTaskToken", 79L);
+            try {
+                EmbeddedChannel connection = (EmbeddedChannel) owner.playerNetServerHandler.netManager.channel();
+                connection.runPendingTasks();
+                while (connection.readOutbound() != null) {}
+                NBTTagCompound repeatedSave = new NBTTagCompound();
+                repeatedSave.setString("op", "saveBlueprintAs");
+                repeatedSave.setString("session", current.id);
+                repeatedSave.setLong("clientTaskToken", 79L);
+                HologramService.handle(owner, repeatedSave);
+                assertPublicHydrationNotice(connection, "retired draft replay during existing disk receipt");
+                retiredDraftBypassesFullReceive(unsafe, owner, activeProof, connection);
+                SimpleAssert.that(results.get(owner.getUniqueID()) == activeResult
+                    && current.blueprintSaveReceipt.equals(proof.getString("saveReceipt")),
+                    "new draft refusal leaves the original staged receipt and its ledger intact");
+            } finally {
+                current.blueprintClientTaskToken = existingTask;
+                if (hadTask) activeProof.setLong("clientTaskToken", savedTask);
+                else activeProof.removeTag("clientTaskToken");
+            }
             NBTTagCompound ack = (NBTTagCompound) proof.copy();
             ack.setString("op", "ackBlueprintSaved");
             ack.setString("previewSha256", pngHash);
@@ -737,7 +1044,17 @@ final class HologramLibraryServiceRegression {
 
     private static EntityPlayerMP player(sun.misc.Unsafe unsafe, HologramServiceEditRegression.ReadOnlyWorld world,
         UUID id, String name) throws ReflectiveOperationException {
-        EntityPlayerMP player = (EntityPlayerMP) unsafe.allocateInstance(EntityPlayerMP.class);
+        return player(unsafe, world, id, name, EntityPlayerMP.class);
+    }
+
+    static EntityPlayerMP placementPlayer(sun.misc.Unsafe unsafe, HologramPlacementFixtureWorld world, String name)
+        throws ReflectiveOperationException {
+        return player(unsafe, world, UUID.randomUUID(), name, HologramNativeAdmissionRegression.PlacementPlayer.class);
+    }
+
+    private static EntityPlayerMP player(sun.misc.Unsafe unsafe, HologramServiceEditRegression.ReadOnlyWorld world,
+        UUID id, String name, Class<? extends EntityPlayerMP> type) throws ReflectiveOperationException {
+        EntityPlayerMP player = (EntityPlayerMP) unsafe.allocateInstance(type);
         for (Field profile : EntityPlayer.class.getDeclaredFields()) if (profile.getType() == GameProfile.class) {
             profile.setAccessible(true);
             profile.set(player, new GameProfile(id, name));

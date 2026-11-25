@@ -939,6 +939,14 @@ public final class HologramClient {
         if (mc.currentScreen != null || mc.thePlayer == null || mc.theWorld == null || mc.gameSettings.hideGUI) return;
         java.util.List<String> lines = new java.util.ArrayList<>();
         HologramIsometricCamera.INSTANCE.guide(lines);
+        // Owned construction reuses the same top-world card even when the isometric guide would return early.
+        if (projectorWorld() && HologramBackgroundTasks.ownedPlacementVisible()) {
+            lines.add(HologramBackgroundTasks.ownedPlacementStatus());
+            if (!HologramIsometricCamera.INSTANCE.active())
+                lines.add(text("worldGuideBackground", "Right-click: return to the current task"));
+            HologramWorldGuide.draw(lines, event.resolution);
+            return;
+        }
         if (HologramIsometricCamera.INSTANCE.active()) {
             cameraGuide(lines, event.resolution);
             return;
@@ -963,7 +971,7 @@ public final class HologramClient {
             HologramWorldGuide.draw(lines, event.resolution);
             return;
         }
-        if (projectorWorld() && HologramBackgroundTasks.busy()) {
+        if (projectorWorld() && HologramBackgroundTasks.busy() && !HologramBackgroundTasks.ownedPlacementTask()) {
             lines.add(HologramBackgroundTasks.status());
             lines.add(text("worldGuideBackground", "Right-click: return to the current task"));
             HologramWorldGuide.draw(lines, event.resolution);

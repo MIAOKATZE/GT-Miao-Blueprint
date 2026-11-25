@@ -257,6 +257,11 @@ final class HologramPlacementJobs {
     }
 
     static void begin(HologramSession s, net.minecraft.nbt.NBTTagCompound reviewedAction) {
+        String scopedRefusal = HologramWorkspace.legacyConstructionRefusal(s.player);
+        if (scopedRefusal != null) {
+            s.status = scopedRefusal;
+            return;
+        }
         boolean partial = s.virtual && s.planMissing > 0 && s.forcePlacementReady;
         s.forcePlacementReady = false;
         s.replacementAuthorized = s.mode == 1;

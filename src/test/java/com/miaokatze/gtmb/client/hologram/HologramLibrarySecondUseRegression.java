@@ -19,10 +19,12 @@ import net.minecraft.entity.player.InventoryPlayer;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 
+import com.miaokatze.gtmb.client.hologram.HologramLibraryClient.PlainAvailability;
 import com.miaokatze.gtmb.client.hologram.HologramLibraryMaterialReviewScreen.Ticket;
 import com.miaokatze.gtmb.client.hologram.HologramLocalPlacement.Submission;
 import com.miaokatze.gtmb.client.hologram.HologramMaterialConfirmationDialog.LocalAction;
 import com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector;
+import com.miaokatze.gtmb.hologram.HologramMaterials;
 import com.miaokatze.gtmb.hologram.HologramPlacementRequest;
 import com.miaokatze.gtmb.hologram.HologramProjectedPlacement;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
@@ -32,68 +34,124 @@ final class HologramLibrarySecondUseRegression {
 
     private HologramLibrarySecondUseRegression() {}
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws IOException {
         requestRouting();
-        System.out.println("Direct and advanced placement routing regression passed.");
+        legacyCodecDiagnostics();
+        supportedModeAndSource();
+        System.out.println("Local construction confirmation regression passed.");
     }
 
     private static void requestRouting() {
         var frozen = new Submission(null, null, 0, new NBTTagCompound());
         var pending = new AtomicReference<>(frozen);
-        UUID id = UUID.randomUUID();
+        var calls = new ArrayList<Boolean>();
+        java.util.function.BiPredicate<Submission, Boolean> refuse = (actual, direct) -> {
+            SimpleAssert.that(actual == frozen, "the original frozen submission crosses the actual submit port");
+            calls.add(direct);
+            return false;
+        };
+        for (var action : new LocalAction[] { LocalAction.REFRESH, LocalAction.BACK, LocalAction.DETAILS,
+            LocalAction.ADVANCED }) SimpleAssert.that(
+                !HologramLibraryMaterialReviewScreen.dispatchRefused(
+                    action,
+                    () -> { throw new AssertionError("Local view and unsupported actions cannot consume a ticket"); },
+                    refuse),
+                "there is no placement request from a local or unsupported action");
+        SimpleAssert.that(calls.isEmpty() && pending.get() == frozen, "no preliminary send or ticket loss");
+        SimpleAssert.that(
+            HologramLibraryMaterialReviewScreen.dispatchRefused(LocalAction.SUBMIT, () -> pending.getAndSet(null), refuse),
+            "the direct refusal stays visible");
+        SimpleAssert.eq(Collections.singletonList(true), calls, "only explicit normal confirm can choose the sliced path");
+        SimpleAssert.that(
+            !HologramLibraryMaterialReviewScreen.dispatchRefused(LocalAction.SUBMIT, () -> pending.getAndSet(null), refuse),
+            "a second normal click cannot revive a consumed ticket");
+        pending.set(frozen);
+        SimpleAssert.that(
+            !HologramLibraryMaterialReviewScreen.dispatchRefused(LocalAction.ADVANCED, () -> pending.getAndSet(null), refuse),
+            "unsupported Advanced never transports a request or consumes a still-usable ticket");
+        SimpleAssert.that(pending.get() == frozen && calls.size() == 1, "no old fallback after a refused normal click");
+    }
+
+    /** Old data codec witnesses are offline diagnostics, no longer an action taken by either UI button. */
+    private static void legacyCodecDiagnostics() throws IOException {
+        UUID id = new UUID(89, 73);
         int[] anchor = { 1, 64, 1 };
-        var cell = new HologramProjectedPlacement.Cell(
-            0,
-            0,
-            0,
-            "minecraft:cobblestone",
-            0,
-            "minecraft:cobblestone",
-            0,
-            -1);
+        var cell = new HologramProjectedPlacement.Cell(0, 0, 0, "minecraft:cobblestone", 0,
+            "minecraft:cobblestone", 0, -1);
         var plan = new HologramProjectedPlacement.Plan(
             Collections.singletonList(cell),
             Collections.singletonList(new HologramProjectedPlacement.Need("minecraft:cobblestone", 0, 1)));
-        var calls = new ArrayList<Integer>();
-        java.util.function.BiPredicate<Submission, Boolean> refuse = (actual, direct) -> {
-            SimpleAssert.that(actual == frozen, "the original frozen submission crosses the port");
-            try {
-                NBTTagCompound request = direct ? HologramPlacementRequest.encodeDirect(id, anchor, plan)
-                    : HologramPlacementRequest.encode(id, anchor, plan);
-                calls.add(request.getInteger("placementWireVersion"));
-            } catch (IOException failure) {
-                throw new AssertionError("expected an ordinary valid placement request", failure);
-            }
-            return false;
+        SimpleAssert.eq(4, HologramPlacementRequest.encodeDirect(id, anchor, plan).getInteger("placementWireVersion"),
+            "legacy direct v4 decoder/encoder remains an offline format fixture");
+        SimpleAssert.eq(2, HologramPlacementRequest.encode(id, anchor, plan).getInteger("placementWireVersion"),
+            "legacy v2 decoder/encoder remains an offline format fixture");
+    }
+
+    private static void supportedModeAndSource() {
+        var defaultTool = new ItemStack(new ItemNekoHologramProjector());
+        var settings = HologramMaterials.read(defaultTool);
+        SimpleAssert.that(settings.main && settings.containers && settings.me && settings.priority == 0,
+            "an unconfigured real projector enables all three sources and prioritizes the main backpack");
+        SimpleAssert.eq(PlainAvailability.SOURCE,
+            HologramLibraryClient.plainPlacementAvailability(false, true, settings, true, true),
+            "public, portable and unsupported variants stay material-only");
+        SimpleAssert.eq(PlainAvailability.MODE,
+            HologramLibraryClient.plainPlacementAvailability(true, false, settings, true, true),
+            "creative or no edit permission does not promise ordinary placement");
+        SimpleAssert.eq(PlainAvailability.READY,
+            HologramLibraryClient.plainPlacementAvailability(true, true, settings, true, true),
+            "the unmodified default passes capability checks for fully funded main-only placement");
+        SimpleAssert.that(!defaultTool.hasTagCompound() && settings.main && settings.containers && settings.me,
+            "availability does not rewrite enabled sources on the held projector");
+        // Mask order: neither fallback, containers, wireless ME, both. Direct placement never uses wireless ME.
+        var ready = PlainAvailability.READY;
+        var blocked = PlainAvailability.MATERIALS;
+        PlainAvailability[][] withMain = {
+            { ready, ready, ready, ready }, { ready, blocked, ready, blocked }, { ready, ready, ready, ready }
         };
-        for (var action : new LocalAction[] { LocalAction.REFRESH, LocalAction.BACK }) SimpleAssert.that(
-            !HologramLibraryMaterialReviewScreen.dispatchRefused(
-                action,
-                () -> { throw new AssertionError("Browse and Back must not consume a placement ticket"); },
-                refuse),
-            "browse/Back has no placement request");
-        SimpleAssert.that(calls.isEmpty(), "no preliminary request on browse/Back");
-        SimpleAssert.that(
-            HologramLibraryMaterialReviewScreen
-                .dispatchRefused(LocalAction.SUBMIT, () -> pending.getAndSet(null), refuse),
-            "the direct refusal stays visible");
-        SimpleAssert.eq(Collections.singletonList(4), calls, "normal click routes only to v4, no v2 retry");
-        SimpleAssert.that(
-            !HologramLibraryMaterialReviewScreen
-                .dispatchRefused(LocalAction.ADVANCED, () -> pending.getAndSet(null), refuse),
-            "a second action cannot revive a consumed ticket");
-        SimpleAssert.eq(Collections.singletonList(4), calls, "no fallback after a refused direct click");
-        pending.set(frozen);
-        calls.clear();
-        SimpleAssert.that(
-            HologramLibraryMaterialReviewScreen
-                .dispatchRefused(LocalAction.ADVANCED, () -> pending.getAndSet(null), refuse),
-            "the explicit advanced refusal stays visible");
-        SimpleAssert.eq(Collections.singletonList(2), calls, "only the explicit advanced click chooses v2");
+        for (int priority = 0; priority < withMain.length; priority++) {
+            for (int mask = 0; mask < withMain[priority].length; mask++) {
+                var configured = new HologramMaterials.Settings();
+                configured.priority = priority;
+                configured.containers = (mask & 1) != 0;
+                configured.me = (mask & 2) != 0;
+                SimpleAssert.eq(withMain[priority][mask],
+                    HologramLibraryClient.plainPlacementAvailability(true, true, configured, true, true),
+                    "main enabled: priority " + priority + ", fallback mask " + mask);
+                configured.main = false;
+                SimpleAssert.eq(blocked,
+                    HologramLibraryClient.plainPlacementAvailability(true, true, configured, true, true),
+                    "disabled main never falls back: priority " + priority + ", fallback mask " + mask);
+            }
+        }
+        for (int invalid : new int[] { -1, 3 }) {
+            var configured = new HologramMaterials.Settings();
+            configured.priority = invalid;
+            SimpleAssert.eq(blocked,
+                HologramLibraryClient.plainPlacementAvailability(true, true, configured, true, true),
+                "invalid priority does not start placement");
+        }
+        SimpleAssert.eq(blocked, HologramLibraryClient.plainPlacementAvailability(true, true, null, true, true),
+            "missing source settings fail closed");
+        SimpleAssert.eq(PlainAvailability.TOOL,
+            HologramLibraryClient.plainPlacementAvailability(true, true, settings, false, true),
+            "fresh projector with no verified id is declined without guessing another stack");
+        SimpleAssert.that(HologramLibraryClient.canonicalProjectorId(new UUID(3, 1).toString())
+            && !HologramLibraryClient.canonicalProjectorId("") && !HologramLibraryClient.canonicalProjectorId("1-2-3-4-5"),
+            "only the current canonical UUID qualifies as the tracked tool identity");
+        SimpleAssert.eq(PlainAvailability.TRANSPORT,
+            HologramLibraryClient.plainPlacementAvailability(true, true, settings, true, false),
+            "no local transport is a proved unavailable condition and has no fallback");
+        SimpleAssert.eq(PlainAvailability.READY,
+            HologramLibraryClient.plainPlacementAvailability(true, true, settings, true, true),
+            "exact selected private/main-only/survival scope keeps the existing explicit submit affordance");
     }
 
     static void run() throws Exception {
         requestRouting();
+        legacyCodecDiagnostics();
+        supportedModeAndSource();
+        unrelatedLibraryError();
         sun.misc.Unsafe unsafe = (sun.misc.Unsafe) field(sun.misc.Unsafe.class, "theUnsafe").get(null);
         Minecraft client = (Minecraft) unsafe.allocateInstance(Minecraft.class);
         WorldClient world = (WorldClient) unsafe.allocateInstance(WorldClient.class);
@@ -200,6 +258,39 @@ final class HologramLibrarySecondUseRegression {
                 && frame.description()
                     .isEmpty(),
             "already-present unproved source uses an explicit local unknown frame, not an authoritative quote");
+    }
+
+    private static void unrelatedLibraryError() throws Exception {
+        var library = new HologramLibraryClient();
+        var request = new UUID(7, 9);
+        Field placementRequest = field(HologramLibraryClient.class, "placementRequest");
+        Field generation = field(HologramLibraryClient.class, "generation");
+        Field submitting = field(HologramLocalPlacement.class, "submitting");
+        Field status = field(HologramLibraryClient.class, "status");
+        placementRequest.set(library, request);
+        generation.setLong(library, 19L);
+        status.set(library, "本地预览已准备好");
+        SimpleAssert.eq("本地预览已准备好", library.status(), "normal library accessor preserves the old preview status");
+        var receive = HologramLibraryClient.class.getDeclaredMethod("receive", NBTTagCompound.class);
+        receive.setAccessible(true);
+        var reply = new NBTTagCompound();
+        reply.setString("op", "error");
+        reply.setString("message", "fixture catalogue failure");
+        reply.setLong("clientTaskToken", 0L);
+        boolean saved = submitting.getBoolean(HologramLocalPlacement.INSTANCE);
+        try {
+            submitting.setBoolean(HologramLocalPlacement.INSTANCE, true);
+            receive.invoke(library, reply);
+            SimpleAssert.that(placementRequest.get(library) == request && generation.getLong(library) == 19L
+                && submitting.getBoolean(HologramLocalPlacement.INSTANCE),
+                "unrelated catalogue error cannot retire or unlock the live typed construction request");
+            SimpleAssert.eq("服务器蓝图库：fixture catalogue failure", library.status(),
+                "ordinary library UI reads the exact auxiliary error through the real status accessor");
+            SimpleAssert.eq("本地预览已准备好", status.get(library),
+                "a library error does not overwrite the prior local preview state");
+        } finally {
+            submitting.setBoolean(HologramLocalPlacement.INSTANCE, saved);
+        }
     }
 
     private static Field field(Class<?> type, String name) throws ReflectiveOperationException {

@@ -6,6 +6,7 @@ package com.miaokatze.gtmb.hologram;
 import java.util.HashSet;
 import java.util.Set;
 
+import net.minecraft.block.Block;
 import net.minecraft.init.Blocks;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
@@ -59,6 +60,8 @@ public final class HologramCutTransformRegression {
         entry.setTag("cells", cells);
         NBTTagCompound original = (NBTTagCompound) entry.copy();
         identityPreviewEnvelope(entry, original);
+        vanillaPlacementEncodings();
+        strictVanillaLeavesTheLegacyRawPath(entry);
         NBTTagCompound transformed = HologramCutTransforms
             .apply(entry, new CutTransforms.Transform(1, 0, 0, 0), 10, 80, 10);
         SimpleAssert.that(entry.equals(original), "preview transform cannot mutate queue original");
@@ -114,6 +117,125 @@ public final class HologramCutTransformRegression {
         SimpleAssert.eq(1, calls[0], "closed exact registration no longer runs");
         SimpleAssert.that(entry.equals(original), "all extension operations preserve raw original");
         sparsePoses(entry);
+    }
+
+    private static void vanillaPlacementEncodings() {
+        int no = HologramCutTransformMetadata.UNREPRESENTABLE;
+        int[] support = { -1, 5, 4, 3, 2, 1 }, stairs = { 5, 4, 3, 2 };
+        Block[] upright = { Blocks.chest, Blocks.trapped_chest, Blocks.furnace, Blocks.lit_furnace,
+            Blocks.ender_chest, Blocks.wall_sign };
+        Block[] sixFaces = { Blocks.dispenser, Blocks.dropper, Blocks.piston, Blocks.sticky_piston, Blocks.piston_head };
+        Set<String> tested = new HashSet<>();
+        for (int x = 0; x < 4; x++)
+            for (int y = 0; y < 4; y++) for (int z = 0; z < 4; z++) for (int mirror = 0; mirror < 8; mirror++) {
+                CutTransforms.Transform pose = new CutTransforms.Transform(y, x, z, mirror);
+                if (!tested.add(java.util.Arrays.toString(pose.matrix()))) continue;
+                int up = pose.direction(1);
+                boolean vertical = up < 2;
+                for (int face = 2; face <= 5; face++) {
+                    int next = pose.direction(face);
+                    for (Block block : upright) pinned(block, face, pose, up == 1 ? next : no);
+                    pinned(Blocks.ladder, face, pose, vertical ? next : no);
+                }
+                for (int face = 0; face <= 5; face++) {
+                    int next = pose.direction(face);
+                    for (Block block : sixFaces) pinned(block, face | 8, pose, next | 8);
+                    pinned(Blocks.hopper, face | 8, pose, up == 1 && face != 1 ? next | 8 : no);
+                }
+                for (int encoded = 1; encoded <= 5; encoded++) {
+                    int next = pose.direction(support[encoded]);
+                    int torch = encoded(support, next, 1, 6, no);
+                    for (Block block : new Block[] { Blocks.torch, Blocks.redstone_torch, Blocks.unlit_redstone_torch })
+                        pinned(block, encoded, pose, torch);
+                    int button = encoded(support, next, 1, 5, no);
+                    for (Block block : new Block[] { Blocks.stone_button, Blocks.wooden_button })
+                        pinned(block, encoded | 8, pose, vertical && encoded < 5 && button != no ? button | 8 : no);
+                }
+                for (int meta = 0; meta < 8; meta++) {
+                    int heading = encoded(stairs, pose.direction(stairs[meta & 3]), 0, 4, no);
+                    int half = (meta & 4) ^ (up == 0 ? 4 : 0);
+                    pinned(Blocks.oak_stairs, meta, pose, vertical && heading != no ? heading | half : no);
+                }
+                for (int heading = 0; heading < 16; heading++) {
+                    int result = no;
+                    if (up == 1) {
+                        // Independent angular oracle for all native 16-way headings.
+                        double angle = heading * Math.PI / 8;
+                        int[] axisX = pose.vector(1, 0, 0), axisZ = pose.vector(0, 0, 1);
+                        double east = -axisX[0] * Math.sin(angle) + axisZ[0] * Math.cos(angle);
+                        double south = -axisX[2] * Math.sin(angle) + axisZ[2] * Math.cos(angle);
+                        result = Math.floorMod((int) Math.round(Math.atan2(-east, south) * 8 / Math.PI), 16);
+                    }
+                    pinned(Blocks.standing_sign, heading, pose, result);
+                }
+                int[] axisFaces = { 1, 5, 3 };
+                int[] logForFace = { 0, 0, 8, 8, 4, 4 }, quartzForFace = { 2, 2, 4, 4, 3, 3 };
+                for (int axis = 0; axis < axisFaces.length; axis++) {
+                    int face = pose.direction(axisFaces[axis]);
+                    pinned(Blocks.log, axis * 4 | 3, pose, logForFace[face] | 3);
+                    pinned(Blocks.log2, axis * 4 | 1, pose, logForFace[face] | 1);
+                    pinned(Blocks.hay_block, axis * 4, pose, logForFace[face]);
+                    pinned(Blocks.quartz_block, axis + 2, pose, quartzForFace[face]);
+                }
+                pinned(Blocks.log, 15, pose, 15);
+                pinned(Blocks.log2, 13, pose, 13);
+                pinned(Blocks.quartz_block, 0, pose, up == 1 ? 0 : no);
+                pinned(Blocks.quartz_block, 1, pose, vertical ? 1 : no);
+                pinned(Blocks.air, 0, pose, 0);
+                pinned(Blocks.hay_block, 12, pose, no);
+                pinned(Blocks.log2, 2, pose, no);
+                pinned(Blocks.piston_head, 7, pose, no);
+                pinned(Blocks.stone_button, 0, pose, no);
+            }
+        SimpleAssert.eq(48, tested.size(), "known vanilla matrix covers all signed axis permutations");
+    }
+
+    private static int encoded(int[] table, int face, int start, int end, int absent) {
+        for (int i = start; i < end; i++) if (table[i] == face) return i;
+        return absent;
+    }
+
+    private static void pinned(Block block, int meta, CutTransforms.Transform pose, int expected) {
+        String id = Block.blockRegistry.getNameForObject(block);
+        SimpleAssert.eq(expected, HologramCutTransformMetadata.placementMetadata(block, id, meta, pose),
+            "native placement encoding " + id + ":" + meta + " " + java.util.Arrays.toString(pose.matrix()));
+    }
+
+    private static void strictVanillaLeavesTheLegacyRawPath(NBTTagCompound fixture) {
+        NBTTagCompound raw = (NBTTagCompound) fixture.copy();
+        NBTTagList rows = raw.getTagList("cells", 10);
+        for (int i = 0; i < rows.tagCount(); i++) {
+            NBTTagCompound cell = rows.getCompoundTagAt(i);
+            for (String key : new String[] { "x", "y", "z" }) cell.setInteger(key, cell.getInteger(key));
+        }
+        NBTTagCompound original = (NBTTagCompound) raw.copy();
+        CutTransforms.Transform pitch = new CutTransforms.Transform(0, 1, 0, 0);
+        NBTTagCompound local = HologramCutTransforms.apply(raw, pitch, 0, 80, 0);
+        SimpleAssert.eq(2, local.getTagList("cells", 10).getCompoundTagAt(0).getInteger("meta"),
+            "legacy detached preview can keep an unrepresentable old chest encoding for presentation");
+        try {
+            HologramCutTransforms.applyForPlacement(raw, pitch, 0, 80, 0);
+            throw new AssertionError("quarter pitch cannot authorize a real chest placement");
+        } catch (java.io.IOException expected) {
+            SimpleAssert.that(expected.getMessage().contains("minecraft:chest"),
+                "the refusal truthfully identifies the known unrepresentable block");
+        }
+        try {
+            CutTransforms.Transform yawAndMirror = new CutTransforms.Transform(1, 0, 0, 4);
+            NBTTagCompound placed = HologramCutTransforms.applyForPlacement(raw, yawAndMirror, 0, 80, 0);
+            NBTTagCompound changed = placed.getTagList("cells", 10).getCompoundTagAt(0);
+            SimpleAssert.eq(4, changed.getInteger("meta"), "legal yaw plus horizontal mirror keeps exact chest heading");
+            SimpleAssert.that(original.getTagList("cells", 10).getCompoundTagAt(0).getCompoundTag("tile")
+                .equals(changed.getCompoundTag("tile")), "pinned vanilla metadata leaves complete native tile NBT alone");
+            CutTransforms.Transform effectiveIdentity = new CutTransforms.Transform(2, 2, 2, 0);
+            SimpleAssert.that(effectiveIdentity.identity()
+                && HologramCutTransforms.apply(raw, effectiveIdentity, 0, 80, 0)
+                    .equals(HologramCutTransforms.applyForPlacement(raw, effectiveIdentity, 0, 80, 0)),
+                "effective matrix identity bypasses new qualification and retains the exact legacy raw envelope");
+        } catch (java.io.IOException unexpected) {
+            throw new AssertionError("known legal vanilla pose rejected", unexpected);
+        }
+        SimpleAssert.that(original.equals(raw), "no qualification, rejection or admitted pose mutates the retained entry");
     }
 
     private static void sparsePoses(NBTTagCompound full) {

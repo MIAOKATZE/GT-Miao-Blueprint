@@ -1,0 +1,360 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Additional terms: see AGPL-ADDITIONAL-TERMS.md in the project root.
+
+package com.miaokatze.gtmb.client.hologram;
+
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
+
+import net.minecraft.client.Minecraft;
+import net.minecraft.tileentity.TileEntity;
+import net.minecraft.world.World;
+
+import com.github.bsideup.jabel.Desugar;
+import com.miaokatze.gtmb.hologram.HologramNetwork;
+import com.miaokatze.gtmb.hologram.HologramStockNativeWire.Command;
+import com.miaokatze.gtmb.hologram.HologramStockNativeWire.Confirmation;
+import com.miaokatze.gtmb.hologram.HologramStockNativeWire.Key;
+import com.miaokatze.gtmb.hologram.HologramStockNativeWire.Phase;
+import com.miaokatze.gtmb.hologram.HologramStockNativeWire.Reply;
+
+import gregtech.api.GregTechAPI;
+import gregtech.api.enums.MetaTileEntityIDs;
+import gregtech.api.metatileentity.BaseMetaTileEntity;
+import gregtech.api.metatileentity.implementations.MTEHatchCokeOven;
+import gregtech.common.tileentities.machines.multi.MTECokeOven;
+
+/** One existing local confirmation, one exact client owner. Preview/material browsing never touches this writer. */
+public final class HologramClientStockNative {
+
+    static final long FIRST_PROOF_NANOS = TimeUnit.SECONDS.toNanos(5);
+    static final long RESULT_NANOS = TimeUnit.SECONDS.toNanos(35);
+
+    interface Wire {
+        boolean probe(Confirmation value);
+
+        boolean begin(Confirmation value, boolean afterProbe);
+
+        boolean stop(Key key);
+    }
+
+    @Desugar
+    record Context(Object handler, Object world, Object player, int dimension) {
+
+        boolean same(Context other) {
+            return other != null && handler != null && world != null && player != null
+                && handler == other.handler && world == other.world && player == other.player && dimension == other.dimension;
+        }
+    }
+
+    @Desugar
+    record Owner(Object view, BooleanSupplier exactBeforeStart, BooleanSupplier visible,
+        Consumer<String> notice, Runnable refresh) {}
+
+    @Desugar
+    record Site(TileEntity controller, BaseMetaTileEntity hatch, int controllerFacing, int hx, int hy, int hz,
+        int hatchFacing) {
+
+        boolean current(World world) {
+            if (world == null || controller.isInvalid() || hatch.isInvalid() || controller.getWorldObj() != world
+                || hatch.getWorldObj() != world || !(controller instanceof BaseMetaTileEntity tile)
+                || !(tile.getMetaTileEntity() instanceof MTECokeOven oven)
+                || oven.getExtendedFacing().ordinal() != controllerFacing) return false;
+            int x = controller.xCoord + hx, y = controller.yCoord + hy, z = controller.zCoord + hz;
+            return world.blockExists(x, y, z) && world.getBlock(x, y, z) == GregTechAPI.sBlockMachines
+                && world.getTileEntity(x, y, z) == hatch && realHatch(hatch)
+                && hatch.getFrontFacing().ordinal() == hatchFacing;
+        }
+
+        String description() {
+            return "保留已安装 ULV 焦炉仓室 (" + (controller.xCoord + hx) + ", " + (controller.yCoord + hy)
+                + ", " + (controller.zCoord + hz) + ") · " + net.minecraftforge.common.util.ForgeDirection.getOrientation(hatchFacing).name();
+        }
+    }
+
+    private static final class Attempt {
+
+        final Confirmation original;
+        final Context context;
+        final Owner owner;
+        Key key;
+        long deadline;
+        int placed = -1;
+        boolean beginSent, afterProbe, stopSent, uncertain;
+
+        Attempt(Confirmation original, Context context, Owner owner, long deadline) {
+            this.original = original;
+            this.context = context;
+            this.owner = owner;
+            this.deadline = deadline;
+        }
+    }
+
+    static final class Flow {
+
+        private final Wire wire;
+        private Attempt active;
+        private Context known;
+        private long generation;
+
+        Flow(Wire wire) {
+            this.wire = wire;
+        }
+
+        boolean submit(Confirmation original, Context context, Owner owner, long now) {
+            retireChangedContext(context);
+            if (active != null) {
+                owner.notice.accept("另一个焦炉短请求尚未结束，请先核对现场。");
+                return false;
+            }
+            if (context == null || !context.same(context) || !owner.exactBeforeStart.getAsBoolean()) {
+                owner.notice.accept("当前确认已变化，未发送施工指令。");
+                return false;
+            }
+            var attempt = new Attempt(original, context, owner, now + FIRST_PROOF_NANOS);
+            active = attempt;
+            if (context.same(known) && generation > 0) return begin(attempt, generation, false, now);
+            try {
+                if (wire.probe(original)) {
+                    owner.notice.accept("正在确认服务器支持此短请求；还未开始施工。");
+                    return true;
+                }
+            } catch (RuntimeException | LinkageError failed) {
+                // PROBE cannot start a task, even if a receiver processed it before the transport error.
+            }
+            active = null;
+            owner.notice.accept("未提交施工：服务器能力确认未发出。");
+            return false;
+        }
+
+        private boolean begin(Attempt attempt, long usableGeneration, boolean afterProbe, long now) {
+            if (active != attempt || attempt.beginSent || !attempt.owner.exactBeforeStart.getAsBoolean()) {
+                if (active == attempt) active = null;
+                if (attempt.owner.visible.getAsBoolean()) attempt.owner.notice.accept("当前确认已变化，未开始施工。");
+                return false;
+            }
+            Confirmation issued = attempt.original.forGeneration(usableGeneration);
+            attempt.key = issued.key();
+            attempt.afterProbe = afterProbe;
+            attempt.beginSent = true; // A thrown transport may already have handed the frame off; do not retry.
+            attempt.deadline = now + RESULT_NANOS;
+            try {
+                if (!wire.begin(issued, afterProbe)) {
+                    active = null; // Production writer returns false only before any wire send.
+                    attempt.owner.notice.accept("未提交施工：服务器连接不可用。");
+                    return false;
+                }
+            } catch (RuntimeException | LinkageError uncertain) {
+                reportUnknown(attempt);
+                return true;
+            }
+            attempt.owner.notice.accept("已提交焦炉短请求，等待服务器确认。");
+            return true;
+        }
+
+        void receive(Reply reply, Object from, Context current, long now) {
+            retireChangedContext(current);
+            Attempt attempt = active;
+            if (attempt == null || current.handler != from || !attempt.context.same(current)
+                || !attempt.original.key().request().equals(reply.key().request())
+                || attempt.original.key().sequence() != reply.key().sequence()) return;
+            if (!attempt.beginSent) {
+                if (now >= attempt.deadline || !attempt.owner.visible.getAsBoolean()) {
+                    active = null;
+                    if (attempt.owner.visible.getAsBoolean())
+                        attempt.owner.notice.accept("服务器未及时确认支持此短请求；未发送施工指令。");
+                    return;
+                }
+                if (reply.phase() == Phase.REFUSED) {
+                    active = null;
+                    attempt.owner.notice.accept(reply.reason());
+                    return;
+                }
+                if (reply.phase() != Phase.CAPABLE || reply.key().generation() <= 0) return;
+                if (!attempt.owner.exactBeforeStart.getAsBoolean()) {
+                    active = null;
+                    attempt.owner.notice.accept("当前确认已变化，未开始施工。");
+                    return;
+                }
+                // CAPABLE is permission to submit this very confirmation, never cached warm readiness.
+                begin(attempt, reply.key().generation(), true, now);
+                return;
+            }
+            if (!attempt.key.equals(reply.key()) || reply.phase() == Phase.CAPABLE
+                || reply.placed() >= 0 && reply.placed() < attempt.placed) return;
+            if (reply.phase() == Phase.UNKNOWN) {
+                reportUnknown(attempt);
+                return;
+            }
+            if (reply.phase() == Phase.NEEDS_PROOF) forgetWarm(attempt);
+            else if (attempt.afterProbe && (reply.phase() == Phase.ACCEPTED || reply.phase() == Phase.ACTIVE
+                || reply.phase() == Phase.COMPLETE)) {
+                known = current;
+                generation = reply.key().generation();
+            }
+            int previous = attempt.placed;
+            attempt.placed = reply.placed();
+            if (reply.phase() == Phase.ACCEPTED || reply.phase() == Phase.ACTIVE) {
+                if (previous < attempt.placed && !attempt.stopSent) attempt.deadline = now + RESULT_NANOS;
+                if (attempt.owner.visible.getAsBoolean() && !attempt.stopSent && !attempt.uncertain)
+                    attempt.owner.notice.accept(reply.phase() == Phase.ACCEPTED ? "服务器已受理焦炉施工；尚未确认方块提交。"
+                        : "焦炉施工：已确认 " + attempt.placed + " 格。");
+                return;
+            }
+            active = null;
+            if (!attempt.owner.visible.getAsBoolean()) return;
+            String status = switch (reply.phase()) {
+                case COMPLETE -> "焦炉补建完成，实际放置 " + attempt.placed + " 格。";
+                case STOPPED -> "焦炉施工已停止，已确认 " + attempt.placed + " 格。" + reply.reason();
+                case RECOVERY_PENDING -> "焦炉施工结果待核定，已确认 " + attempt.placed + " 格。" + reply.reason();
+                default -> reply.reason();
+            };
+            attempt.owner.notice.accept(status);
+            if (attempt.placed > 0 || reply.phase() == Phase.COMPLETE) attempt.owner.refresh.run();
+        }
+
+        void tick(Object view, Context context, long now) {
+            retireChangedContext(context);
+            Attempt attempt = active;
+            if (attempt == null || attempt.owner.view != view) return;
+            if (!attempt.beginSent && (!attempt.owner.exactBeforeStart.getAsBoolean() || now >= attempt.deadline)) {
+                active = null;
+                if (attempt.owner.visible.getAsBoolean())
+                    attempt.owner.notice.accept(now >= attempt.deadline ? "服务器未确认支持此短请求；未发送施工指令。"
+                        : "当前确认已变化，未发送施工指令。");
+            } else if (attempt.beginSent && now >= attempt.deadline && !attempt.uncertain) {
+                reportUnknown(attempt);
+            }
+        }
+
+        void close(Object view, Context context) {
+            retireChangedContext(context);
+            Attempt attempt = active;
+            if (attempt == null || attempt.owner.view != view) return;
+            if (attempt.beginSent) stopOnce(attempt);
+            active = null;
+        }
+
+        boolean pending(Object view) {
+            return active != null && active.owner.view == view;
+        }
+
+        private void reportUnknown(Attempt attempt) {
+            if (attempt.uncertain) return;
+            attempt.uncertain = true;
+            forgetWarm(attempt);
+            boolean stopped = stopOnce(attempt);
+            if (attempt.owner.visible.getAsBoolean())
+                attempt.owner.notice.accept("尚无法确认焦炉施工结果。" + (stopped ? "已请求停止，未确认停工。"
+                    : "没有重试；请先核对现场。"));
+        }
+
+        private void forgetWarm(Attempt attempt) {
+            if (attempt.key != null && attempt.context.same(known) && generation == attempt.key.generation()) {
+                known = null;
+                generation = 0;
+            }
+        }
+
+        private boolean stopOnce(Attempt attempt) {
+            if (attempt.stopSent) return false;
+            attempt.stopSent = true;
+            try {
+                return wire.stop(attempt.key);
+            } catch (RuntimeException | LinkageError unavailable) {
+                return false;
+            }
+        }
+
+        private void retireChangedContext(Context current) {
+            if (known != null && !known.same(current)) {
+                known = null;
+                generation = 0;
+            }
+            if (active != null && !active.context.same(current)) active = null;
+        }
+    }
+
+    static final Flow OWNER = new Flow(new Wire() {
+
+        @Override
+        public boolean probe(Confirmation value) {
+            return HologramNetwork.sendStockNativeProbe(value);
+        }
+
+        @Override
+        public boolean begin(Confirmation value, boolean afterProbe) {
+            return afterProbe ? HologramNetwork.sendStockNativeAfterProbe(value)
+                : HologramNetwork.sendStockNativeConfirmation(value);
+        }
+
+        @Override
+        public boolean stop(Key key) {
+            return HologramNetwork.sendStockNativeControl(key, Command.STOP);
+        }
+    });
+
+    private HologramClientStockNative() {}
+
+    public static void install() {
+        HologramNetwork.setStockNativeReplies((reply, from) -> {
+            Minecraft client = Minecraft.getMinecraft();
+            client.func_152344_a(() -> OWNER.receive(reply, from, context(client), System.nanoTime()));
+        });
+    }
+
+    static Context context(Minecraft client) {
+        return client == null || client.thePlayer == null || client.theWorld == null || client.getNetHandler() == null
+            ? null : new Context(client.getNetHandler(), client.theWorld, client.thePlayer, client.thePlayer.dimension);
+    }
+
+    static UUID canonicalTool(String id) {
+        if (id == null || id.length() != 36) return null;
+        try {
+            UUID value = UUID.fromString(id);
+            return value.toString().equals(id) && (value.getMostSignificantBits() != 0
+                || value.getLeastSignificantBits() != 0) ? value : null;
+        } catch (IllegalArgumentException bad) {
+            return null;
+        }
+    }
+
+    /** Only this audited stock #236 3x3 shape, bounded local lookup. Ambiguity is never auto-resolved. */
+    static Site choose(World world, TileEntity target) {
+        if (world == null || target == null || target.getClass() != BaseMetaTileEntity.class) return null;
+        BaseMetaTileEntity base = (BaseMetaTileEntity) target;
+        if (base.getMetaTileID() != MetaTileEntityIDs.COKE_OVEN_CONTROLLER.ID
+            || !(base.getMetaTileEntity() instanceof MTECokeOven oven) || oven.getClass() != MTECokeOven.class
+            || oven.mMachine) return null;
+        var facing = oven.getExtendedFacing();
+        int[] abc = new int[3], delta = new int[3];
+        Site chosen = null;
+        for (int c = 0; c <= 2; c++)
+            for (int b = -1; b <= 1; b++)
+                for (int a = -1; a <= 1; a++) {
+                    if (a == 0 && b == 0 && c < 2) continue;
+                    abc[0] = a;
+                    abc[1] = b;
+                    abc[2] = c;
+                    facing.getWorldOffset(abc, delta);
+                    int x = base.xCoord + delta[0], y = base.yCoord + delta[1], z = base.zCoord + delta[2];
+                    if (!world.blockExists(x, y, z)) return null;
+                    if (world.getBlock(x, y, z) != GregTechAPI.sBlockMachines) continue;
+                    if (!(world.getTileEntity(x, y, z) instanceof BaseMetaTileEntity hatch) || !realHatch(hatch)) continue;
+                    if (chosen != null) return null;
+                    chosen = new Site(base, hatch, facing.ordinal(), delta[0], delta[1], delta[2],
+                        hatch.getFrontFacing().ordinal());
+                }
+        return chosen;
+    }
+
+    private static boolean realHatch(BaseMetaTileEntity base) {
+        return base.getClass() == BaseMetaTileEntity.class && !base.isInvalid()
+            && base.getMetaTileID() == MetaTileEntityIDs.COKE_OVEN_HATCH.ID
+            && base.getMetaTileEntity() instanceof MTEHatchCokeOven hatch
+            && hatch.getClass() == MTEHatchCokeOven.class && hatch.mTier == 0
+            && base.getFrontFacing() != null && base.getFrontFacing().ordinal() < 6;
+    }
+}

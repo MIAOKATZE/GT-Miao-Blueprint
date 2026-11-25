@@ -37,6 +37,7 @@ final class HologramEditorCutWorkspace {
     private HologramCutStorageBrowserView browser;
     private Flow root;
     private String selected = "", confirmUndo = "";
+    private HologramCutClient.UndoProof confirmUndoProof;
     private boolean active, closed, activatedOnce, initialDirectoryCaptured;
 
     HologramEditorCutWorkspace(HologramUiModules ui) {
@@ -57,7 +58,7 @@ final class HologramEditorCutWorkspace {
 
             public void select(String id) {
                 selected = id;
-                confirmUndo = "";
+                clearUndo();
                 if (live != null) live.select(id);
             }
 
@@ -133,7 +134,7 @@ final class HologramEditorCutWorkspace {
             .height(18)
             .childPadding(3);
         secondary.child(
-            button("undo", "撤回原处", "undo", this::canAct, () -> { if (canAct()) confirmUndo = selection.selected(); })
+            button("undo", "撤回原处", "undo", this::canAct, this::armUndo)
                 .expanded());
         secondary.child(
             button("sync", "同步 / 重试", "reset-view", () -> active && !closed, this::refresh).expanded()
@@ -157,15 +158,31 @@ final class HologramEditorCutWorkspace {
             .childPadding(4);
         confirmationActions.child(
             button("undo.confirm", "确认撤回", null, () -> canAct() && confirmUndo.equals(selection.selected()), () -> {
-                String id = confirmUndo;
-                confirmUndo = "";
-                if (!isolated && !ui.session.isTutorial() && active) client().requestStorageUndo(id);
+                HologramCutClient.UndoProof proved = confirmUndoProof;
+                clearUndo();
+                if (!isolated && !ui.session.isTutorial() && active) client().requestStorageUndo(proved);
             }).expanded());
-        confirmationActions.child(button("undo.cancel", "取消", "cancel", () -> true, () -> confirmUndo = "").expanded());
+        confirmationActions.child(button("undo.cancel", "取消", "cancel", () -> true, this::clearUndo).expanded());
         confirmation.child(confirmationActions);
         browser.addFooter(confirmation);
         captureInitialDirectory();
         return root;
+    }
+
+    private void armUndo() {
+        clearUndo();
+        if (!canAct()) return;
+        String id = selection.selected();
+        if (!isolated && !ui.session.isTutorial()) {
+            confirmUndoProof = client().armStorageUndo(id);
+            if (confirmUndoProof == null) return;
+        }
+        confirmUndo = id;
+    }
+
+    private void clearUndo() {
+        confirmUndo = "";
+        confirmUndoProof = null;
     }
 
     private ButtonWidget<?> button(String name, String label, String icon, BooleanSupplier enabled, Runnable action) {
@@ -255,7 +272,7 @@ final class HologramEditorCutWorkspace {
                             .getString("id"));
             if (browser != null) browser.camera.resetCamera();
         }
-        if (!confirmUndo.equals(selection.selected())) confirmUndo = "";
+        if (!confirmUndo.equals(selection.selected())) clearUndo();
         if (browser != null) browser.refreshRows();
     }
 
@@ -263,7 +280,7 @@ final class HologramEditorCutWorkspace {
         if (!active || closed) return;
         if (isolated) lessonRefresh.run();
         else {
-            client().refreshDirectory();
+            client().retryDirectory();
             if (live != null) live.retry();
         }
         browser.refreshRows();

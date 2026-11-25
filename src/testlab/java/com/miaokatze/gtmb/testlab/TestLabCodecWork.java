@@ -48,7 +48,8 @@ final class TestLabCodecWork {
             input.writeInt(index);
             input.writeInt(slice.length);
             input.writeBytes(slice);
-            HologramNetwork.CutFragment frame = new HologramNetwork.CutFragment();
+            // This bulk fixture is an ordinary snapshot, not a Cut metadata reply.
+            HologramNetwork.Fragment frame = new HologramNetwork.Fragment();
             frame.fromBytes(input);
             frame.toBytes(output);
             if (output.readLong() != iteration || output.readInt() != packed.length

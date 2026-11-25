@@ -84,7 +84,7 @@ final class HologramWorkspaceScheduler {
     }
 
     private static boolean canContinue(HologramSession s) {
-        if (s.nativeCompactStart != null) return false;
+        if (s.nativeCompactStart != null || s.stockNativePrivate) return false;
         if (HologramWorkspace.find(s.player.getUniqueID()) != s || s.cancelled
             || !HologramSessionPolicy.tickValid(s)
             || s.libraryWorld != s.player.worldObj) return false;
@@ -128,6 +128,7 @@ final class HologramWorkspaceScheduler {
     }
 
     private static void tickSession(HologramSession s) {
+        if (s.stockNativePrivate) return;
         if (HologramNativeCompactStart.tick(s)) return;
         if (HologramNativeReadyPlacement.tick(s)) return;
         HologramWorkspace.pruneRemovedController(s.player);

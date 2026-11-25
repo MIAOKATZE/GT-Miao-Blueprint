@@ -367,7 +367,7 @@ final class HologramNativeAdmissionRegression {
         }
     }
 
-    private static final class PlacementPlayer extends EntityPlayerMP {
+    static final class PlacementPlayer extends EntityPlayerMP {
 
         private PlacementPlayer() {
             super(null, null, null, null);

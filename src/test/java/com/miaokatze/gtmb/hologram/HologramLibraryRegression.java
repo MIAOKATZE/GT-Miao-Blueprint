@@ -26,6 +26,8 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.CompressedStreamTools;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
+import net.minecraft.network.NetHandlerPlayServer;
+import net.minecraft.network.NetworkManager;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.dedicated.DedicatedPlayerList;
 import net.minecraft.server.dedicated.DedicatedServer;
@@ -40,6 +42,9 @@ import com.mojang.authlib.GameProfile;
 import cpw.mods.fml.common.network.simpleimpl.IMessage;
 import cpw.mods.fml.common.network.simpleimpl.SimpleNetworkWrapper;
 import io.netty.buffer.Unpooled;
+import io.netty.channel.Channel;
+import io.netty.channel.ChannelInboundHandlerAdapter;
+import io.netty.channel.embedded.EmbeddedChannel;
 
 /** Real Forge configuration, NBT packets, disk publishing and explicit OP-entry permissions. */
 public final class HologramLibraryRegression {
@@ -154,6 +159,7 @@ public final class HologramLibraryRegression {
         HologramServerLibrary store = new HologramServerLibrary(entries, root.resolve("library.cfg"));
         HologramServerLibrary reloaded = null;
         boolean storeStopped = false;
+        List<Channel> channels = new ArrayList<>();
         try {
             runWorker(store, () -> {});
             UUID uploader = UUID.randomUUID();
@@ -191,9 +197,11 @@ public final class HologramLibraryRegression {
             }
             NBTTagCompound upgrade = HologramLibraryProtocol.request("upgradeLibrary");
             upgrade.setLong("clientTaskToken", 811);
-            Object ordinary = peer(player(UUID.randomUUID(), "OrdinaryReader"));
+            Object ordinary = peer(connectedLibraryPlayer("OrdinaryReader", channels));
             NBTTagCompound blockedDownload = HologramLibraryProtocol.request("download");
             blockedDownload.setString("id", id);
+            blockedDownload.setLong("clientTaskToken", 810);
+            blockedDownload.setString(HologramBusinessWirePolicy.DOWNLOAD_INTENT_KEY, HologramBusinessWirePolicy.PUBLIC_COPY);
             denied(
                 () -> runWorker(active, () -> handle(active, ordinary, blockedDownload)),
                 "full legacy payload is not released to older clients under a browse/download pretext");
@@ -241,6 +249,7 @@ public final class HologramLibraryRegression {
             NBTTagCompound download = HologramLibraryProtocol.request("download");
             download.setString("id", id);
             download.setLong("clientTaskToken", 812);
+            download.setString(HologramBusinessWirePolicy.DOWNLOAD_INTENT_KEY, HologramBusinessWirePolicy.PUBLIC_COPY);
             download.setString("sourceHash", HologramBlueprintContentHash.of(actual.json));
             download.setLong("sourceRevision", -1);
             denied(
@@ -248,6 +257,7 @@ public final class HologramLibraryRegression {
                 "a stale revision cannot fetch a public artifact");
             download.removeTag("sourceRevision");
             download.removeTag("sourceHash");
+            download.setLong("clientTaskToken", 813); // A user-confirmed retry is a different transfer intent.
             runWorker(active, () -> handle(active, ordinary, download));
             Object queued = get(ordinary, "download");
             SimpleAssert.that(queued != null, "full download resolves the logical ID after physical rename");
@@ -282,6 +292,7 @@ public final class HologramLibraryRegression {
         } finally {
             if (!storeStopped) store.stop();
             if (reloaded != null) reloaded.stop();
+            for (Channel socket : channels) socket.close();
         }
     }
 
@@ -878,6 +889,7 @@ public final class HologramLibraryRegression {
         channel.setAccessible(true);
         Object previous = channel.get(null);
         Path directory = Files.createTempDirectory("gtmb-public-download-");
+        List<Channel> channels = new ArrayList<>();
         Path entries = directory.resolve("entries");
         HologramServerLibrary store = new HologramServerLibrary(entries, directory.resolve("library.cfg"));
         try {
@@ -886,7 +898,7 @@ public final class HologramLibraryRegression {
             channel.set(null, capture);
             runWorker(store, () -> store.changeConfig(true, 1, 128, 512, 2));
             Object owner = peer(player(UUID.randomUUID(), "PublicDownloadPublisher"));
-            Object reader = peer(player(UUID.randomUUID(), "PublicDownloadReader"));
+            Object reader = peer(connectedLibraryPlayer("PublicDownloadReader", channels));
             HologramPresets.Preset source = blueprint();
             java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(
                 HologramBlueprintArtifact.WIDTH,
@@ -915,6 +927,25 @@ public final class HologramLibraryRegression {
             download.setString("sourceHash", row.getString("sourceHash"));
             download.setLong("sourceRevision", row.getLong("sourceRevision"));
             download.setLong("clientTaskToken", 7L);
+            // This entry is already compact, so none of the failures below can be attributed to the old format.
+            denied(() -> runWorker(store, () -> handle(store, reader, download)),
+                "an old automatic download without a positive COPY intent cannot read a compact artifact");
+            for (String notCopy : new String[] { "browse", "place", "edit" }) {
+                download.setString(HologramBusinessWirePolicy.DOWNLOAD_INTENT_KEY, notCopy);
+                denied(() -> runWorker(store, () -> handle(store, reader, download)),
+                    "a " + notCopy + " intent never releases full artifact bytes");
+            }
+            download.setString(HologramBusinessWirePolicy.DOWNLOAD_INTENT_KEY, HologramBusinessWirePolicy.PUBLIC_COPY);
+            download.setString("purpose", "preview");
+            denied(() -> runWorker(store, () -> handle(store, reader, download)),
+                "a copy label cannot tunnel unknown request fields");
+            download.removeTag("purpose");
+            download.setString("clientTaskToken", "7");
+            denied(() -> runWorker(store, () -> handle(store, reader, download)),
+                "an unauthorized task token type cannot allocate a transfer");
+            download.setLong("clientTaskToken", 7L);
+            SimpleAssert.that(get(reader, "download") == null && ((Long) get(store, "downloadBytes")) == 0
+                && capture.replies.isEmpty(), "rejected operations have no full opening, chunks or reservations");
             runWorker(store, () -> handle(store, reader, download));
             SimpleAssert.eq(1, capture.replies.size(), "download starts with one header");
             NBTTagCompound header = wireReply(capture.replies.remove(0));
@@ -980,6 +1011,10 @@ public final class HologramLibraryRegression {
                 "public read never rewrites the server's pair");
             SimpleAssert.eq(0, get(store, "activeDownloads"), "successful delivery releases the transfer");
             SimpleAssert.eq(0L, get(store, "downloadBytes"), "successful delivery releases the byte reservation");
+            denied(() -> runWorker(store, () -> handle(store, reader, download)),
+                "the completed exact copy cannot release a second artifact on replay");
+            SimpleAssert.that(get(reader, "download") == null && ((Long) get(store, "downloadBytes")) == 0,
+                "duplicate copy cannot reserve or emit another full file");
             capture.replies.clear();
             runWorker(store, () -> handle(store, reader, list));
             SimpleAssert.eq(
@@ -987,14 +1022,92 @@ public final class HologramLibraryRegression {
                 capture.onlyListReply(0, 1, 1, 1)
                     .getCompoundTagAt(0),
                 "a public download does not change the reader's catalog identity");
+            publicCopySurvivesPeerEviction(store, capture, download, channels);
         } finally {
             channel.set(null, previous);
             store.stop();
+            for (Channel socket : channels) socket.close();
             try (java.util.stream.Stream<Path> files = Files.walk(directory)) {
                 for (Path path : (Iterable<Path>) files.sorted(Comparator.reverseOrder())::iterator)
                     Files.deleteIfExists(path);
             }
         }
+    }
+
+    private static void publicCopySurvivesPeerEviction(HologramServerLibrary store, LibraryReplyCapture capture,
+        NBTTagCompound request, List<Channel> channels) throws Exception {
+        EntityPlayerMP reader = connectedLibraryPlayer("CopyChurnReader", channels);
+        Method pump = HologramServerLibrary.class.getDeclaredMethod("pump");
+        pump.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        Map<UUID, Object> peers = (Map<UUID, Object>) get(store, "peers");
+        int capacity = (Integer) get(store, "MAX_PEERS");
+        NBTTagCompound completed = (NBTTagCompound) request.copy();
+        completed.setLong("clientTaskToken", 11L);
+        NBTTagCompound cancelled = (NBTTagCompound) request.copy();
+        cancelled.setLong("clientTaskToken", 12L);
+        NBTTagCompound fresh = (NBTTagCompound) request.copy();
+        fresh.setLong("clientTaskToken", 13L);
+        runWorker(store, () -> {
+            capture.replies.clear();
+            store.submit(reader, completed, false);
+            Object originalPeer = peers.get(reader.getUniqueID());
+            SimpleAssert.that(originalPeer != null, "real submit acquired a mailbox for the authenticated reader");
+            pump.invoke(store);
+            Method sendDownload = HologramServerLibrary.class
+                .getDeclaredMethod("sendDownload", originalPeer.getClass(), long.class);
+            sendDownload.setAccessible(true);
+            long now = System.nanoTime();
+            for (int i = 0; i < 8 && get(originalPeer, "download") != null; i++)
+                sendDownload.invoke(store, originalPeer, now + TimeUnit.MILLISECONDS.toNanos(100L * i));
+            SimpleAssert.that(capture.replies.stream().anyMatch(r -> "downloadDone".equals(r.getString("op"))
+                && r.getLong("clientTaskToken") == 11L), "real COPY completed before its idle mailbox was evicted");
+
+            evictCopyMailbox(store, reader, peers, capacity, channels, pump);
+            capture.replies.clear();
+            store.submit(reader, completed, false);
+            Object successorPeer = peers.get(reader.getUniqueID());
+            SimpleAssert.that(successorPeer != null && successorPeer != originalPeer,
+                "same live connection obtained a different mailbox");
+            pump.invoke(store);
+            assertNoPublicCopy(store, capture, "completed COPY remains consumed without a resident mailbox");
+
+            NBTTagCompound cancel = HologramLibraryProtocol.request("cancel");
+            cancel.setLong("clientTaskToken", 12L);
+            store.submit(reader, cancel, false);
+            pump.invoke(store);
+            evictCopyMailbox(store, reader, peers, capacity, channels, pump);
+            capture.replies.clear();
+            store.submit(reader, cancelled, false);
+            pump.invoke(store);
+            assertNoPublicCopy(store, capture, "cancelled COPY stays retired before its first artifact resolution");
+
+            capture.replies.clear();
+            store.submit(reader, fresh, false);
+            pump.invoke(store);
+            SimpleAssert.that(capture.replies.stream().anyMatch(r -> "downloadBegin".equals(r.getString("op"))
+                && r.getLong("clientTaskToken") == 13L), "fresh explicit COPY on that connection still opens");
+            invoke(store, "clearDownload", peers.get(reader.getUniqueID()));
+        });
+    }
+
+    private static void evictCopyMailbox(HologramServerLibrary store, EntityPlayerMP reader, Map<UUID, Object> peers,
+        int capacity, List<Channel> channels, Method pump) throws Exception {
+        for (int i = 0; i < capacity; i++) {
+            EntityPlayerMP observer = connectedLibraryPlayer("CopyChurn" + i, channels);
+            store.submit(observer, HologramLibraryProtocol.request("configGet"), false);
+        }
+        SimpleAssert.that(peers.get(reader.getUniqueID()) == null && reader.playerNetServerHandler.netManager.channel()
+            .isOpen(), "production LRU evicted the idle mailbox without ending its authenticated connection");
+        pump.invoke(store);
+    }
+
+    private static void assertNoPublicCopy(HologramServerLibrary store, LibraryReplyCapture capture, String reason)
+        throws Exception {
+        SimpleAssert.eq(0, get(store, "activeDownloads"), reason + ": no transfer");
+        SimpleAssert.eq(0L, get(store, "downloadBytes"), reason + ": no byte reservation");
+        SimpleAssert.that(capture.replies.stream().noneMatch(r -> r.getString("op").startsWith("download")),
+            reason + ": no header, chunk, or completion");
     }
 
     private static NBTTagCompound wireReply(NBTTagCompound reply) {
@@ -1011,13 +1124,14 @@ public final class HologramLibraryRegression {
 
     private static void downloadReservations() throws Exception {
         Path directory = Files.createTempDirectory("gtmb-download-reservation-");
+        List<Channel> channels = new ArrayList<>();
         HologramServerLibrary store = new HologramServerLibrary(
             directory.resolve("entries"),
             directory.resolve("library.cfg"));
         try {
             runWorker(store, () -> {});
             Object[] peers = new Object[5];
-            for (int i = 0; i < peers.length; i++) peers[i] = peer(player(UUID.randomUUID(), "Download" + i));
+            for (int i = 0; i < peers.length; i++) peers[i] = peer(connectedLibraryPlayer("Download" + i, channels));
             byte[] large = new byte[HologramBlueprintArtifact.MAX_BYTES];
             runWorker(store, () -> {
                 queueDownload(store, peers[0], large);
@@ -1080,6 +1194,7 @@ public final class HologramLibraryRegression {
             SimpleAssert.eq(0, get(store, "activeUploads"), "cancel releases maximum upload admission slots");
         } finally {
             store.stop();
+            for (Channel socket : channels) socket.close();
         }
     }
 
@@ -1099,8 +1214,11 @@ public final class HologramLibraryRegression {
         method.setAccessible(true);
         try {
             NBTTagCompound request = HologramLibraryProtocol.request("download");
-            request.setLong("clientTaskToken", taskToken);
-            method.invoke(store, peer, bytes, "Bounded fixture", request, "");
+            request.setLong("clientTaskToken", taskToken == 0 ? 1 : taskToken);
+            String id = "public_" + UUID.randomUUID();
+            request.setString("id", id);
+            request.setString(HologramBusinessWirePolicy.DOWNLOAD_INTENT_KEY, HologramBusinessWirePolicy.PUBLIC_COPY);
+            method.invoke(store, peer, bytes, "Bounded fixture", request, id);
         } catch (InvocationTargetException failure) {
             throw (Exception) failure.getCause();
         }
@@ -1956,6 +2074,7 @@ public final class HologramLibraryRegression {
         global.setAccessible(true);
         Object beforeServer = global.get(null);
         HologramServerLibrary store = null;
+        List<Channel> channels = new ArrayList<>();
         try {
             global.set(null, unsafe().allocateInstance(DedicatedServer.class));
             store = new HologramServerLibrary(directory.resolve("entries"), path);
@@ -1974,7 +2093,7 @@ public final class HologramLibraryRegression {
                     "actual server entry rejects restricted " + operation);
             SimpleAssert.that(!active.canDownload(member), "cache access consults effective UUID policy");
             denied(() -> active.requireDownload(member), "direct public read gate rejects restricted member");
-            Object publisher = peer(player(UUID.randomUUID(), "AllowedGroupPublisher"));
+            Object publisher = peer(connectedLibraryPlayer("AllowedGroupPublisher", channels));
             transfer(active, publisher, HologramServerLibrary.encodeShare(blueprint()), "", false);
             String publicId = HologramBlueprintFiles.managedPublic(directory.resolve("entries"))
                 .keySet()
@@ -1982,6 +2101,8 @@ public final class HologramLibraryRegression {
                 .next();
             NBTTagCompound download = HologramLibraryProtocol.request("download");
             download.setString("id", publicId);
+            download.setLong("clientTaskToken", 7);
+            download.setString(HologramBusinessWirePolicy.DOWNLOAD_INTENT_KEY, HologramBusinessWirePolicy.PUBLIC_COPY);
             runWorker(active, () -> handle(active, publisher, download));
             set(publisher, "online", false);
             SimpleAssert.that(get(publisher, "download") != null, "allowed public read allocates a real transfer");
@@ -2031,6 +2152,7 @@ public final class HologramLibraryRegression {
                 "duplicate settings packet fails revision CAS");
         } finally {
             if (store != null) store.stop();
+            for (Channel socket : channels) socket.close();
             global.set(null, beforeServer);
         }
         Files.write(
@@ -2262,6 +2384,19 @@ public final class HologramLibraryRegression {
             runWorker(store, () -> invoke(store, "abort", peer));
             throw failure;
         }
+    }
+
+    private static EntityPlayerMP connectedLibraryPlayer(String name, List<Channel> channels) throws Exception {
+        EntityPlayerMP player = player(UUID.randomUUID(), name);
+        NetworkManager network = new NetworkManager(false);
+        Channel channel = new EmbeddedChannel(new ChannelInboundHandlerAdapter());
+        channels.add(channel);
+        for (Field field : NetworkManager.class.getDeclaredFields()) if (field.getType() == Channel.class) {
+            field.setAccessible(true);
+            field.set(network, channel);
+        }
+        new NetHandlerPlayServer(null, network, player);
+        return player;
     }
 
     private static Object peer(EntityPlayerMP player) throws Exception {

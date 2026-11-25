@@ -4,6 +4,7 @@
 package com.miaokatze.gtmb.hologram;
 
 import java.io.IOException;
+import java.lang.ref.WeakReference;
 import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.Deque;
@@ -16,9 +17,13 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
 import net.minecraft.entity.player.EntityPlayerMP;
+import net.minecraft.item.Item;
+import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.CompressedStreamTools;
 import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.network.NetHandlerPlayServer;
 
+import com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector;
 import com.miaokatze.gtmb.util.ServerTaskScheduler;
 
 import cpw.mods.fml.common.FMLCommonHandler;
@@ -40,11 +45,12 @@ public final class HologramNetwork {
     private static volatile Consumer<NBTTagCompound> interactionSender;
     private static volatile java.util.function.BiConsumer<NBTTagCompound, Object> libraryReceiver;
     private static volatile Consumer<NBTTagCompound> libraryProbeReceiver;
-    private static volatile Consumer<NBTTagCompound> cutReceiver;
+    private static volatile java.util.function.BiConsumer<NBTTagCompound, net.minecraft.network.INetHandler> cutReceiver;
     private static volatile Consumer<NBTTagCompound> progressReceiver;
     private static final AtomicLong progressSequence = new AtomicLong();
     private static final Object cutTransportLock = new Object();
-    private static HologramSnapshotAssembly cutAssembly = new HologramSnapshotAssembly();
+    private static long cutReplySequence = -1;
+    private static net.minecraft.network.INetHandler cutInbound;
     private static final AtomicLong cutClientGeneration = new AtomicLong();
     private static final java.util.concurrent.ThreadPoolExecutor cutDecoder = new java.util.concurrent.ThreadPoolExecutor(
         1,
@@ -66,6 +72,22 @@ public final class HologramNetwork {
     private static final HologramRequestGate actionGate = new HologramRequestGate(16, 256);
     private static final HologramRequestGate receiptGate = new HologramRequestGate(4, 128);
     private static final HologramRequestGate snapshotControlGate = new HologramRequestGate(2, 256);
+    private static final HologramRequestGate retiredPlacementGate = new HologramRequestGate(1, 32);
+    private static final HologramRequestGate projectedLayerProbeGate = new HologramRequestGate(1, 32);
+    private static final AtomicLong constructionIntentSequence = new AtomicLong();
+    private static final long PROJECTED_LAYER_TICKET_NANOS = TimeUnit.SECONDS.toNanos(90);
+    private static final int MAX_PROJECTED_LAYER_TICKETS = 256;
+    private static final String LAYER_VERSION = "ordinaryLayerProbe", LAYER_REQUEST = "ordinaryLayerRequest";
+    private static final String LAYER_INTENT = "ordinaryLayerIntent", LAYER_SCOPE = "ordinaryLayerGeneration";
+    private static final Map<UUID, ProjectedLayerTicket> projectedLayerTickets = new LinkedHashMap<>();
+    private static HologramProjectedLayerServer projectedLayerServer;
+    private static volatile ProjectedLayerNegotiation projectedLayerNegotiation;
+    private static final HologramStockNativeServer stockNativeServer =
+        new HologramStockNativeServer(HologramNetwork::sendStockNativeReply);
+    private static volatile StockNativeReplies stockNativeReplies;
+    private static final String RETIRED_PLACEMENT_REPLY = "retiredWholePlacement";
+    private static final String RETIRED_PLACEMENT_REASON = "旧版整份施工上传已停用，未开始施工。请使用两端支持的新版施工入口。";
+    private static final String RETIRED_MATERIAL_CHECK_REASON = "旧版服务器材料核对已停用；请在本地查看材料清单。";
     private static final Map<UUID, SnapshotFlow> snapshotFlows = new LinkedHashMap<>();
     private static final AtomicLong snapshotFlowGeneration = new AtomicLong();
 
@@ -79,8 +101,12 @@ public final class HologramNetwork {
     }
 
     static void clearServerQueues() {
+        stockNativeServer.reset();
         HologramAttachmentUpload.clearServer();
-        HologramPlacementUpload.clearServer();
+        retiredPlacementGate.clear();
+        projectedLayerProbeGate.clear();
+        // On an in-process reset keep the intent watermark; an old already-issued ticket is no longer usable.
+        for (ProjectedLayerTicket ticket : projectedLayerTickets.values()) ticket.claimed = true;
         actionGate.clear();
         receiptGate.clear();
         snapshotControlGate.clear();
@@ -137,7 +163,7 @@ public final class HologramNetwork {
             Side.CLIENT);
         channel.registerMessage(
             HologramPlacementUpload.Handler.class,
-            HologramPlacementUpload.Fragment.class,
+            HologramPlacementUpload.RetiredFrame.class,
             10,
             Side.SERVER);
         channel.registerMessage(
@@ -145,12 +171,283 @@ public final class HologramNetwork {
             HologramPlacementUpload.Ack.class,
             11,
             Side.CLIENT);
+        channel.registerMessage(
+            HologramProjectedLayerTransport.ServerHandler.class,
+            HologramProjectedLayerTransport.Request.class,
+            12,
+            Side.SERVER);
+        channel.registerMessage(
+            HologramProjectedLayerTransport.ClientHandler.class,
+            HologramProjectedLayerTransport.Reply.class,
+            13,
+            Side.CLIENT);
         HologramAttachmentUpload.init(channel);
-        HologramPlacementUpload.init(channel);
         HologramLibraryFacade.init();
         FMLCommonHandler.instance()
             .bus()
             .register(new TransportTicks());
+    }
+
+    @FunctionalInterface
+    public interface ProjectedLayerNegotiation {
+
+        void accept(UUID request, long intent, int version, long scope, Object inboundHandler);
+    }
+
+    /** Installed on normal client init only; opening a preview never sends or negotiates. */
+    public static void setProjectedLayerNegotiation(ProjectedLayerNegotiation receiver) {
+        projectedLayerNegotiation = receiver;
+    }
+
+    public static long nextConstructionIntentSequence() {
+        long previous;
+        do {
+            previous = constructionIntentSequence.get();
+            if (previous == Long.MAX_VALUE) return 0;
+        } while (!constructionIntentSequence.compareAndSet(previous, previous + 1));
+        return previous + 1;
+    }
+
+    /** A confirmed attempt may ask a legacy peer safely, without trying an unknown message discriminator. */
+    public static boolean sendProjectedLayerProbe(UUID request, long intent) {
+        SimpleNetworkWrapper wire = channel;
+        if (wire == null || !nonzero(request) || intent < 1) return false;
+        Action probe = new Action(); // No snapshot capability flags, local geometry, or workspace identifiers.
+        probe.tag.setString("action", "serverRules");
+        probe.tag.setInteger(LAYER_VERSION, HologramProjectedLayerTransport.VERSION);
+        probe.tag.setString(LAYER_REQUEST, request.toString());
+        probe.tag.setLong(LAYER_INTENT, intent);
+        wire.sendToServer(probe);
+        return true;
+    }
+
+    /** Only the client's matching negotiation receipt should unlock a typed request; exceptions remain uncertain. */
+    public static boolean sendProjectedLayerRequest(HologramProjectedLayerTransport.Request request) {
+        SimpleNetworkWrapper wire = channel;
+        if (wire == null || request == null) return false;
+        wire.sendToServer(request);
+        return true;
+    }
+
+    @FunctionalInterface
+    public interface StockNativeReplies {
+
+        void accept(HologramStockNativeWire.Reply reply, Object inboundHandler);
+    }
+
+    /** Client installs an exact owner receiver later. Neither local opening nor material inspection calls a writer. */
+    public static void setStockNativeReplies(StockNativeReplies receiver) {
+        stockNativeReplies = receiver;
+    }
+
+    public static boolean sendStockNativeConfirmation(HologramStockNativeWire.Confirmation confirmation) {
+        return sendStockNativeAction(HologramStockNativeWire.confirm(confirmation));
+    }
+
+    public static boolean sendStockNativeProbe(HologramStockNativeWire.Confirmation confirmation) {
+        return sendStockNativeAction(HologramStockNativeWire.probe(confirmation));
+    }
+
+    public static boolean sendStockNativeAfterProbe(HologramStockNativeWire.Confirmation confirmation) {
+        return sendStockNativeAction(HologramStockNativeWire.confirmAfterProbe(confirmation));
+    }
+
+    public static boolean sendStockNativeControl(HologramStockNativeWire.Key key, HologramStockNativeWire.Command command) {
+        return sendStockNativeAction(HologramStockNativeWire.control(key, command));
+    }
+
+    private static boolean sendStockNativeAction(NBTTagCompound tag) {
+        SimpleNetworkWrapper wire = channel;
+        if (wire == null) return false;
+        Action packet = new Action();
+        packet.tag = tag;
+        wire.sendToServer(packet);
+        return true;
+    }
+
+    private static void sendStockNativeReply(HologramWorkspace.ActionEndpoint endpoint,
+        HologramStockNativeWire.Reply reply) {
+        SimpleNetworkWrapper wire = channel;
+        if (wire != null && HologramWorkspace.currentActionEndpoint(endpoint))
+            wire.sendTo(new State(HologramStockNativeWire.writeReply(reply)), endpoint.player);
+    }
+
+    static void tickStockNativeServer(long deadline) {
+        stockNativeServer.tick(deadline);
+    }
+
+    static boolean stockNativeOwns(HologramSession session) {
+        return stockNativeServer.owns(session);
+    }
+
+    private static boolean nonzero(UUID request) {
+        return request != null && (request.getMostSignificantBits() != 0 || request.getLeastSignificantBits() != 0);
+    }
+
+    private static UUID projectedLayerIdentity(NBTTagCompound tag, boolean reply) {
+        if (tag.func_150296_c().size() != (reply ? 5 : 4)
+            || !(reply ? tag.hasKey("serverRulesOnly", 1) && tag.getBoolean("serverRulesOnly")
+                : tag.hasKey("action", 8) && "serverRules".equals(tag.getString("action")))
+            || !tag.hasKey(LAYER_VERSION, 3)
+            || tag.getInteger(LAYER_VERSION) != HologramProjectedLayerTransport.VERSION
+            || !tag.hasKey(LAYER_REQUEST, 8) || !tag.hasKey(LAYER_INTENT, 4) || tag.getLong(LAYER_INTENT) < 1
+            || reply && (!tag.hasKey(LAYER_SCOPE, 4) || tag.getLong(LAYER_SCOPE) < 1)) return null;
+        String id = tag.getString(LAYER_REQUEST);
+        if (!HologramNativeCompactStart.canonical(id)) return null;
+        UUID request = UUID.fromString(id);
+        return nonzero(request) ? request : null;
+    }
+
+    /** Current authenticated connection's last attempted proof; kept through expiry/consumption to prevent remint. */
+    private static final class ProjectedLayerTicket {
+
+        final WeakReference<NetHandlerPlayServer> sender;
+        final HologramProjectedLayerTransport.Key key;
+        final long issuedAt;
+        final ProjectedLayerTool tool;
+        boolean claimed;
+
+        ProjectedLayerTicket(HologramWorkspace.ActionEndpoint endpoint, HologramProjectedLayerTransport.Key key,
+            ProjectedLayerTool tool, long now) {
+            sender = new WeakReference<>(endpoint.connection);
+            this.key = key;
+            issuedAt = now;
+            this.tool = tool;
+        }
+
+        boolean usable(long now) {
+            return tool != null && !claimed && now - issuedAt < PROJECTED_LAYER_TICKET_NANOS;
+        }
+    }
+
+    /** Exact server-side held projector at authenticated ingress; no copy or traversal of tool NBT. */
+    private static final class ProjectedLayerTool {
+
+        final int slot;
+        final Item item;
+        final String toolId;
+        final WeakReference<ItemStack> original;
+
+        private ProjectedLayerTool(int slot, ItemStack held, String id) {
+            this.slot = slot;
+            item = held.getItem();
+            toolId = id;
+            original = id.isEmpty() ? new WeakReference<>(held) : null;
+        }
+
+        static ProjectedLayerTool capture(EntityPlayerMP player) {
+            int slot = player.inventory.currentItem;
+            ItemStack held = player.getHeldItem();
+            if (!ItemNekoHologramProjector.isProjector(held)) return null;
+            String id = projectedToolId(held);
+            return id.isEmpty() || HologramNativeCompactStart.canonical(id)
+                ? new ProjectedLayerTool(slot, held, id) : null;
+        }
+
+        boolean current(EntityPlayerMP player) {
+            ItemStack held = player.getHeldItem();
+            return held != null && player.inventory.currentItem == slot && held.getItem() == item
+                && toolId.equals(projectedToolId(held)) && (original == null || original.get() == held);
+        }
+    }
+
+    private static String projectedToolId(ItemStack held) {
+        return held.hasTagCompound() ? held.getTagCompound().getString(HologramSessionKeys.TOOL_ID) : "";
+    }
+
+    private static void queueProjectedLayerProbe(NBTTagCompound tag, MessageContext context) {
+        UUID request = projectedLayerIdentity(tag, false);
+        if (request == null || context == null) return;
+        HologramWorkspace.ActionEndpoint endpoint =
+            HologramWorkspace.captureActionEndpoint(context.getServerHandler());
+        if (endpoint == null || endpoint.constructionScope == null) return;
+        ProjectedLayerTool submitted = ProjectedLayerTool.capture(endpoint.player);
+        if (submitted == null) return;
+        HologramRequestGate.Lease lease = projectedLayerProbeGate.acquire(endpoint.connection);
+        if (lease == null) return;
+        long intent = tag.getLong(LAYER_INTENT);
+        ServerTaskScheduler.scheduleServerTask(() -> runQueuedAction(endpoint, lease,
+            () -> issueProjectedLayerTicket(endpoint, request, intent, submitted)));
+    }
+
+    private static void issueProjectedLayerTicket(HologramWorkspace.ActionEndpoint endpoint, UUID request,
+        long intent, ProjectedLayerTool submitted) {
+        SimpleNetworkWrapper wire = channel;
+        HologramConstructionTaskGate gate = HologramWorkspace.constructionGate(endpoint);
+        EntityPlayerMP player = endpoint.player;
+        if (wire == null || gate == null) return;
+        boolean eligible = !player.isDead && player.capabilities.allowEdit && submitted.current(player);
+        var key = new HologramProjectedLayerTransport.Key(request, intent, endpoint.constructionScope.generation);
+        if (gate.query(endpoint.constructionScope, key.gateRequest()).phase != HologramConstructionTaskGate.Phase.UNSEEN)
+            return;
+        long now = System.nanoTime();
+        ProjectedLayerTicket previous = projectedLayerTickets.get(endpoint.actor);
+        if (previous != null && previous.sender.get() == endpoint.connection && intent <= previous.key.intent) {
+            if (!previous.key.equals(key) || !previous.usable(now)) return;
+            if (!eligible || !previous.tool.current(player)) {
+                previous.claimed = true;
+                return;
+            }
+            // A lost capability receipt may be retried, but it never renews the same proof or transfers it to a new scope.
+        } else {
+            if (previous == null && projectedLayerTickets.size() >= MAX_PROJECTED_LAYER_TICKETS) {
+                pruneProjectedLayerTickets();
+                if (projectedLayerTickets.size() >= MAX_PROJECTED_LAYER_TICKETS) return;
+            }
+            // A refused ingress advances only its replay watermark, with no usable ticket or positive reply.
+            projectedLayerTickets.put(endpoint.actor, new ProjectedLayerTicket(endpoint, key, eligible ? submitted : null, now));
+            if (!eligible) return;
+        }
+        if (projectedLayerServer == null) {
+            projectedLayerServer = new HologramProjectedLayerServer(
+                HologramNetwork::sendProjectedLayerReply, HologramNetwork::consumeProjectedLayerTicket);
+            HologramProjectedLayerTransport.installServer(projectedLayerServer);
+        }
+        NBTTagCompound proof = new NBTTagCompound();
+        proof.setBoolean("serverRulesOnly", true); // Old clients discard it without requesting new geometry.
+        proof.setInteger(LAYER_VERSION, HologramProjectedLayerTransport.VERSION);
+        proof.setString(LAYER_REQUEST, request.toString());
+        proof.setLong(LAYER_INTENT, intent);
+        proof.setLong(LAYER_SCOPE, endpoint.constructionScope.generation);
+        wire.sendTo(new State(proof), player);
+    }
+
+    private static boolean consumeProjectedLayerTicket(HologramWorkspace.ActionEndpoint endpoint,
+        HologramProjectedLayerTransport.Key key) {
+        if (HologramWorkspace.constructionGate(endpoint) == null) return false;
+        ProjectedLayerTicket ticket = projectedLayerTickets.get(endpoint.actor);
+        if (ticket == null || ticket.sender.get() != endpoint.connection || !ticket.key.equals(key)
+            || !ticket.usable(System.nanoTime())) return false;
+        ticket.claimed = true; // Even a now-incompatible exact attempt must not start after a later tool swap.
+        return ticket.tool.current(endpoint.player);
+    }
+
+    private static void sendProjectedLayerReply(HologramWorkspace.ActionEndpoint endpoint,
+        HologramProjectedLayerTransport.Reply reply) {
+        SimpleNetworkWrapper wire = channel;
+        if (wire != null && HologramWorkspace.currentActionEndpoint(endpoint)) wire.sendTo(reply, endpoint.player);
+    }
+
+    private static void pruneProjectedLayerTickets() {
+        projectedLayerTickets.values().removeIf(ticket -> {
+            NetHandlerPlayServer sender = ticket.sender.get();
+            return sender == null || sender.netManager == null || !sender.netManager.isChannelOpen();
+        });
+    }
+
+    static void tickProjectedLayerServer(long deadline) {
+        HologramProjectedLayerServer server = projectedLayerServer;
+        if (server != null) server.tick(deadline);
+    }
+
+    /** Normal logical server stop, not a client event. Pending permits remain held by the shared gate. */
+    public static void closeProjectedLayerServer() {
+        HologramProjectedLayerTransport.installServer(null);
+        HologramProjectedLayerServer server = projectedLayerServer;
+        projectedLayerServer = null;
+        projectedLayerProbeGate.clear();
+        projectedLayerTickets.clear();
+        if (server != null) server.close();
     }
 
     public static void setClientReceiver(Consumer<NBTTagCompound> value) {
@@ -161,7 +458,6 @@ public final class HologramNetwork {
     public static void clearLibraryClientTransport() {
         librarySnapshots.reset();
         HologramAttachmentUpload.clearClient();
-        HologramPlacementUpload.clearClient();
     }
 
     public static void setClientInteractionSender(Consumer<NBTTagCompound> value) {
@@ -206,62 +502,45 @@ public final class HologramNetwork {
 
     public static void sendAction(NBTTagCompound tag) {
         String action = tag.getString("action");
-        if ("projectedPlacement".equals(action))
-            throw new IllegalArgumentException("Projected placement requires the bounded upload");
-        if ("cancelProjectedPlacement".equals(action))
-            HologramPlacementUpload.finishedClient(tag.getString("placementRequestId"));
+        if ("projectedPlacement".equals(action)) throw new IllegalArgumentException(RETIRED_PLACEMENT_REASON);
+        if ("checkPlacementMaterials".equals(action)) throw new IllegalArgumentException(RETIRED_MATERIAL_CHECK_REASON);
         if (channel == null) return;
         if ("placeTextBox".equals(tag.getString("op"))) HologramAttachmentUpload.send(tag);
         else channel.sendToServer(new Action(tag));
     }
 
-    /** Placement has no generic Action send path: even one-frame requests use the bounded transport. */
+    /** Retained for source compatibility; never serializes a whole construction payload. */
     public static HologramPlacementUpload.Prepared prepareProjectedPlacement(NBTTagCompound tag,
         java.util.function.BooleanSupplier current) throws IOException {
-        if (!"projectedPlacement".equals(tag.getString("action"))) throw new IOException("未知的施工请求");
-        HologramPlacementRequest.Header header = HologramPlacementRequest.header(tag);
-        NBTTagCompound envelope = (NBTTagCompound) tag.copy();
-        markSnapshotCapabilities(envelope);
-        byte[] bytes;
-        try {
-            bytes = HologramSnapshotCodec.compress(
-                envelope,
-                HologramPlacementUpload.MAX_EXPANDED,
-                HologramPlacementUpload.MAX_COMPRESSED,
-                current);
-        } catch (IOException invalid) {
-            throw new IOException("施工清单超过传输上限或包含无效数据，请检查或拆分施工范围", invalid);
-        }
-        if (!current.getAsBoolean()) throw new IOException("施工准备已取消");
-        return HologramPlacementUpload.prepare(header.id(), bytes);
+        throw new IOException(RETIRED_PLACEMENT_REASON);
     }
 
     public static void sendPreparedPlacement(HologramPlacementUpload.Prepared prepared,
         java.util.function.BooleanSupplier current) throws IOException {
-        if (channel == null) throw new IOException("施工上传缺少当前客户端连接");
-        HologramPlacementUpload.send(prepared, current);
+        throw new IOException(RETIRED_PLACEMENT_REASON);
     }
 
-    public static void discardPreparedPlacement(java.util.UUID id) {
-        HologramPlacementUpload.finishedClient(id.toString());
+    public static void discardPreparedPlacement(java.util.UUID id) {}
+
+    /** A legacy peer gets a small owned incompatibility; this path admits no edit, snapshot, transfer or worker. */
+    static void refuseRetiredPlacement(HologramWorkspace.ActionEndpoint endpoint, String id) {
+        refuseRetiredPlacement(endpoint, id, RETIRED_PLACEMENT_REASON);
     }
 
-    /** Only called after complete ordered and digest-verified placement upload on the server thread. */
-    static void receiveUploadedPlacement(EntityPlayerMP player, NBTTagCompound tag) {
-        // A streamed placement should advertise the same snapshot flow as the legacy direct Action,
-        // without admitting an unrelated control operation through the placement decoder.
-        if (tag.getInteger("clientSnapshotFlow") == HologramSnapshotFlowControl.VERSION)
-            snapshotFlow(player).credit.capable();
-        HologramProjectedPlacementService.receive(player, tag);
-    }
-
-    static void clientPlacementFailure(String id, String reason) {
-        NBTTagCompound state = new NBTTagCompound();
-        state.setString("placementRequestId", id);
-        state.setBoolean("placementRequestAccepted", false);
-        state.setString("errorMessage", reason);
-        Consumer<NBTTagCompound> client = receiver;
-        if (client != null) client.accept(state);
+    private static void refuseRetiredPlacement(HologramWorkspace.ActionEndpoint endpoint, String id, String reason) {
+        if (endpoint == null || !HologramNativeCompactStart.canonical(id)) return;
+        HologramRequestGate.Lease lease = retiredPlacementGate.acquire(endpoint.connection);
+        if (lease == null) return;
+        ServerTaskScheduler.scheduleServerTask(() -> runQueuedAction(endpoint, lease, () -> {
+            // Do not mark the ID consumed or end another generation's legitimate native task.
+            if (HologramProjectedPlacementService.consumed(endpoint.player, id)) return;
+            NBTTagCompound reply = new NBTTagCompound();
+            reply.setString("placementRequestId", id);
+            reply.setBoolean("placementRequestAccepted", false);
+            reply.setString("errorMessage", reason);
+            reply.setBoolean(RETIRED_PLACEMENT_REPLY, true);
+            sendState(endpoint.player, reply);
+        }));
     }
 
     static void clientActionFailure(NBTTagCompound action, String reason) {
@@ -289,10 +568,11 @@ public final class HologramNetwork {
         runQueuedAction(player, world, lease, () -> dispatch(player, tag));
     }
 
-    public static void setCutReceiver(Consumer<NBTTagCompound> value) {
+    public static void setCutReceiver(java.util.function.BiConsumer<NBTTagCompound, net.minecraft.network.INetHandler> value) {
         synchronized (cutTransportLock) {
             cutReceiver = value;
-            cutAssembly = new HologramSnapshotAssembly();
+            cutReplySequence = -1;
+            cutInbound = null;
             cutClientGeneration.incrementAndGet();
             cutDecoder.getQueue()
                 .clear();
@@ -306,7 +586,8 @@ public final class HologramNetwork {
 
     public static void clearCutClientTransport() {
         synchronized (cutTransportLock) {
-            cutAssembly = new HologramSnapshotAssembly();
+            cutReplySequence = -1;
+            cutInbound = null;
             cutClientGeneration.incrementAndGet();
             cutDecoder.getQueue()
                 .clear();
@@ -318,32 +599,32 @@ public final class HologramNetwork {
         if (channel != null) channel.sendToServer(new CutAction(tag));
     }
 
-    static void sendCutState(EntityPlayerMP player, NBTTagCompound tag) {
-        if (channel == null) return;
+    static void sendCutState(HologramWorkspace.ActionEndpoint endpoint, NBTTagCompound tag) {
+        if (channel == null || !HologramWorkspace.currentActionEndpoint(endpoint)) return;
         try {
-            byte[] bytes = compressSnapshot(tag);
-            CutOutbox box = cutOutgoing.get(player.getUniqueID());
-            if (box == null || box.player != player) {
-                box = new CutOutbox(player);
-                cutOutgoing.put(player.getUniqueID(), box);
+            byte[] bytes = HologramCutReplyCodec.encode(tag);
+            CutOutbox box = cutOutgoing.get(endpoint.actor);
+            if (box == null || box.endpoint != endpoint) {
+                box = new CutOutbox(endpoint);
+                cutOutgoing.put(endpoint.actor, box);
             }
             if (box.pendingBytes + bytes.length > HologramSnapshotAssembly.MAX_BYTES)
                 throw new IOException("cut transport queue full");
             box.snapshots.addLast(new CutSnapshot(snapshotSequence.incrementAndGet(), bytes));
             box.pendingBytes += bytes.length;
         } catch (IOException failure) {
-            com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Cut snapshot could not be queued", failure);
+            com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Cut metadata reply could not be queued", failure);
         }
     }
 
     private static final class CutOutbox {
 
-        final EntityPlayerMP player;
+        final HologramWorkspace.ActionEndpoint endpoint;
         final Deque<CutSnapshot> snapshots = new ArrayDeque<>();
         long pendingBytes;
 
-        CutOutbox(EntityPlayerMP player) {
-            this.player = player;
+        CutOutbox(HologramWorkspace.ActionEndpoint endpoint) {
+            this.endpoint = endpoint;
         }
     }
 
@@ -351,7 +632,6 @@ public final class HologramNetwork {
 
         final long sequence;
         final byte[] bytes;
-        int offset, index;
 
         CutSnapshot(long sequence, byte[] bytes) {
             this.sequence = sequence;
@@ -405,58 +685,97 @@ public final class HologramNetwork {
     public static final class CutServerHandler implements IMessageHandler<CutAction, IMessage> {
 
         public IMessage onMessage(CutAction message, MessageContext context) {
-            HologramCutService.receive(context.getServerHandler().playerEntity, message.tag);
+            HologramCutService.receive(
+                HologramWorkspace.captureActionEndpoint(context.getServerHandler()), message.tag);
             return null;
         }
     }
 
+    /** One versioned metadata reply, still under the original discriminator and header layout. */
     public static final class CutFragment implements IMessage {
 
-        private Fragment fragment = new Fragment();
+        private long sequence;
+        private byte[] bytes;
 
         public CutFragment() {}
 
-        CutFragment(long sequence, int total, int index, byte[] bytes) {
-            fragment = new Fragment(sequence, total, index, bytes);
+        CutFragment(long serial, int total, int index, byte[] bytes) {
+            if (index != 0 || total != bytes.length || !HologramCutReplyCodec.fitsFrame(total))
+                throw new IllegalArgumentException("Cut metadata frame budget");
+            sequence = HologramCutReplyCodec.markSequence(serial);
+            this.bytes = bytes;
+        }
+
+        boolean admitted() {
+            return bytes != null;
+        }
+
+        NBTTagCompound decodeReply() throws IOException {
+            if (!admitted()) throw new IOException("No admitted Cut metadata frame");
+            return HologramCutReplyCodec.decode(bytes);
         }
 
         public void fromBytes(ByteBuf buf) {
-            fragment.metricFamily = HologramRuntimeMetrics.Packet.CUT_FRAGMENT;
-            fragment.fromBytes(buf);
+            bytes = null;
+            if (buf.readableBytes() >= HologramCutReplyCodec.HEADER_BYTES) {
+                long next = buf.readLong();
+                int total = buf.readInt(), index = buf.readInt(), length = buf.readInt();
+                if (HologramCutReplyCodec.marked(next) && index == 0 && total == length
+                    && HologramCutReplyCodec.fitsFrame(length) && length == buf.readableBytes()) {
+                    sequence = next;
+                    bytes = new byte[length];
+                    buf.readBytes(bytes);
+                    HologramRuntimeMetrics.packet(HologramRuntimeMetrics.Packet.CUT_FRAGMENT, false, false,
+                        bytes.length + HologramCutReplyCodec.HEADER_BYTES);
+                    return;
+                }
+            }
+            // Unsupported old format: no payload array, assembly, decoder job or guessed request result.
+            buf.skipBytes(buf.readableBytes());
         }
 
         public void toBytes(ByteBuf buf) {
-            fragment.metricFamily = HologramRuntimeMetrics.Packet.CUT_FRAGMENT;
-            fragment.toBytes(buf);
+            if (!admitted()) throw new IllegalStateException("No Cut metadata reply");
+            buf.writeLong(sequence);
+            buf.writeInt(bytes.length);
+            buf.writeInt(0);
+            buf.writeInt(bytes.length);
+            buf.writeBytes(bytes);
+            HologramRuntimeMetrics.packet(HologramRuntimeMetrics.Packet.CUT_FRAGMENT, false, true,
+                bytes.length + HologramCutReplyCodec.HEADER_BYTES);
         }
     }
 
     public static final class CutFragmentHandler implements IMessageHandler<CutFragment, IMessage> {
 
         public IMessage onMessage(CutFragment message, MessageContext context) {
+            if (!message.admitted()) return null;
             synchronized (cutTransportLock) {
-                Fragment fragment = message.fragment;
-                observeFragment(
-                    "cut",
-                    fragment.sequence,
-                    fragment.total,
-                    fragment.index,
-                    fragment.bytes.length,
-                    HologramSnapshotAssembly.CHUNK_BYTES);
-                byte[] bytes = cutAssembly
-                    .accept(fragment.sequence, fragment.total, fragment.index, fragment.bytes, System.nanoTime());
-                Consumer<NBTTagCompound> current = cutReceiver;
+                net.minecraft.network.INetHandler inbound = context.netHandler;
+                if (inbound == null) return null;
+                if (cutInbound != inbound) {
+                    // No fragment or decoded reply may be adopted into another play handler's assembly.
+                    cutInbound = inbound;
+                    cutReplySequence = -1;
+                    cutClientGeneration.incrementAndGet();
+                    cutDecoder.getQueue().clear();
+                }
+                if (message.sequence <= cutReplySequence) return null;
+                cutReplySequence = message.sequence;
+                observeFragment("cut", message.sequence, message.bytes.length, 0, message.bytes.length,
+                    HologramCutReplyCodec.MAX_COMPRESSED_BYTES);
+                java.util.function.BiConsumer<NBTTagCompound, net.minecraft.network.INetHandler> current = cutReceiver;
                 long generation = cutClientGeneration.get();
-                if (bytes != null && current != null) try {
+                if (current != null) try {
                     cutDecoder.execute(() -> {
                         try {
-                            NBTTagCompound state = HologramSnapshotCodec.decode(bytes);
+                            NBTTagCompound state = message.decodeReply();
                             synchronized (cutTransportLock) {
                                 if (generation == cutClientGeneration.get() && current == cutReceiver)
-                                    current.accept(state);
+                                    current.accept(state, inbound);
                             }
                         } catch (IOException failure) {
-                            com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Cut snapshot decode failed", failure);
+                            com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Cut metadata reply rejected", failure);
                         } finally {
                             HologramRuntimeMetrics.gauge(
                                 HologramRuntimeMetrics.Counter.CUT_DECODER_DEPTH,
@@ -470,7 +789,7 @@ public final class HologramNetwork {
                             .size());
                 } catch (java.util.concurrent.RejectedExecutionException full) {
                     HologramRuntimeMetrics.add(HologramRuntimeMetrics.Counter.CUT_DECODER_REJECTED, 1);
-                    com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Cut decoder queue is full", full);
+                    com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Cut metadata decoder queue is full", full);
                 }
             }
             return null;
@@ -1070,10 +1389,7 @@ public final class HologramNetwork {
 
         @SubscribeEvent
         public void clientTick(TickEvent.ClientTickEvent event) {
-            if (event.phase == TickEvent.Phase.END) {
-                HologramAttachmentUpload.clientTick();
-                HologramPlacementUpload.clientTick();
-            }
+            if (event.phase == TickEvent.Phase.END) HologramAttachmentUpload.clientTick();
         }
 
         @SubscribeEvent
@@ -1092,15 +1408,13 @@ public final class HologramNetwork {
             snapshotFlows.values()
                 .removeIf(flow -> !flow.current(flow.player) || !progressConnected(flow.player));
             HologramAttachmentUpload.tick();
-            HologramPlacementUpload.tick();
             HologramSnapshotPreparation.pruneRetired();
             tickEncoding();
             Iterator<CutOutbox> cuts = cutOutgoing.values()
                 .iterator();
             while (cuts.hasNext()) {
                 CutOutbox box = cuts.next();
-                if (box.player.playerNetServerHandler == null || box.player.playerNetServerHandler.netManager == null
-                    || !box.player.playerNetServerHandler.netManager.isChannelOpen()) {
+                if (!HologramWorkspace.currentActionEndpoint(box.endpoint)) {
                     cuts.remove();
                     continue;
                 }
@@ -1109,20 +1423,11 @@ public final class HologramNetwork {
                     cuts.remove();
                     continue;
                 }
-                int end = Math.min(snapshot.bytes.length, snapshot.offset + HologramSnapshotAssembly.CHUNK_BYTES);
-                channel.sendTo(
-                    new CutFragment(
-                        snapshot.sequence,
-                        snapshot.bytes.length,
-                        snapshot.index++,
-                        Arrays.copyOfRange(snapshot.bytes, snapshot.offset, end)),
-                    box.player);
-                snapshot.offset = end;
-                if (end == snapshot.bytes.length) {
-                    box.pendingBytes -= snapshot.bytes.length;
-                    box.snapshots.removeFirst();
-                    if (box.snapshots.isEmpty()) cuts.remove();
-                }
+                channel.sendTo(new CutFragment(snapshot.sequence, snapshot.bytes.length, 0, snapshot.bytes),
+                    box.endpoint.player);
+                box.pendingBytes -= snapshot.bytes.length;
+                box.snapshots.removeFirst();
+                if (box.snapshots.isEmpty()) cuts.remove();
             }
             // Rotate only the initial file-like hydration queues; normal interaction snapshots retain their FIFO.
             java.util.List<Outbox> initial = new java.util.ArrayList<>();
@@ -1475,8 +1780,26 @@ public final class HologramNetwork {
 
         public IMessage onMessage(Action msg, MessageContext ctx) {
             // Retired control packets from older clients must never enter workspace command dispatch.
-            if ("serverRules".equals(msg.tag.getString("action"))) return null;
-            EntityPlayerMP player = ctx.getServerHandler().playerEntity;
+            String action = msg.tag.getString("action");
+            if (HologramStockNativeWire.recognizes(msg.tag)) {
+                HologramStockNativeWire.Request request = HologramStockNativeWire.readRequest(msg.tag);
+                if (request != null && ctx != null)
+                    stockNativeServer.enqueue(HologramWorkspace.captureActionEndpoint(ctx.getServerHandler()), request);
+                return null; // Exact marker never falls through to old construction or library actions.
+            }
+            if ("serverRules".equals(action)) {
+                queueProjectedLayerProbe(msg.tag, ctx);
+                return null;
+            }
+            HologramWorkspace.ActionEndpoint endpoint = HologramWorkspace.captureActionEndpoint(ctx.getServerHandler());
+            if (endpoint == null) return null;
+            if ("projectedPlacement".equals(action) || "checkPlacementMaterials".equals(action)) {
+                if (msg.tag.hasKey("placementRequestId", 8)) refuseRetiredPlacement(
+                    endpoint, msg.tag.getString("placementRequestId"),
+                    "projectedPlacement".equals(action) ? RETIRED_PLACEMENT_REASON : RETIRED_MATERIAL_CHECK_REASON);
+                return null;
+            }
+            EntityPlayerMP player = endpoint.player;
             // Preserve an independent lane for disk receipts; different capabilities are never coalesced.
             boolean receipt = "ackBlueprintSaved".equals(msg.tag.getString("op"))
                 || "cancelProjectedPlacement".equals(msg.tag.getString("action"));
@@ -1497,11 +1820,10 @@ public final class HologramNetwork {
             HologramRuntimeMetrics.highWater(HologramRuntimeMetrics.Counter.ACTION_HIGH_WATER, actionGate.size());
             // Packet decompression is already bounded. Large index selections must not be rejected
             // because their textual representation exceeds an unrelated string budget.
-            net.minecraft.world.World world = player.worldObj;
             HologramSessionPolicy.PreparationTool submittedTool = compactNative
                 ? new HologramSessionPolicy.PreparationTool(player.getHeldItem())
                 : null;
-            ServerTaskScheduler.scheduleServerTask(() -> runQueuedAction(player, world, lease, () -> {
+            ServerTaskScheduler.scheduleServerTask(() -> runQueuedAction(endpoint, lease, () -> {
                 if (compactNative && !submittedTool.matches(player.getHeldItem())) {
                     if (HologramNativeCompactStart.canonical(compactId)
                         && !HologramProjectedPlacementService.consumed(player, compactId)) {
@@ -1510,10 +1832,18 @@ public final class HologramNetwork {
                     }
                     return;
                 }
-                HologramControllerOpen.dispatch(player, msg.tag, () -> dispatch(player, msg.tag));
+                dispatchWorkspaceAction(player, msg.tag);
             }));
             return null;
         }
+    }
+
+    /** Direct Actions use the exact authenticated ingress generation, even after a round trip back to the same world. */
+    static void runQueuedAction(HologramWorkspace.ActionEndpoint endpoint, HologramRequestGate.Lease lease,
+        Runnable action) {
+        runQueuedAction(endpoint.player, endpoint.world, lease, () -> {
+            if (HologramWorkspace.currentActionEndpoint(endpoint)) action.run();
+        });
     }
 
     /** Admission belongs to the original live world; queued input cannot act after a connection/world transition. */
@@ -1531,17 +1861,16 @@ public final class HologramNetwork {
         }
     }
 
+    /** Generic owner-thread Action only; stock/normal layer and library ingress never come through here. */
+    static void dispatchWorkspaceAction(EntityPlayerMP player, NBTTagCompound tag) {
+        if (HologramWorkspace.stockNativePrivate(player)) return;
+        HologramControllerOpen.dispatch(player, tag, () -> dispatch(player, tag));
+    }
+
     private static void dispatch(EntityPlayerMP player, NBTTagCompound tag) {
-        if (snapshotFlowAction(player, tag)) return;
         String action = tag.getString("action");
-        if ("projectedPlacement".equals(action)) {
-            HologramProjectedPlacementService.receive(player, tag);
-            return;
-        }
-        if ("checkPlacementMaterials".equals(action)) {
-            HologramProjectedPlacementService.checkMaterials(player, tag);
-            return;
-        }
+        if ("projectedPlacement".equals(action) || "checkPlacementMaterials".equals(action)
+            || snapshotFlowAction(player, tag)) return;
         if ("cancelProjectedPlacement".equals(action)) {
             String requestId = tag.getString("placementRequestId");
             if (!HologramNativeCompactStart.cancel(player, requestId)
@@ -1635,9 +1964,22 @@ public final class HologramNetwork {
 
         public IMessage onMessage(State msg, MessageContext ctx) {
             // Older servers send this sessionless login envelope; it is not a workspace snapshot.
-            if (msg.tag.getBoolean("serverRulesOnly")) return null;
-            if (msg.tag.hasKey("placementRequestId", 8))
-                HologramPlacementUpload.finishedClient(msg.tag.getString("placementRequestId"));
+            // New clients never send a whole placement. Its legacy refusal cannot finish any live native request.
+            if (HologramStockNativeWire.recognizes(msg.tag)) {
+                StockNativeReplies receiver = stockNativeReplies;
+                HologramStockNativeWire.Reply reply = receiver == null ? null : HologramStockNativeWire.readReply(msg.tag);
+                if (reply != null && ctx != null) receiver.accept(reply, ctx.netHandler);
+                return null;
+            }
+            if (msg.tag.getBoolean("serverRulesOnly")) {
+                ProjectedLayerNegotiation negotiation = projectedLayerNegotiation;
+                UUID request = negotiation == null ? null : projectedLayerIdentity(msg.tag, true);
+                if (request != null && ctx != null) negotiation.accept(
+                    request, msg.tag.getLong(LAYER_INTENT), msg.tag.getInteger(LAYER_VERSION),
+                    msg.tag.getLong(LAYER_SCOPE), ctx.netHandler);
+                return null;
+            }
+            if (msg.tag.getBoolean(RETIRED_PLACEMENT_REPLY)) return null;
             if (msg.tag.getBoolean("progressOnly")) {
                 observeProgress(msg.tag.getCompoundTag("progress"));
                 return null;

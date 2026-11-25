@@ -544,6 +544,8 @@ public final class HologramSmokeTest {
             .getDeclaredConstructor(net.minecraft.network.INetHandler.class, Side.class);
         constructor.setAccessible(true);
         MessageContext context = constructor.newInstance(player.playerNetServerHandler, Side.SERVER);
+        // The embedded fixture did not join through Forge; publish its exact endpoint as the real login callback does.
+        HologramWorkspace.publishActionEndpoint(player, false);
         NBTTagCompound previous = capture.state;
         new HologramNetwork.ServerHandler().onMessage(decoded, context);
         require(capture.state == previous, "custom_use_server_handler_queues_until_actual_server_scheduler_tick");

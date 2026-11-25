@@ -72,6 +72,7 @@ final class HologramUiBuildReview implements LocalView {
     private HologramMaterialConfirmationDialog materialDialog, localMaterialDialog;
     private String localMaterialNotice = "";
     private HologramLocalMaterialReview localMaterials;
+    private HologramClientStockNative.Site localStockSite;
     private boolean localMaterialsDetailed;
     private int localMaterialSelectionVersion;
     private NBTTagCompound presentedMaterialState;
@@ -103,6 +104,7 @@ final class HologramUiBuildReview implements LocalView {
         else {
             closeLocalMaterials();
             localMaterials = new HologramLocalMaterialReview(state, ui.config.configuration());
+            localStockSite = root.stockNativeSite();
             localMaterialNotice = "";
             localMaterialSelectionVersion = ui.preview.selection()
                 .version();
@@ -126,6 +128,7 @@ final class HologramUiBuildReview implements LocalView {
     void closeLocalMaterials() {
         if (localMaterials != null) localMaterials.close();
         localMaterials = null;
+        localStockSite = null;
         localMaterialsDetailed = false;
         localMaterialNotice = "";
         if (localMaterialDialog != null) localMaterialDialog.close();
@@ -152,6 +155,7 @@ final class HologramUiBuildReview implements LocalView {
         // Retire the exact asynchronous ticket before dropping the pane's last reference.
         localMaterials.close();
         localMaterials = null;
+        localStockSite = null;
     }
 
     void refreshLocalMaterials() {
@@ -169,9 +173,12 @@ final class HologramUiBuildReview implements LocalView {
         String status = !localMaterialNotice.isEmpty() ? localMaterialNotice : localMaterials.status();
         if (!ui.session.editable()) status = localMaterials.description() == null ? localMaterialEditingReason()
             : status + " · " + localMaterialEditingReason();
+        String scope = localStockSite == null ? localMaterials.scopeLabel()
+            : localMaterials.scopeLabel() + " · " + localStockSite.description();
+        if (localStockSite != null) status += " · 现场或库存变更时保留已完成方块";
         return new LocalFrame(
             localMaterials.visible(),
-            localMaterials.scopeLabel(),
+            scope,
             status,
             localMaterials.empty() ? "所选范围没有目标材料" : "本机没有可列出的材料",
             localMaterials.ready(),
@@ -194,6 +201,12 @@ final class HologramUiBuildReview implements LocalView {
         // A current but unfinished estimate never grants or denies permission; the server checks materials.
         return localMaterialsCurrent() && ui.session.editable()
             && HologramPlacementConfirmation.localStructureReviewBlocker(ui.session.state()).isEmpty();
+    }
+
+    @Override
+    public String localSubmitLabel() {
+        return localStockSite == null ? "确认补建（无可用短请求时不会提交）"
+            : "主背包补建 · 先备 24 块焦炉砖，只按缺位扣除";
     }
 
     @Override
@@ -245,7 +258,7 @@ final class HologramUiBuildReview implements LocalView {
 
     void submitLocalMaterials() {
         HologramScreen root = ui.host == null ? null : ui.host.parent();
-        if (root != null) submitLocalMaterials(root::reviewLocalConstruction);
+        if (root != null) submitLocalMaterials(settings -> root.confirmStockNative(settings, localStockSite));
     }
 
     void submitLocalMaterials(java.util.function.Predicate<NBTTagCompound> dispatch) {

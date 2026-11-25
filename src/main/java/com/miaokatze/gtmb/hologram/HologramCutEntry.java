@@ -158,22 +158,49 @@ final class HologramCutEntry {
         return tile;
     }
 
+    /** Local journal header for Edit/recovery. Preserve selection format and all bookkeeping verbatim. */
     static NBTTagCompound directory(NBTTagCompound entry) {
         NBTTagCompound result = new NBTTagCompound();
         for (Object value : entry.func_150296_c()) {
             String key = String.valueOf(value);
-            if (!"cells".equals(key)) result.setTag(
-                key,
-                entry.getTag(key)
-                    .copy());
+            if (!"cells".equals(key)) result.setTag(key, entry.getTag(key).copy());
         }
-        if (result.getString("name")
-            .isEmpty()) result.setString("name", "剪切 #" + entry.getLong("sequence"));
+        if (result.getString("name").isEmpty()) result.setString("name", "剪切 #" + entry.getLong("sequence"));
         return result;
     }
 
+    /** Closed wire projection: unknown journal fields and nested geometry are never copied out. */
+    static NBTTagCompound wireSummary(NBTTagCompound entry) {
+        NBTTagCompound result = new NBTTagCompound();
+        String id = entry.getString("id");
+        if (canonicalId(id)) result.setString("id", id);
+        long sequence = entry.hasKey("sequence", 4) ? entry.getLong("sequence") : 0;
+        if (sequence > 0) result.setLong("sequence", sequence);
+        String name;
+        try {
+            name = HologramCutNaming.checkedName(entry.getString("name"));
+        } catch (IOException invalid) {
+            name = "";
+        }
+        result.setString("name", name.isEmpty() ? "剪切 #" + sequence : name);
+        for (String key : new String[] { "x", "y", "z", "dimension", "sizeX", "sizeY", "sizeZ",
+            "blocks", "selectedCells" }) {
+            if (entry.hasKey(key, 3)) result.setInteger(key, entry.getInteger(key));
+        }
+        return result;
+    }
+
+    static boolean canonicalId(String id) {
+        if (id == null || id.length() != 36) return false;
+        try {
+            return UUID.fromString(id).toString().equals(id);
+        } catch (IllegalArgumentException invalid) {
+            return false;
+        }
+    }
+
     static NBTTagCompound preview(NBTTagCompound entry) {
-        // Only this authenticated owner's selected private cache is sent. Nothing is filtered from raw preview.
+        // Detached local/test data only; never an outgoing reply.
         return (NBTTagCompound) entry.copy();
     }
 }

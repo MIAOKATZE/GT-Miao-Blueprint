@@ -1195,6 +1195,7 @@ final class HologramUiLibrary {
             return true;
         }
         if (id == 161) {
+            if (refuseNamedArchive()) return true; // Also fence a replay of the older ordinary import action.
             if (ui.session.editable() && !localBusy() && presetNameField != null) localWorkspace.importNamed(
                 presetNameField.getText()
                     .trim());
@@ -1308,12 +1309,7 @@ final class HologramUiLibrary {
                     ui.session.state().data.getTagList("blueprintNbtKeys", 8)
                         .copy());
                 ui.identity.deidentificationSaveOptions(options);
-                if (ui.session.localDocument()) localWorkspace.save(
-                    options,
-                    id == 140 ? ui.session.document()
-                        .fileId() : "",
-                    id == 140 ? LocalSaveIntent.SAVE_CURRENT : LocalSaveIntent.SAVE_AS_NEW);
-                else library.saveDraft(ui.session.state(), options, false, ui.preview.yaw(), ui.preview.pitch());
+                saveBlueprintLocally(options, id == 140);
                 return true;
             default:
                 return false;
@@ -1362,24 +1358,26 @@ final class HologramUiLibrary {
         if (options.getString("name")
             .trim()
             .isEmpty()) options.setString("name", "未命名蓝图");
-        options.setBoolean("saveCurrent", current);
-        if (ui.session.localDocument()) {
-            localWorkspace.save(
-                options,
-                current ? ui.session.document()
-                    .fileId() : "",
-                current ? LocalSaveIntent.SAVE_CURRENT : LocalSaveIntent.SAVE_AS_NEW);
+        saveBlueprintLocally(options, current);
+    }
+
+    /** A render snapshot is not a local authoring document and cannot be silently saved as its exact source. */
+    void saveBlueprintLocally(NBTTagCompound options, boolean current) {
+        if (!ui.session.localDocument()) {
+            refuseServerDraftSave();
             return;
         }
-        if (dedicatedLibrary()) {
-            HologramLibraryClient.INSTANCE
-                .saveDraft(ui.session.state(), options, current, ui.preview.yaw(), ui.preview.pitch());
-        } else {
-            HologramLibraryClient.INSTANCE
-                .expectDraftDownload(ui.session.state(), ui.preview.yaw(), ui.preview.pitch());
-            ui.session.send(current ? "saveBlueprint" : "saveBlueprintAs", options, true);
-            presetSaveSequence = ui.session.sequence();
-        }
+        options.setBoolean("saveCurrent", current);
+        localWorkspace.save(
+            options,
+            current ? ui.session.document().fileId() : "",
+            current ? LocalSaveIntent.SAVE_CURRENT : LocalSaveIntent.SAVE_AS_NEW);
+    }
+
+    private void refuseServerDraftSave() {
+        ui.session.notice(ui.session.state().data.getBoolean("localStandardController")
+            ? "请先打开该本地结构的蓝图编辑，再保存。当前内容未修改。"
+            : "当前没有可在本地保存的蓝图原件；未下载、未保存。请先在本机捕获，或打开客户端蓝图库中的副本。");
     }
 
     void drawDeleteReview(int mx, int my) {
@@ -1487,10 +1485,7 @@ final class HologramUiLibrary {
                 localWorkspace.save(request, this.overwriteTarget, LocalSaveIntent.STRICT);
                 return true;
             }
-            HologramLibraryClient.INSTANCE
-                .expectDraftDownload(ui.session.state(), ui.preview.yaw(), ui.preview.pitch());
-            ui.session.send("saveBlueprintReplace", request, true);
-            this.presetSaveSequence = ui.session.sequence();
+            refuseServerDraftSave();
             return true;
         }
         return false;
@@ -1583,6 +1578,7 @@ final class HologramUiLibrary {
     }
 
     boolean prepareLibraryNavigation(int id) {
+        if (id == 161 && !ui.session.isTutorial() && refuseNamedArchive()) return true;
         if (localBusy() && (id >= 14000 && id < 15000 || id == 132
             || id == 139
             || id == 140
@@ -1657,6 +1653,20 @@ final class HologramUiLibrary {
             return true;
         }
         return false;
+    }
+
+    private boolean refuseNamedArchive() {
+        if (presetNameField == null) return false;
+        String name = presetNameField.getText().trim();
+        if (!HologramArchiveNamedImport.archiveName(name)) return false;
+        // No production provider can prove regular-file identity on the exact opened descriptor yet.
+        // Consume in every routing path, but only the active Save page owns the immediate notice.
+        HologramScreen screen = ui.host.parent();
+        if (screen != null && ui.host.minecraft().currentScreen == screen && screen.ui == ui
+            && ui.shell.built() && ui.shell.dockExpanded() && ui.shell.dockPage() == 7) {
+            ui.session.notice(HologramArchiveNamedImport.refusal(name));
+        }
+        return true; // Never open a path, start an editor/discard or use the ordinary JSON fallback.
     }
 
     boolean selectServerPresetRow(int id) {

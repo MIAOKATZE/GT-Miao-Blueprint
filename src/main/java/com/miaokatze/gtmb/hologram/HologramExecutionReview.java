@@ -210,6 +210,8 @@ final class HologramExecutionReview {
         }
 
         private void requireCurrent(HologramSession s) throws IOException {
+            String scopedRefusal = HologramWorkspace.legacyConstructionRefusal(s.player);
+            if (scopedRefusal != null) throw new IOException(scopedRefusal);
             if (System.nanoTime() - started > 90_000_000_000L || !HologramSessionPolicy.valid(s)
                 || !s.player.capabilities.allowEdit
                 || s.player.capabilities.isCreativeMode != creative
@@ -285,7 +287,7 @@ final class HologramExecutionReview {
                     HologramMaterialWorkflow.validateStart(s, approval, true);
                 }
                 HologramPlacementJobs.begin(s, approval);
-                s.blueprintAwaitingConfirmation = false;
+                if (s.job == 1) s.blueprintAwaitingConfirmation = false;
             }
             return true;
         }

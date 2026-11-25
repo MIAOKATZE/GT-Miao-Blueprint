@@ -11,8 +11,10 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import net.minecraft.block.Block;
+import net.minecraft.entity.Entity;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.entity.player.InventoryPlayer;
@@ -39,6 +41,12 @@ final class HologramServiceEditRegression {
             sun.misc.Unsafe unsafe = (sun.misc.Unsafe) unsafeField.get(null);
             ReadOnlyWorld world = (ReadOnlyWorld) unsafe.allocateInstance(ReadOnlyWorld.class);
             EntityPlayerMP player = (EntityPlayerMP) unsafe.allocateInstance(EntityPlayerMP.class);
+            // Unsafe skips Entity's identity initialization; this detached fixture is still a distinct actor.
+            UUID actorId = UUID.randomUUID();
+            for (Field field : Entity.class.getDeclaredFields()) if (field.getType() == UUID.class) {
+                field.setAccessible(true);
+                field.set(player, actorId);
+            }
             player.worldObj = world;
             player.inventory = new InventoryPlayer(player);
             player.capabilities = new PlayerCapabilities();
@@ -711,7 +719,7 @@ final class HologramServiceEditRegression {
         return (List<T>) get(instance, name);
     }
 
-    static final class ReadOnlyWorld extends WorldServer {
+    static class ReadOnlyWorld extends WorldServer {
 
         Block occupied;
         int occupiedX;
@@ -720,7 +728,7 @@ final class HologramServiceEditRegression {
         boolean unloaded, denyMine;
         long loadReads, blockReads, metaReads, tileReads, permissionReads;
 
-        private ReadOnlyWorld() {
+        ReadOnlyWorld() {
             super(null, null, "fixture", 0, null, null);
         }
 

@@ -13,6 +13,7 @@ final class HologramProjectorWorkflow {
     private HologramProjectorWorkflow() {}
 
     static void open(EntityPlayerMP player, int x, int y, int z, int side) {
+        if (HologramWorkspace.stockNativePrivate(player)) return;
         HologramWorkspace.pruneRemovedController(player);
         HologramSession previous = HologramWorkspace.find(player.getUniqueID());
         if (previous != null && previous.player == player && HologramSessionPolicy.blockedByAreaImport(previous)) {
@@ -94,6 +95,7 @@ final class HologramProjectorWorkflow {
     }
 
     static void openAir(EntityPlayerMP player) {
+        if (HologramWorkspace.stockNativePrivate(player)) return;
         HologramWorkspace.pruneRemovedController(player);
         HologramSession previous = HologramWorkspace.find(player.getUniqueID());
         if (previous == null) {
@@ -134,6 +136,7 @@ final class HologramProjectorWorkflow {
 
     /** Ordinary world use imports a constructable controller or opens the existing workspace. */
     static void openWorld(EntityPlayerMP player, int x, int y, int z, int side) {
+        if (HologramWorkspace.stockNativePrivate(player)) return;
         HologramSession previous = HologramWorkspace.find(player.getUniqueID());
         if (openPlacementReview(previous, player)) return;
         if (previous != null && previous.player == player
@@ -228,6 +231,7 @@ final class HologramProjectorWorkflow {
     }
 
     static void openSettings(EntityPlayerMP player) {
+        if (HologramWorkspace.stockNativePrivate(player)) return;
         HologramWorkspace.pruneRemovedController(player);
         HologramSession s = HologramWorkspace.find(player.getUniqueID());
         if (s != null && s.player == player
