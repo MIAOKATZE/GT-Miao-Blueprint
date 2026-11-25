@@ -19,6 +19,9 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.miaokatze.gtmb.client.hologram.HologramLocalSaveTrace.Stage;
 import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
+import com.miaokatze.gtmb.hologram.HologramNativeBlueprintStorage;
+import com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintDefinition;
+import com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintPairStore;
 import com.miaokatze.gtmb.hologram.HologramBlueprintFiles;
 import com.miaokatze.gtmb.hologram.HologramLibraryFacade;
 import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.FrozenDraft;
@@ -33,6 +36,7 @@ final class HologramClientLibrary {
     private final Path directory;
     private final Path metadataFile;
     private final PairIo pairIo;
+    private boolean nativeRecoveryChecked;
     private final java.util.Map<String, CachedEntry> entryCache = new java.util.HashMap<>();
     private final java.util.Map<String, Path> displayPaths = new java.util.HashMap<>();
 
@@ -105,7 +109,17 @@ final class HologramClientLibrary {
     record EditorSave(LocalSave receipt, byte[] exactJson) {}
 
     @com.github.bsideup.jabel.Desugar
-    record EditorSource(byte[] json, LocalEditorOrigin origin) {}
+    record EditorSource(byte[] legacyBytes, LocalEditorOrigin origin, NativeBlueprintPairStore.Receipt nativePair) {
+        EditorSource(byte[] legacyBytes, LocalEditorOrigin origin) { this(legacyBytes,origin,null); }
+        byte[] json() throws IOException {
+            if(nativePair != null) throw new IOException("原生蓝图不提供旧 JSON；请使用原生定义入口");
+            return legacyBytes;
+        }
+        NativeBlueprintDefinition openNative() throws IOException {
+            if(nativePair == null) throw new IOException("Not a native editor source");
+            return NativeBlueprintPairStore.openExact(nativePair.source,nativePair.png,nativePair.physicalHash,nativePair.pngHash);
+        }
+    }
 
     static final class Entry {
 
@@ -128,7 +142,7 @@ final class HologramClientLibrary {
             sourceMod = string(blueprint, "sourceMod");
             gtmbVersion = blueprint.has("nativeBlueprint") && blueprint.get("nativeBlueprint")
                 .isJsonObject() ? string(blueprint.getAsJsonObject("nativeBlueprint"), "gtmbVersion") : "";
-            createdAt = blueprint.has("createdAt") ? blueprint.get("createdAt")
+            createdAt = blueprint.has("createdAt") && blueprint.get("createdAt").isJsonPrimitive() ? blueprint.get("createdAt")
                 .getAsLong() : 0;
             cells = blueprint.has("displayCells") ? blueprint.get("displayCells")
                 .getAsInt() : size(blueprint, "cells");
@@ -152,7 +166,14 @@ final class HologramClientLibrary {
         }
     }
 
+    private synchronized void recoverNativeOnOpen() throws IOException {
+        if(nativeRecoveryChecked)return;
+        NativeBlueprintPairStore.recover(directory);
+        nativeRecoveryChecked=true;
+    }
+
     synchronized List<Entry> list() throws IOException {
+        recoverNativeOnOpen();
         List<Entry> entries = new ArrayList<>();
         java.util.Set<String> seen = new java.util.HashSet<>();
         Files.createDirectories(directory);
@@ -167,7 +188,8 @@ final class HologramClientLibrary {
                     String signature = stamp(file);
                     CachedEntry cached = entryCache.get(key);
                     if (cached == null || !cached.stamp.equals(signature)) {
-                        JsonObject display = displayMetadata(file);
+                        JsonObject display = file.getFileName().toString().endsWith(".gtnb")
+                            ? NativeBlueprintPairStore.display(directory,member.getKey(),file) : displayMetadata(file);
                         String id = HologramBlueprintFiles.displayId(directory, file, string(display, "id"));
                         cached = new CachedEntry(new Entry(id, display, Files.size(file)), file);
                         if (!signature.equals(cached.stamp))
@@ -284,6 +306,18 @@ final class HologramClientLibrary {
         return preparePrivateDocumentSave(data, preview, id, stillCurrent, trace, LocalSaveIntent.STRICT);
     }
 
+    /** Native counterpart of the frozen editor save. Stage2 hands ownership to the exact accepted revision. */
+    HologramNativeBlueprintStorage.Prepared prepareEditorSave(NativeBlueprintDefinition frozen, byte[] png, String id,
+        java.util.function.BooleanSupplier stillCurrent) throws IOException {
+        return HologramNativeBlueprintStorage.prepareSave(directory,id,frozen,png,stillCurrent);
+    }
+
+    HologramNativeBlueprintStorage.Prepared prepareEditorSave(NativeBlueprintDefinition frozen, byte[] png, String id,
+        java.util.function.BooleanSupplier stillCurrent, NativeBlueprintPairStore.Receipt expected,
+        boolean requireVacant) throws IOException {
+        return HologramNativeBlueprintStorage.prepareSave(directory,id,frozen,png,stillCurrent,expected,requireVacant);
+    }
+
     EditorSave prepareEditorSave(FrozenDraft prepared, byte[] freshlyCapturedPng, String id,
         java.util.function.BooleanSupplier stillCurrent, HologramLocalSaveTrace trace) throws IOException {
         HologramBlueprintArtifact.Artifact pair = prepared.bindLocalSave(id, freshlyCapturedPng);
@@ -313,6 +347,8 @@ final class HologramClientLibrary {
         LocalSaveIntent incompleteAuthorIntent) throws IOException {
         mark(trace, Stage.TARGET_BEGIN);
         Path previous = file(id);
+        if(previous.getFileName().toString().endsWith(".gtnb"))
+            throw new IOException("该蓝图已切换为原生格式，不能从旧编辑器覆盖");
         if (incompleteAuthorIntent != LocalSaveIntent.STRICT) {
             Path indexed = HologramBlueprintFiles.indexedPath(directory, id);
             if (incompleteAuthorIntent == LocalSaveIntent.SAVE_CURRENT) {
@@ -375,6 +411,12 @@ final class HologramClientLibrary {
         return prepareLocalSave(data, preview, id, stillCurrent).write;
     }
 
+    /** Internal staged half of explicit upgrade; activation belongs to the accepting native editor revision. */
+    com.miaokatze.gtmb.hologram.HologramNativeBlueprintStorage.Prepared prepareNativeUpgrade(String id,
+        java.util.function.BooleanSupplier current) throws IOException {
+        return com.miaokatze.gtmb.hologram.HologramNativeBlueprintStorage.prepare(directory, id, current);
+    }
+
     String upgradeLegacy() throws IOException {
         return upgradeLegacy(() -> true, (done, total) -> {});
     }
@@ -389,6 +431,18 @@ final class HologramClientLibrary {
     synchronized String upgradeNamedHistoric(String alias, java.util.function.BooleanSupplier current)
         throws IOException {
         String basename = alias.endsWith(".json") ? alias.substring(0, alias.length() - 5) : alias;
+        // Existing named-upgrade action: a paired private blueprint can now be explicitly
+        // converted, without silently changing what the normal editor opens. JSON-only historic
+        // shares retain the existing compact-import semantics; public IDs stay out of this path.
+        if(!basename.startsWith("public_")&&!basename.equalsIgnoreCase("hologram-presets")) {
+            Path old=fileOrNamed(basename);
+            if(old.getFileName().toString().endsWith(".gtnb"))return "此蓝图已使用原生格式";
+            if(old.getFileName().toString().endsWith(".json")&&Files.isRegularFile(old,LinkOption.NOFOLLOW_LINKS)
+                &&Files.isRegularFile(HologramBlueprintArtifact.previewPath(old),LinkOption.NOFOLLOW_LINKS)) {
+                prepareNativeUpgrade(basename,current);
+                return "原生蓝图与预览已暂存；原件未改动，当前编辑器仍使用原件";
+            }
+        }
         String result = HologramBlueprintFiles.upgradeNamedHistoric(directory, basename, current);
         entryCache.clear();
         return result;
@@ -420,17 +474,27 @@ final class HologramClientLibrary {
     }
 
     EditorSource readNamedEditorSource(String alias) throws IOException {
-        return new EditorSource(
-            HologramBlueprintArtifact.readLocalJson(HologramBlueprintFiles.resolve(directory, alias)),
-            LocalEditorOrigin.NAMED_IMPORT);
+        recoverNativeOnOpen();
+        if(alias.endsWith(".json"))alias=alias.substring(0,alias.length()-5);
+        Path path=HologramBlueprintFiles.resolve(directory,alias);
+        return readEditorSource(alias,path,LocalEditorOrigin.NAMED_IMPORT);
     }
 
     synchronized EditorSource readPrivateEditorSource(String id) throws IOException {
-        Path indexed = HologramBlueprintFiles.indexedPath(directory, id);
-        if (indexed != null && Files.isRegularFile(indexed, LinkOption.NOFOLLOW_LINKS)) return new EditorSource(
-            HologramBlueprintArtifact.readLocalJson(indexed),
-            LocalEditorOrigin.TRACKED_PRIVATE);
-        return new EditorSource(readPrivateDocument(id), LocalEditorOrigin.STRICT);
+        recoverNativeOnOpen();
+        Path indexed=HologramBlueprintFiles.indexedPath(directory,id);
+        if(indexed!=null && Files.isRegularFile(indexed,LinkOption.NOFOLLOW_LINKS))
+            return readEditorSource(id,indexed,LocalEditorOrigin.TRACKED_PRIVATE);
+        return readEditorSource(id,file(id),LocalEditorOrigin.STRICT);
+    }
+
+    private EditorSource readEditorSource(String id,Path path,LocalEditorOrigin origin)throws IOException {
+        if(path.getFileName().toString().endsWith(".gtnb") || NativeBlueprintDefinition.hasMagic(path)){
+            NativeBlueprintPairStore.Receipt pair=NativeBlueprintPairStore.receipt(directory,id);
+            if(pair==null || !pair.source.equals(path))throw new IOException("未登记的原生蓝图，不作为旧 JSON 打开");
+            return new EditorSource(null,origin,pair);
+        }
+        return new EditorSource(HologramBlueprintArtifact.readLocalJson(path),origin);
     }
 
     Path legacyCatalogPath() {
@@ -513,7 +577,7 @@ final class HologramClientLibrary {
             return new SavedDisplayPath(indexed, true);
         Path original = indexed == null ? directory.resolve(id + ".json") : indexed;
         return new SavedDisplayPath(
-            Files.isRegularFile(original) ? original : displayPaths.getOrDefault(id, original),
+            !NativeBlueprintPairStore.inactive(directory, original) && Files.isRegularFile(original) ? original : file(id),
             false);
     }
 
@@ -522,18 +586,34 @@ final class HologramClientLibrary {
     }
 
     synchronized void delete(String id) throws IOException {
+        delete(id,stage -> {});
+    }
+
+    synchronized void delete(String id, NativeBlueprintPairStore.Fault fault) throws IOException {
+        recoverNativeOnOpen();
         if (id.startsWith("legacy:")) {
             HologramBlueprintFiles.deleteHistoricMember(legacyCatalogPath(), id.substring("legacy:".length()));
             return;
         }
+        NativeBlueprintPairStore.Receipt expectedNative=NativeBlueprintPairStore.receipt(directory,id);
         Path selected = file(id);
+        if(expectedNative!=null){
+            if(!selected.equals(expectedNative.source))throw new IOException("删除前原生蓝图内容已变化");
+            NativeBlueprintPairStore.delete(directory,expectedNative,fault);
+            displayPaths.remove(id);
+            entryCache.remove(selected.toString());
+            return;
+        }
+        if(selected.getFileName().toString().endsWith(".gtnb"))
+            throw new IOException("删除前蓝图位置已切换为原生格式，请刷新");
         if (!selected.equals(HologramBlueprintFiles.resolve(directory, id))) {
             HologramBlueprintFiles.managed(directory);
             if (!selected.equals(HologramBlueprintFiles.resolve(directory, id)))
                 throw new IOException("Blueprint selection changed before delete");
         }
-        HologramBlueprintFiles.delete(directory, id);
+        HologramBlueprintFiles.deleteLegacySelection(directory,id,selected);
         displayPaths.remove(id);
+        entryCache.remove(selected.toString());
     }
 
     String uploadedId(String server, String localId) throws IOException {
@@ -657,12 +737,17 @@ final class HologramClientLibrary {
             .toString();
     }
 
+    private Path fileOrNamed(String id) throws IOException {
+        return id.matches("local_[a-fA-F0-9-]{36}")?file(id):HologramBlueprintFiles.resolve(directory,id);
+    }
+
     private synchronized Path file(String id) throws IOException {
         if (id == null || !id.matches("local_[a-fA-F0-9-]{36}")) throw new IOException("客户端蓝图 ID 无效");
         Path indexed = HologramBlueprintFiles.resolve(directory, id);
         if (Files.isRegularFile(indexed)) return indexed;
         Path displayed = displayPaths.get(id);
-        return displayed == null ? indexed : displayed;
+        return displayed == null || !Files.isRegularFile(displayed,LinkOption.NOFOLLOW_LINKS)
+            || NativeBlueprintPairStore.inactive(directory,displayed) ? indexed : displayed;
     }
 
     private static JsonObject parse(byte[] data) throws IOException {

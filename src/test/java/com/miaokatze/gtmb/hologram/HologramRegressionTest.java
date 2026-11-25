@@ -657,6 +657,13 @@ public final class HologramRegressionTest {
         cases.put(
             "website_accent_cycles_smoothly_and_preserves_disabled_and_warning_colors",
             com.miaokatze.gtmb.client.hologram.HologramUiSpectrumRegression::run);
+        cases.put("native_blueprint_v1_codec_cli_and_atomic_pair", () -> {
+            try { com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintCodecRegression.run(); }
+            catch (Exception e) { throw new IllegalStateException("native blueprint codec", e); }
+        });
+        cases.put("native_blueprint_game_staging_keeps_original_active",
+            com.miaokatze.gtmb.client.hologram.HologramNativeBlueprintStorageRegression::run);
+        cases.put("native_blueprint_local_consumers_share_the_accepted_definition",com.miaokatze.gtmb.client.hologram.HologramNativeViewportRegression::run);
         TestRunner.run(HologramRegressionTest.class, cases);
         net.minecraft.world.storage.ThreadedFileIOBase.threadedIOInstance.waitForFinish();
     }

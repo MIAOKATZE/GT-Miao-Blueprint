@@ -184,7 +184,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     private final List<HologramState.Cell> nativePreviewCells = new ArrayList<>();
     private HologramState visibleState;
     private int visibleLayer, visibleView, visibleMode;
-    private final List<HologramState.Cell> visibleCells = new ArrayList<>();
+    private int visibleCellCount;
     private final Map<HologramRegionCache.Key, PreviewRegion> previewRegions = session.regions();
     private static final long PREVIEW_BUILD_NANOS = 2_000_000L;
     private static final long LARGE_BROWSE_BUILD_NANOS = 8_000_000L;
@@ -281,7 +281,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         cachedMarkers = new ArrayList<>();
         cachedOutlines = new ArrayList<>();
         visibleState = null;
-        visibleCells.clear();
+        visibleCellCount = 0;
         installPreviewPreparation(null);
         session.close();
         linkedPreviewCells.clear();
@@ -522,7 +522,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         java.util.Set<Integer> geometryCells = new java.util.HashSet<>();
         if (presented) for (Face face : cachedFaces) geometryCells.add(face.cell.index);
         result.setInteger("renderedCellCount", geometryCells.size());
-        result.setInteger("presentedVisibleCellCount", presented ? visibleCells.size() : 0);
+        result.setInteger("presentedVisibleCellCount", presented ? visibleCellCount : 0);
         result.setInteger("nativeModelCellCount", presented ? nativePreviewCells.size() : 0);
         result.setInteger("roleMarkerCount", presented ? lastPreviewRoleMarkers : 0);
         result.setInteger("anchorMarkerCount", presented ? lastPreviewAnchorMarkers : 0);
@@ -731,10 +731,10 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
                             lastPreviewBuiltRegions++;
                         }
                     }
-            visibleCells.clear();
+            visibleCellCount = 0;
             linkedPreviewCells.clear();
             for (PreviewRegion region : previewRegions.values()) {
-                visibleCells.addAll(region.visible);
+                visibleCellCount += region.visibleCount;
                 linkedPreviewCells.addAll(region.linked);
             }
             lastPreviewRoleMarkers = lastPreviewAnchorMarkers = 0;
@@ -1422,7 +1422,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         cachedMarkers = new ArrayList<>();
         nativePreviewCells.clear();
         linkedPreviewCells.clear();
-        visibleCells.clear();
+        visibleCellCount = 0;
         publishedPreviewCells.clear();
         // The old presentation, hover and slices have been retired before any owned vertex/Face can be overwritten.
         previewPreparation.projection = new PreviewProjection(state, key, previous);
@@ -1617,7 +1617,8 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
             structureBoundsState = state;
             cachedStructureBounds = structureBounds(state);
             missingStructures.clear();
-            if (!cachedStructureBounds.isEmpty()) for (HologramState.Cell cell : state.cells)
+            if(state.nativeViewport!=null)missingStructures.addAll(state.nativeViewport.missingStructures);
+            else if (!cachedStructureBounds.isEmpty()) for (HologramState.Cell cell : state.cells)
                 if (cell.sourceMissing) missingStructures.addAll(cell.structureIds);
         }
         for (Map.Entry<String, int[]> entry : cachedStructureBounds.entrySet()) {
@@ -1646,6 +1647,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
 
     /** Pure shared-wall bounds calculation; one cell can extend several structures without duplicate mesh cells. */
     Map<String, int[]> structureBounds(HologramState state) {
+        if (state.nativeViewport!=null) return state.nativeViewport.structureBounds;
         if (state.structureMembers.isEmpty()
             || (state.structureMembers.size() == 1 && state.structureMembers.containsKey("")))
             return java.util.Collections.emptyMap();
@@ -1774,7 +1776,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     private void previewCell(HologramState state, PreviewRegion result, HologramState.Cell c, int layer, int view,
         boolean current) {
         if (!previewVisible(c, layer, view, current)) return;
-        result.visible.add(c);
+        result.visibleCount++;
         if (!HologramLinkNodePreview.prepare(c, current)
             .isEmpty()) result.linked.add(c);
         boolean empty = !c.anchor && !c.iconOnly && (current ? c.id : c.wantId).equals("minecraft:air");
@@ -2148,7 +2150,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
                     : detachedRuns.get(detachedRun);
                 int startCell = cell;
                 if (run != null && run.ordinary) {
-                    region.visible.addAll(run.visible);
+                    region.visibleCount += run.visible.size();
                     region.cells.addAll(run.faces);
                     cell = run.end;
                     previewWorkerCompletedRuns++;
@@ -2194,7 +2196,8 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         final boolean cacheBrowseSurfaces;
         final List<Face> faces, outlines;
         final List<RoleMarker> markers;
-        final List<HologramState.Cell> nativeCells, linked, visible;
+        final List<HologramState.Cell> nativeCells, linked;
+        int visible;
         final java.util.BitSet cells;
 
         PreviewProjection(HologramState state, String key) {
@@ -2212,14 +2215,13 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
             markers = previous == null ? new ArrayList<>() : previous.markers;
             nativeCells = previous == null ? new ArrayList<>() : previous.nativeCells;
             linked = previous == null ? new ArrayList<>() : previous.linked;
-            visible = previous == null ? new ArrayList<>() : previous.visible;
             cells = previous == null ? new java.util.BitSet() : previous.cells;
             faces.clear();
             outlines.clear();
             markers.clear();
             nativeCells.clear();
             linked.clear();
-            visible.clear();
+            visible = 0;
             cells.clear();
         }
 
@@ -2269,7 +2271,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
                     completed += region.prepared - counted;
                     counted = region.prepared;
                     if (!region.complete) return;
-                    for (int i = 0; i < region.visible.size(); i++) visible.add(region.visible.get(i));
+                    visible += region.visibleCount;
                     for (int i = 0; i < region.linked.size(); i++) linked.add(region.linked.get(i));
                     if (previewPreparation.boundary != null)
                         for (HologramState.Cell cell : entry.getValue()) cells.set(cell.index);
@@ -2341,7 +2343,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
             invalidatePreviewDrawCache();
             for (int i = 0; i < nativeCells.size(); i++) nativePreviewCells.add(nativeCells.get(i));
             for (int i = 0; i < linked.size(); i++) linkedPreviewCells.add(linked.get(i));
-            for (int i = 0; i < visible.size(); i++) visibleCells.add(visible.get(i));
+            visibleCellCount += visible;
             int shownMarkers = cachedMarkers.size();
             for (RoleMarker marker : markers) if (marker.cell.anchor || shownMarkers < 64) {
                 cachedMarkers.add(marker);
@@ -2356,7 +2358,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
             nativeCells.clear();
             markers.clear();
             linked.clear();
-            visible.clear();
+            visible = 0;
             cells.clear();
             previewState = state;
             published = completed;
@@ -2612,7 +2614,8 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
 
     private static final class PreviewRegion {
 
-        final List<HologramState.Cell> visible = new ArrayList<>(), linked = new ArrayList<>();
+        int visibleCount;
+        final List<HologramState.Cell> linked = new ArrayList<>();
         final List<PreviewCell> cells = new ArrayList<>();
         final List<PreviewCell> projectedInputs = new ArrayList<>();
         String projectedKey = "";

@@ -16,6 +16,11 @@ import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 /** Immutable 16-cube spatial index. A patch replaces only the regions containing changed cells. */
 final class HologramRegionCache {
 
+    interface Lookup { HologramState.Cell at(int x,int y,int z); }
+    private Lookup nativeLookup;
+    HologramRegionCache(Map<Key,List<HologramState.Cell>> lists,int[] bounds,Lookup lookup){
+        regions=Collections.unmodifiableMap(lists);this.bounds=bounds.clone();packedRegions=null;nativeLookup=lookup;
+    }
     private static final int REGION_CELLS = 4096;
     final Map<Key, List<HologramState.Cell>> regions;
     private final Long2ObjectOpenHashMap<Region> packedRegions;
@@ -29,6 +34,7 @@ final class HologramRegionCache {
 
     private HologramRegionCache(HologramRegionCache source, int[] bounds) {
         regions = source.regions;
+        nativeLookup=source.nativeLookup;
         packedRegions = source.packedRegions;
         this.bounds = bounds;
     }
@@ -163,6 +169,7 @@ final class HologramRegionCache {
     }
 
     HologramState.Cell at(int x, int y, int z) {
+        if(nativeLookup!=null)return nativeLookup.at(x,y,z);
         int rx = x >> 4, ry = y >> 4, rz = z >> 4;
         Region region = canPack(rx, ry, rz) ? packedRegions.get(CoordinatePacker.pack(rx, ry, rz))
             : (Region) regions.get(new Key(rx, ry, rz));

@@ -32,8 +32,19 @@ final class HologramAeWarningMarkers {
             grouped.computeIfAbsent(key, ignored -> new ArrayList<>())
                 .add(issue);
         }
+        if(grouped.isEmpty())return result;
         Map<String, int[]> currentBounds = new LinkedHashMap<>();
-        for (HologramState.Cell cell : state.cells) {
+        if(state.nativeViewport!=null)for(var entry:grouped.entrySet()){
+            HologramAeReviewModel.Issue issue=entry.getValue().get(0);
+            if(!issue.structureId.isEmpty()){
+                int[] bounds=state.nativeViewport.structureBounds.get(issue.structureId);
+                if(bounds!=null)currentBounds.put(entry.getKey(),bounds.clone());
+            }else{
+                HologramState.Cell cell=state.regions.at(issue.x,issue.y,issue.z);
+                if(cell!=null)include(currentBounds,entry.getKey(),cell);
+            }
+        }
+        else for (HologramState.Cell cell : state.cells) {
             include(currentBounds, "cell:" + cell.x + ":" + cell.y + ":" + cell.z, cell);
             if (!cell.structureId.isEmpty()) include(currentBounds, "structure:" + cell.structureId, cell);
             for (String membership : cell.structureIds)

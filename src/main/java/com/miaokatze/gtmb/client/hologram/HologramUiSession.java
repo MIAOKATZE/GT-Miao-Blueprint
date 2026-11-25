@@ -36,8 +36,10 @@ final class HologramUiSession {
     void installLocalDocument(HologramLocalBlueprintDocument document, HologramState initial) {
         HologramScreen root = ui.host.parent();
         if (root == null || !initial.data.getBoolean("localBlueprintDocument")) return;
+        HologramLocalBlueprintDocument previous=root.ui.session.document;
         root.updateState(initial);
         root.ui.session.document = document;
+        if(previous!=null&&previous!=document)previous.closeNative();
     }
 
     void publishLocalDocument(HologramLocalBlueprintDocument document, HologramState next) {

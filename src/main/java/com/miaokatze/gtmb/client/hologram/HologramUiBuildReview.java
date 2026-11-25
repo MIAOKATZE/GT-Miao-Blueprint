@@ -81,6 +81,8 @@ final class HologramUiBuildReview implements LocalView {
     boolean nativeMaterialInspectionReady() {
         HologramState state = ui.session.state();
         int job = state.data.getInteger("job");
+        if (state.nativeViewport!=null) return ui.session.localDocument() && state.nativeViewport.currentProviders()
+            && !HologramBackgroundTasks.busy();
         // While details are pending this opens an informational pane, not an editing or construction capability.
         return state.controllerMaterialCounts != null && state.data.getBoolean("localStandardController")
             && state.data.getInteger("mode") == 0 && state.data.getBoolean("target") && state.data.getBoolean("supported")
@@ -93,6 +95,10 @@ final class HologramUiBuildReview implements LocalView {
     boolean openNativeLocalMaterials() {
         HologramScreen root = ui.host == null ? null : ui.host.parent();
         HologramState state = ui.session.state();
+        if(state.nativeViewport!=null&&ui.session.localDocument()){
+            closeLocalMaterials();localMaterials=new HologramLocalMaterialReview(state,ui.config.configuration(),true,ui.preview.selection());
+            localMaterialSelectionVersion=ui.preview.selection().version();return true;
+        }
         if (!state.data.getBoolean("localStandardController") || state.data.getInteger("mode") != 0) return false;
         if (root == null || !root.localMaterialOwnerCurrent(ui)) {
             closeLocalMaterials();
@@ -119,7 +125,7 @@ final class HologramUiBuildReview implements LocalView {
     private boolean localMaterialsCurrent() {
         HologramScreen root = ui.host == null ? null : ui.host.parent();
         return localMaterials != null && root != null
-            && root.localMaterialOwnerCurrent(ui)
+            && (ui.session.state().nativeViewport!=null ? localMaterialPaneCurrent() : root.localMaterialOwnerCurrent(ui))
             && localMaterials.current(ui.session.state(), ui.preview.layer())
             && localMaterialSelectionVersion == ui.preview.selection()
                 .version();
@@ -138,7 +144,7 @@ final class HologramUiBuildReview implements LocalView {
         HologramScreen root = ui.host == null ? null : ui.host.parent();
         return root != null && root.ui == ui && ui.host.minecraft() != null
             && ui.host.minecraft().currentScreen == root
-            && root.localControllerStandard();
+            && (root.localControllerStandard()||ui.session.localDocument()&&ui.session.state().nativeViewport!=null);
     }
 
     private void retireStaleLocalMaterials() {
@@ -199,12 +205,13 @@ final class HologramUiBuildReview implements LocalView {
     @Override
     public boolean localSubmitAvailable() {
         // A current but unfinished estimate never grants or denies permission; the server checks materials.
-        return localMaterialsCurrent() && ui.session.editable()
+        return ui.session.state().nativeViewport==null && localMaterialsCurrent() && ui.session.editable()
             && HologramPlacementConfirmation.localStructureReviewBlocker(ui.session.state()).isEmpty();
     }
 
     @Override
     public String localSubmitLabel() {
+        if(ui.session.state().nativeViewport!=null)return "原生蓝图施工未启用";
         if (localStockSite == null) return "确认补建（无可用短请求时不会提交）";
         var context = HologramClientStockNative.context(ui.host == null ? null : ui.host.minecraft());
         return HologramClientStockNative.OWNER.serverConfirmed(context) ? localStockSite.submitLabel()
