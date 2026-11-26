@@ -12,6 +12,7 @@ import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
 import com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor;
+import com.gtnewhorizon.structurelib.structure.IStructureDefinition;
 import com.gtnewhorizon.structurelib.structure.StructureDefinition;
 import com.gtnewhorizon.structurelib.structure.StructureUtility;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
@@ -48,7 +49,7 @@ final class HologramNativeChannelCapabilitiesRegression {
         HologramChannelTrace.record(trigger, "dynamic_length", 9, 2);
         var report = HologramChannelTrace.end(scope);
         var capabilities = HologramCapabilities.describeNative(context, trigger, report, definition);
-        NBTTagList rows = capabilities.toNBT();
+        NBTTagList rows = published(context, trigger, report, definition, new NBTTagCompound());
         SimpleAssert.eq(5, rows.tagCount(), "main, captured dynamic and all native declared channels are published");
         SimpleAssert.eq(2, row(rows, "coil").getInteger("current"), "captured channel retains its effective value");
         SimpleAssert.eq(1, row(rows, "coil").getInteger("operations"), "captured channel provenance survives");
@@ -70,20 +71,17 @@ final class HologramNativeChannelCapabilitiesRegression {
                 .tagCount(),
             "explicit bounds retain three suggestions");
 
-        NBTTagList withoutTrace = HologramCapabilities.describeNative(context, trigger, null, definition)
-            .toNBT();
+        NBTTagList withoutTrace = published(context, trigger, null, definition, new NBTTagCompound());
         SimpleAssert
             .eq(4, withoutTrace.tagCount(), "automatic channels remain discoverable without runtime observations");
-        NBTTagList foreign = HologramCapabilities.describeNative(new Object(), trigger, report, definition)
-            .toNBT();
+        NBTTagList foreign = published(new Object(), trigger, report, definition, new NBTTagCompound());
         SimpleAssert.eq(4, foreign.tagCount(), "another controller capture cannot contribute runtime-only channels");
 
         NBTTagCompound saved = new NBTTagCompound();
         saved.setInteger("casing", 17);
         saved.setInteger("dynamic_length", 25);
         saved.setInteger("future_dimension", Integer.MAX_VALUE);
-        rows = capabilities.withSavedChannels(saved)
-            .toNBT();
+        rows = published(context, trigger, report, definition, saved);
         SimpleAssert.eq(17, row(rows, "casing").getInteger("current"), "saved named value overrides inheritance");
         SimpleAssert.that(row(rows, "casing").getBoolean("explicit"), "saved named value stays explicit");
         SimpleAssert.eq(25, row(rows, "dynamic_length").getInteger("current"), "saved dynamic value is retained");
@@ -99,6 +97,40 @@ final class HologramNativeChannelCapabilitiesRegression {
             2,
             ChannelDataAccessor.getChannelData(trigger, "coil"),
             "capability publication does not mutate the native trigger");
+    }
+
+    /** Exercise the actual native capture publication boundary without constructing a game world. */
+    private static NBTTagList published(Object context, ItemStack trigger, HologramChannelTrace.Report report,
+        IStructureDefinition<?> definition, NBTTagCompound saved) {
+        try {
+            var unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+            unsafeField.setAccessible(true);
+            var unsafe = (sun.misc.Unsafe) unsafeField.get(null);
+            var target = (HologramNativeTargetPlan) unsafe.allocateInstance(HologramNativeTargetPlan.class);
+            field(target, "definition", definition);
+            field(target, "context", context);
+            var capture = (HologramLocalControllerCapture) unsafe
+                .allocateInstance(HologramLocalControllerCapture.class);
+            field(capture, "nativeTarget", target);
+            field(capture, "detachedContext", context);
+            field(capture, "trigger", trigger);
+            var settings = new NBTTagCompound();
+            settings.setTag("channels", saved.copy());
+            field(capture, "settings", settings);
+            var publish = HologramLocalControllerCapture.class
+                .getDeclaredMethod("capabilities", HologramChannelTrace.Report.class);
+            publish.setAccessible(true);
+            return (NBTTagList) publish.invoke(capture, report);
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError("native capture channel publication fixture", failure);
+        }
+    }
+
+    private static void field(Object target, String name, Object value) throws ReflectiveOperationException {
+        var field = target.getClass()
+            .getDeclaredField(name);
+        field.setAccessible(true);
+        field.set(target, value);
     }
 
     private static NBTTagCompound row(NBTTagList rows, String id) {

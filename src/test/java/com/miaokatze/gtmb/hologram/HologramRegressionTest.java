@@ -38,6 +38,13 @@ public final class HologramRegressionTest {
         HologramConstructionJournal.STORAGE_ROOT
             .set(java.nio.file.Files.createTempDirectory("gtmb-construction-contracts-"));
         if (java.util.Arrays.asList(args)
+            .contains("--native-channel-capabilities")) {
+            HologramNativeChannelCapabilitiesRegression.run();
+            System.out
+                .println("PASS native channel capture publication: discovered, declared, saved and inherited signals");
+            return;
+        }
+        if (java.util.Arrays.asList(args)
             .contains("--littletiles-material-alias")) {
             HologramLittleTilesMaterialAliasesRegression.run();
             return;
