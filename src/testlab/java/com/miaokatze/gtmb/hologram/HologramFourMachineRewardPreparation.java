@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.item.Item;
@@ -20,7 +21,7 @@ import net.minecraft.stats.StatBase;
 import net.minecraft.stats.StatList;
 import net.minecraft.world.WorldServer;
 
-import com.google.gson.Gson;
+import com.miaokatze.gtmb.register.ProjectorRegistry;
 import com.miaokatze.miaokatzecore.api.testlab.ArtifactIdentity;
 
 /** Settle the pack's real controller inventory achievement before taking any business material baseline. */
@@ -34,8 +35,10 @@ final class HologramFourMachineRewardPreparation {
     private final int interval;
     private final long started;
     private Map<NBTTagCompound, Long> before;
+    private Map<NBTTagCompound, Long> initializedInventory;
     private ItemStack seed;
     private long seededAt = -1, rewardedAt = -1;
+    private long initializedAt = -1;
     private boolean complete;
 
     HologramFourMachineRewardPreparation(WorldServer world, EntityPlayerMP actor) throws Exception {
@@ -84,16 +87,10 @@ final class HologramFourMachineRewardPreparation {
         receipt.setInteger("inventoryScanInterval", interval);
         receipt
             .setString("condition", "pack inventory.add gregtech:gt.blockmachines meta1000 -> electric_blast_furnace");
-        receipt.setString(
+        receipt.setTag(
             "loadedAmazingTrophiesArtifact",
-            new Gson().toJson(
-                ArtifactIdentity.capture(Class.forName("glowredman.amazingtrophies.api.AmazingTrophiesAPI"))
-                    .asMap()));
-        receipt.setString(
-            "loadedInventoryScannerArtifact",
-            new Gson().toJson(
-                ArtifactIdentity.capture(scanner)
-                    .asMap()));
+            artifact(Class.forName("glowredman.amazingtrophies.api.AmazingTrophiesAPI")));
+        receipt.setTag("loadedInventoryScannerArtifact", artifact(scanner));
         receipt.setInteger("additionalSlotUpperBound", 2);
         receipt.setInteger("reviewedPriorMatrixSlotUpperBound", 30);
         receipt.setInteger("reviewedMatrixWithRewardSlotUpperBound", 32);
@@ -111,8 +108,30 @@ final class HologramFourMachineRewardPreparation {
             if (state == null || !state.getClass()
                 .getField("seeded")
                 .getBoolean(state)) return false;
+            ItemStack held = actor.getHeldItem();
+            if (held == null || held.getItem() != ProjectorRegistry.projector || !held.hasTagCompound()) return false;
+            String tool = held.getTagCompound()
+                .getString("gtitHologramToolId");
+            if (tool.isEmpty()) return false;
+            require(
+                UUID.fromString(tool)
+                    .toString()
+                    .equals(tool),
+                "Native projector UUID is not canonical");
+            Map<NBTTagCompound, Long> inventory = HologramFourMachineWorldAudit.inventory(actor);
+            if (!inventory.equals(initializedInventory)) {
+                initializedInventory = inventory;
+                initializedAt = tick;
+                return false;
+            }
+            if (tick - initializedAt < interval * 2L) return false;
             receipt.setBoolean("nativeScannerSeededBeforeSupply", true);
-            before = HologramFourMachineWorldAudit.inventory(actor);
+            receipt.setString("actualInitializedToolUuid", tool);
+            receipt.setLong("fullInventoryStableFromTick", initializedAt);
+            receipt.setLong("fullInventoryStableThroughTick", tick);
+            receipt.setInteger("requiredStableScanCycles", 2);
+            receipt.setBoolean("toolAndTerminalFullNbtStable", true);
+            before = inventory;
             seed = HologramFourMachineSpec.EBF.registeredController();
             require(
                 before.getOrDefault(HologramFourMachineWorldAudit.identity(seed), 0L) == 0,
@@ -189,5 +208,13 @@ final class HologramFourMachineRewardPreparation {
 
     private static void require(boolean condition, String message) {
         if (!condition) throw new IllegalStateException(message);
+    }
+
+    private static NBTTagCompound artifact(Class<?> anchor) {
+        NBTTagCompound result = new NBTTagCompound();
+        for (var entry : ArtifactIdentity.capture(anchor)
+            .asMap()
+            .entrySet()) result.setString(entry.getKey(), String.valueOf(entry.getValue()));
+        return result;
     }
 }
