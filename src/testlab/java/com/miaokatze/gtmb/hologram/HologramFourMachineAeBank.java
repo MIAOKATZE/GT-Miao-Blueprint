@@ -12,12 +12,14 @@ import net.minecraft.block.Block;
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.nbt.NBTTagList;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraft.world.WorldServer;
 import net.minecraftforge.common.util.ForgeDirection;
 
 import appeng.api.AEApi;
 import appeng.api.config.Actionable;
+import appeng.api.config.PowerMultiplier;
 import appeng.api.config.SecurityPermissions;
 import appeng.api.implementations.items.IAEItemPowerStorage;
 import appeng.api.networking.security.ISecurityGrid;
@@ -36,6 +38,8 @@ import appeng.util.item.AEItemStack;
  */
 final class HologramFourMachineAeBank {
 
+    private static final long PLANNED_MATRIX_TICKS = 500L * 6 * 2;
+
     private final WorldServer world;
     private final EntityPlayerMP actor;
     private final List<int[]> positions = new ArrayList<>();
@@ -45,6 +49,11 @@ final class HologramFourMachineAeBank {
     private final TileDrive drive;
     private final ItemStack terminal;
     private final int slot;
+    private final double finiteCapacity, initialAE;
+    private final NBTTagCompound powerBudget = new NBTTagCompound();
+    private final NBTTagList powerTimeline = new NBTTagList();
+    private long lastPowerSample = Long.MIN_VALUE;
+    private boolean budgetValidated;
     private int totalSupplied;
 
     HologramFourMachineAeBank(WorldServer world, EntityPlayerMP actor, int x, int y, int z, int slot) throws Exception {
@@ -74,11 +83,23 @@ final class HologramFourMachineAeBank {
             z,
             TileDenseEnergyCell.class);
         require(!power.isInfinite(), "Finite fixture power cell required");
+        finiteCapacity = power.getAEMaxPower();
+        require(Double.isFinite(finiteCapacity) && finiteCapacity > 0, "Native finite AE capacity is invalid");
         NBTTagCompound supply = new NBTTagCompound();
-        supply.setDouble("internalCurrentPower", 1_000_000);
+        supply.setDouble("internalCurrentPower", finiteCapacity);
         power.readFromNBT_TileEnergyCell(supply);
         power.markDirty();
-        require(power.getAECurrentPower() == 1_000_000, "Real finite AE initialization failed");
+        initialAE = power.getAECurrentPower();
+        require(
+            initialAE == finiteCapacity && power.getAEMaxPower() == finiteCapacity && !power.isInfinite(),
+            "Real finite AE initialization did not match native capacity");
+        powerBudget.setDouble("actualNativeCapacityAE", finiteCapacity);
+        powerBudget.setDouble("initialFiniteAE", initialAE);
+        powerBudget.setLong("initializedWorldTick", world.getTotalWorldTime());
+        powerBudget.setLong("r12ObservedTwoCycleTicks", 500);
+        powerBudget.setInteger("plannedMachineOrientationCases", 6);
+        powerBudget.setLong("plannedMatrixTicksIncludingDoubleMargin", PLANNED_MATRIX_TICKS);
+        powerBudget.setBoolean("initializedOnceNoRuntimeRefill", true);
         wap = place(
             AEApi.instance()
                 .definitions()
@@ -164,6 +185,32 @@ final class HologramFourMachineAeBank {
             security.hasPermission(actor, SecurityPermissions.EXTRACT)
                 && security.hasPermission(actor, SecurityPermissions.INJECT),
             "Actual business actor lacks native AE storage permissions");
+        if (!budgetValidated) {
+            double idle = drive.getProxy()
+                .getEnergy()
+                .getIdlePowerUsage();
+            double multiplier = PowerMultiplier.CONFIG.multiplier;
+            require(
+                Double.isFinite(idle) && idle > 0 && Double.isFinite(multiplier) && multiplier > 0,
+                "Native finite AE idle budget is invalid");
+            double availableTicks = initialAE / (idle * multiplier);
+            require(
+                availableTicks > PLANNED_MATRIX_TICKS,
+                "Native finite AE capacity cannot cover reviewed matrix budget");
+            powerBudget.setInteger(
+                "actualWirelessBoosters",
+                wap.getInternalInventory()
+                    .getStackInSlot(0).stackSize);
+            powerBudget.setDouble(
+                "nativeWirelessIdleAEPerTick",
+                wap.getProxy()
+                    .getIdlePowerUsage());
+            powerBudget.setDouble("nativeGridIdleAEPerTick", idle);
+            powerBudget.setDouble("actualUsageMultiplier", multiplier);
+            powerBudget.setDouble("predictedFiniteTicksAtNativeIdle", availableTicks);
+            powerBudget.setBoolean("plannedBudgetFits", true);
+            budgetValidated = true;
+        }
         return true;
     }
 
@@ -196,6 +243,36 @@ final class HologramFourMachineAeBank {
         NBTTagCompound result = new NBTTagCompound();
         result.setTag("items", HologramFourMachineWorldAudit.counts(counts()));
         result.setDouble("finiteAE", power.getAECurrentPower());
+        require(
+            !power.isInfinite() && power.getAEMaxPower() == finiteCapacity && power.getAECurrentPower() <= initialAE,
+            "Finite AE fixture capacity or initialization budget changed");
+        result.setTag("finitePowerBudget", powerBudget.copy());
+        boolean powered = false;
+        try {
+            powered = drive.getProxy()
+                .getEnergy()
+                .isNetworkPowered();
+            result.setDouble(
+                "actualNativeGridIdleAEPerTick",
+                drive.getProxy()
+                    .getEnergy()
+                    .getIdlePowerUsage());
+        } catch (appeng.me.GridAccessException unavailable) {
+            result.setString("gridEnergyDiagnostic", unavailable.toString());
+        }
+        result.setBoolean("actualGridPowered", powered);
+        result.setBoolean("actualFinitePowerPositive", power.getAECurrentPower() > 0);
+        long tick = world.getTotalWorldTime();
+        if (lastPowerSample == Long.MIN_VALUE || tick - lastPowerSample >= 100 || !powered && tick != lastPowerSample) {
+            require(powerTimeline.tagCount() < 256, "Finite AE power timeline exceeded its bounded matrix");
+            NBTTagCompound sample = new NBTTagCompound();
+            sample.setLong("worldTick", tick);
+            sample.setDouble("finiteAE", power.getAECurrentPower());
+            sample.setBoolean("gridPowered", powered);
+            powerTimeline.appendTag(sample);
+            lastPowerSample = tick;
+        }
+        result.setTag("actualPowerTimeline", powerTimeline.copy());
         result.setBoolean("infinite", power.isInfinite());
         result.setInteger("suppliedItems", totalSupplied);
         result.setTag("terminal", terminal.writeToNBT(new NBTTagCompound()));
