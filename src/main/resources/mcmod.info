@@ -17,12 +17,16 @@
       "requiredMods": [
         "gregtech",
         "structurelib",
-        "appliedenergistics2"
+        "appliedenergistics2",
+        "miaokatzecore@[0.2.31,)",
+        "modularui2"
       ],
       "dependencies": [
         "gregtech",
         "structurelib",
-        "appliedenergistics2"
+        "appliedenergistics2",
+        "miaokatzecore@[0.2.31,)",
+        "modularui2"
       ],
       "useDependencyInformation": false
     }

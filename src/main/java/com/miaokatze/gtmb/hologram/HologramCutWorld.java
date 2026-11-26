@@ -67,6 +67,7 @@ final class HologramCutWorld {
         private final Map<BoundChunk, Map<Integer, ExtendedBlockStorage>> originalSections = new IdentityHashMap<>();
         private final Map<BoundChunk, Map<Integer, ExtendedBlockStorage>> stagedSections = new IdentityHashMap<>();
         private boolean staged;
+        private NBTTagCompound stagedEntry;
 
         private static final class BoundChunk {
 
@@ -286,7 +287,8 @@ final class HologramCutWorld {
         void stage(NBTTagCompound entry, Fence fence, Fence pureFence) throws IOException {
             fence.require();
             verifyBoundChunks(originalSections);
-            NBTTagList cells = entry.getTagList("cells", 10);
+            stagedEntry = HologramBwMaterialCompatibility.forRestoration(entry);
+            NBTTagList cells = stagedEntry.getTagList("cells", 10);
             Block[] blocks = new Block[cells.tagCount()];
             Set<TileEntity> unique = Collections.newSetFromMap(new IdentityHashMap<>());
             for (int i = 0; i < cells.tagCount(); i++) {
@@ -364,7 +366,7 @@ final class HologramCutWorld {
                     throw new IOException("保护回调改变了候选方块实体内容，原日志已保留");
             }
             verifyBoundChunks(stagedSections);
-            verifyPhysical(entry, candidates);
+            verifyPhysical(stagedEntry, candidates);
         }
 
         /** Restoration, even for a current permit, requires exact ownership of all temporary cells. */
@@ -382,7 +384,7 @@ final class HologramCutWorld {
             for (TileEntity candidate : candidates)
                 if (candidate != null && !loaded.contains(candidate)) throw new IOException("候选方块实体的加载状态已变化，原日志已保留");
             verifyBoundChunks(stagedSections);
-            verifyPhysical(entry, candidates);
+            verifyPhysical(stagedEntry, candidates);
             restorePrepared();
         }
 
@@ -462,6 +464,8 @@ final class HologramCutWorld {
      */
     static NBTTagCompound recoveryChanges(WorldServer world, NBTTagCompound before, NBTTagCompound candidate, int x,
         int y, int z, boolean candidateAir, boolean rollback) throws IOException {
+        before = HologramBwMaterialCompatibility.forRestoration(before);
+        candidate = HologramBwMaterialCompatibility.forRestoration(candidate);
         HologramCutEntry.validate(before);
         HologramCutEntry.validate(candidate);
         for (String size : new String[] { "sizeX", "sizeY", "sizeZ" })
@@ -603,6 +607,7 @@ final class HologramCutWorld {
     }
 
     static void apply(WorldServer world, NBTTagCompound entry, int ox, int oy, int oz, boolean air) throws IOException {
+        entry = HologramBwMaterialCompatibility.forRestoration(entry);
         HologramCutEntry.validate(entry);
         HologramCutEntry
             .bounds(ox, oy, oz, entry.getInteger("sizeX"), entry.getInteger("sizeY"), entry.getInteger("sizeZ"));
@@ -741,6 +746,7 @@ final class HologramCutWorld {
      */
     static void saveAndVerify(WorldServer world, NBTTagCompound entry, int ox, int oy, int oz, boolean air)
         throws Exception {
+        entry = HologramBwMaterialCompatibility.forRestoration(entry);
         HologramCutChunks.load(world, ox, oz, entry.getInteger("sizeX"), entry.getInteger("sizeZ"));
         AnvilChunkLoader loader = (AnvilChunkLoader) world.theChunkProviderServer.currentChunkLoader;
         Set<Chunk> chunks = new LinkedHashSet<>();

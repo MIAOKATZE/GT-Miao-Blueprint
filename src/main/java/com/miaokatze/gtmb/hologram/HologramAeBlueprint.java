@@ -66,7 +66,8 @@ public final class HologramAeBlueprint {
 
     public static final int POLICY_VERSION = 1;
     public static final int MAX_MARK_BYTES = 65536;
-    private static final int MAX_SLOTS = 512;
+    // A complete CableBus can contain several modern Ex terminals with 128 allocated ghost slots each.
+    private static final int MAX_SLOTS = 1024;
     private static final int MAX_UNRESOLVED = 512;
     public static final String UNRESOLVED = "gtmbAeUnresolved";
     private static final String GTSWN_NETWORK_SAFETY = "GTSWN_NetworkSafetyEnabled";
@@ -2058,6 +2059,17 @@ public final class HologramAeBlueprint {
                 data.removeTag(inventory.root);
             }
             NBTTagCompound stored = data.getCompoundTag(inventory.root);
+            int effectiveCapacity = inventory.size;
+            if (host.getClass()
+                .getName()
+                .equals("appeng.parts.reporting.PartPatternTerminalEx")
+                && (inventory.root.equals("craftingGrid") || inventory.root.equals("outputList"))) {
+                HologramAeTerminalCapabilities capability = HologramAeTerminalCapabilities
+                    .inspect((appeng.parts.reporting.PartPatternTerminal) host);
+                effectiveCapacity = inventory.root.equals("craftingGrid")
+                    ? capability.effectiveInputs(data.getBoolean("inverted"))
+                    : capability.effectiveOutputs(data.getBoolean("inverted"));
+            }
             Set<String> expected = new HashSet<>();
             for (int i = 0; i < inventory.size; i++) {
                 String key = inventory.prefix + i;
@@ -2146,7 +2158,7 @@ public final class HologramAeBlueprint {
                     if (raw.hasNoTags()) stored.removeTag(key);
                 }
                 if (work.slots.size() >= MAX_SLOTS) throw new IOException("AE preview slot budget exceeded");
-                boolean enabled = !kind.equals("readonly");
+                boolean enabled = !kind.equals("readonly") && i < effectiveCapacity;
                 if (host instanceof IInterfaceHost && inventory.root.equals("patterns")) {
                     int rows = 1 + upgradeCount(data, Upgrades.PATTERN_CAPACITY);
                     enabled = i / 9 < rows;
@@ -2482,9 +2494,16 @@ public final class HologramAeBlueprint {
             else if (type.equals("appeng.parts.reporting.PartPatternTerminal")
                 || type.equals("appeng.parts.reporting.PartPatternTerminalEx")) {
                     inventory(work, data, inv("pattern", "#", 2, "physical", 64, "patternAny"), prefix, part);
-                    int crafting = type.endsWith("Ex") ? 32 : 9, output = type.endsWith("Ex") ? 32 : 3;
-                    inventory(work, data, inv("craftingGrid", "#", crafting, "ghost", 64, "any"), prefix, part);
-                    inventory(work, data, inv("outputList", "#", output, "ghost", 64, "any"), prefix, part);
+                    HologramAeTerminalCapabilities capability = HologramAeTerminalCapabilities
+                        .inspect((appeng.parts.reporting.PartPatternTerminal) part);
+                    capability.requireRepresentable(data);
+                    inventory(
+                        work,
+                        data,
+                        inv("craftingGrid", "#", capability.inputs, "ghost", 64, "any"),
+                        prefix,
+                        part);
+                    inventory(work, data, inv("outputList", "#", capability.outputs, "ghost", 64, "any"), prefix, part);
                 }
         }
 

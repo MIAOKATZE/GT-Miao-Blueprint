@@ -9,10 +9,10 @@ import java.util.List;
 import java.util.Map;
 
 import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.nbt.NBTTagList;
 
 /**
- * LittleTiles: initial 1.6.59 schema audit; 1.6.63 OrientationMapper/cutout fields rechecked. Boxes, basis and
- * inter-cell references form one transform.
+ * LittleTiles 1.6.63/1.6.67: boxes, all cutout conditions, basis and inter-cell references form one transform.
  */
 final class HologramBlockTransformLittleTiles {
 
@@ -64,11 +64,13 @@ final class HologramBlockTransformLittleTiles {
 
     static void turn(HologramBlockTransforms.Data data, boolean vertical) throws IOException {
         if (data.tile == null) return;
+        HologramLittleTilesCapabilities.validateHost(data.tile);
         int count = bounded(data.tile.getInteger("tilesCount"));
         for (int i = 0; i < count; i++) {
             NBTTagCompound tile = data.tile.getCompoundTag("t" + i);
             int boxes = bounded(tile.getInteger("bSize"));
             if (boxes > 1) throw new IOException("Unsupported legacy LittleTiles multi-box tile");
+            if (boxes == 0 && tile.hasKey("cutoutType")) throw new IOException("LittleTiles cutout without a tile box");
             int[] old = boxes == 1 ? box(tile, "bBox0") : null;
             if (old != null) {
                 int[] next = rotateBox(old, vertical);
@@ -147,24 +149,44 @@ final class HologramBlockTransformLittleTiles {
 
     private static void cutout(NBTTagCompound tile, int[] oldBox, boolean vertical) throws IOException {
         if (!tile.hasKey("cutoutType")) return;
+        int[] oldPos = vec(tile, "cutoutPos", true);
+        cutoutCondition(tile, oldBox, vertical);
+        int[] newPos = vec(tile, "cutoutPos", true);
+        NBTTagList further = tile.getTagList("cutoutFurtherShapes", 10);
+        for (int i = 0; i < further.tagCount(); i++) {
+            NBTTagCompound shape = further.getCompoundTagAt(i);
+            int[] pos = vec(shape, "cutoutPos", true);
+            for (int axis = 0; axis < 3; axis++) pos[axis] = coordinate((long) pos[axis] + oldPos[axis]);
+            // Native conditions()/fromConditions(): child positions are relative to the main condition.
+            writeVec(shape, "cutoutPos", true, pos);
+            cutoutCondition(shape, oldBox, vertical);
+            pos = vec(shape, "cutoutPos", true);
+            for (int axis = 0; axis < 3; axis++) pos[axis] = coordinate((long) pos[axis] - newPos[axis]);
+            writeVec(shape, "cutoutPos", true, pos);
+        }
+    }
+
+    private static int coordinate(long value) throws IOException {
+        if (value < Integer.MIN_VALUE || value > Integer.MAX_VALUE)
+            throw new IOException("LittleTiles cutout coordinate overflow");
+        return (int) value;
+    }
+
+    private static void cutoutCondition(NBTTagCompound tile, int[] oldBox, boolean vertical) throws IOException {
         int orientation = tile.getByte("cutoutOrientation") & 255;
         tile.setByte("cutoutOrientation", (byte) orientation(orientation, vertical));
         int[] size = vec(tile, "cutoutSize", true), pos = vec(tile, "cutoutPos", true);
-        int[] max = { pos[0] + size[0] - oldBox[3] + oldBox[0], pos[1] + size[1] - oldBox[4] + oldBox[1],
-            pos[2] + size[2] - oldBox[5] + oldBox[2] };
-        int[] a = HologramVirtualTransform.turn(pos[0], pos[1], pos[2], vertical);
-        int[] b = HologramVirtualTransform.turn(max[0], max[1], max[2], vertical);
+        int negativeAxisPos = coordinate((long) oldBox[5] - oldBox[2] - pos[2] - size[2]);
         writeVec(
             tile,
             "cutoutPos",
             true,
-            new int[] { Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.min(a[2], b[2]) });
-        int[] rotatedSize = HologramVirtualTransform.turn(size[0], size[1], size[2], vertical);
+            vertical ? new int[] { pos[0], negativeAxisPos, pos[1] } : new int[] { negativeAxisPos, pos[1], pos[0] });
         writeVec(
             tile,
             "cutoutSize",
             true,
-            new int[] { Math.abs(rotatedSize[0]), Math.abs(rotatedSize[1]), Math.abs(rotatedSize[2]) });
+            vertical ? new int[] { size[0], size[2], size[1] } : new int[] { size[2], size[1], size[0] });
         if (tile.getByte("cutoutType") == 2) {
             for (String field : new String[] { "cutoutFaceStart", "cutoutFaceEnd" })
                 tile.setByte(field, (byte) HologramVirtualTransform.front(tile.getByte(field), vertical));

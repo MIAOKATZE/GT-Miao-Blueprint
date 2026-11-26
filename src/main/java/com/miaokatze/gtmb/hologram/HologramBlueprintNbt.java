@@ -477,8 +477,11 @@ public final class HologramBlueprintNbt {
     static NBTTagCompound forPlacement(Block block, int metadata, String value, UUID ownerUuid, String ownerName, int x,
         int y, int z, boolean retainNbt, boolean retainCovers, List<String> keys) throws IOException {
         NBTTagCompound source = decode(value);
-        if (!HologramAeBlueprint.supports(block, source))
-            return forPlacement(source, ownerUuid, ownerName, x, y, z, retainNbt, retainCovers, keys);
+        if (!HologramAeBlueprint.supports(block, source)) {
+            NBTTagCompound result = forPlacement(source, ownerUuid, ownerName, x, y, z, retainNbt, retainCovers, keys);
+            validateTargetCapabilities(block, result);
+            return result;
+        }
         if (source == null) return null;
         NBTTagCompound selected = filter(source, retainNbt ? keys : java.util.Collections.emptyList(), retainCovers);
         selected = canonicalActorPayload(block, selected, ownerUuid, ownerName, !retainCovers);
@@ -487,6 +490,16 @@ public final class HologramBlueprintNbt {
         NBTTagCompound canonical = nativePayload(analysis.payload());
         bindTarget(canonical, x, y, z);
         return canonical;
+    }
+
+    private static void validateTargetCapabilities(Block block, NBTTagCompound payload) throws IOException {
+        if (block == null || payload == null) return;
+        String type = block.getClass()
+            .getName();
+        if (type.equals("com.creativemd.littletiles.common.blocks.BlockTile"))
+            HologramLittleTilesCapabilities.validateHost(payload);
+        if (type.equals("crazypants.enderio.conduit.BlockConduitBundle"))
+            HologramEnderIoCapabilities.requireRepresentable(payload);
     }
 
     static NBTTagCompound filterSelection(NBTTagCompound source, List<String> keys, boolean retainCovers)

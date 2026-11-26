@@ -435,6 +435,7 @@ public final class HologramCutService {
                             entry.getInteger("sizeX"),
                             entry.getInteger("sizeY"),
                             entry.getInteger("sizeZ"));
+                        entry = HologramBwMaterialCompatibility.forRestoration(entry);
                         coordinateRights(permit, entry, x, y, z);
                         phase = "bind-destination";
                         edit = new HologramCutWorld.Edit(editWorld, entry, x, y, z);
@@ -754,7 +755,7 @@ public final class HologramCutService {
             world = DimensionManager.getWorld(dimension);
         }
         if (world == null) throw new IOException("原维度不可用，剪切记录已保留");
-        NBTTagCompound entry = pending.getCompoundTag("entry");
+        NBTTagCompound entry = HologramBwMaterialCompatibility.forRestoration(pending.getCompoundTag("entry"));
         int x = pending.getInteger("x"), y = pending.getInteger("y"), z = pending.getInteger("z");
         boolean air = pending.getBoolean("air");
         NBTTagCompound before = approved ? air ? entry : pending.getCompoundTag("before") : entry;

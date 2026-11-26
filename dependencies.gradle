@@ -1,50 +1,60 @@
+// Each invocation selects one complete pack graph; never layer another GT/AE version onto it.
+def gtmbPackMatrix = new groovy.json.JsonSlurper().parse(file("gradle/gtnh-compatibility.json"))
+def gtmbTarget = providers.gradleProperty("gtmbTargetGtnh").getOrElse("2.9.2")
+if (!gtmbPackMatrix.containsKey(gtmbTarget)) throw new GradleException("Unsupported GTNH target: " + gtmbTarget)
+project.ext.gtmbTargetGtnh = gtmbTarget
+project.ext.gtmbPackVersions = gtmbPackMatrix[gtmbTarget]
+def packVersion = { String name -> gtmbPackMatrix[gtmbTarget][name] }
+
 dependencies {
-    // GTNH 2.9.0；仅保留投影仪及 GregTech 签名的实际依赖。
-    api("com.github.GTNewHorizons:GT5-Unofficial:5.09.54.265") { transitive = false }
-    compileOnly("com.github.GTNewHorizons:Baubles-Expanded:2.2.27-GTNH:dev") { transitive = false }
-    api("com.github.GTNewHorizons:StructureLib:1.4.47:dev") { transitive = false }
-    api("com.github.GTNewHorizons:Applied-Energistics-2-Unofficial:rv3-beta-1095-GTNH:dev") { transitive = false }
-    api("com.github.GTNewHorizons:GTNHLib:0.11.54:dev") { transitive = false }
-    api("com.github.GTNewHorizons:ModularUI:1.3.4:dev") { transitive = false }
-    api("com.github.GTNewHorizons:ModularUI2:2.3.94-1.7.10:dev") { transitive = false }
+    // Default GTNH 2.9.2; -PgtmbTargetGtnh=2.9.0/2.9.1 selects an independent graph.
+    // 仅保留投影仪及 GregTech 签名的实际依赖。
+    api("com.github.GTNewHorizons:GT5-Unofficial:${packVersion("GT5-Unofficial")}") { transitive = false }
+    compileOnly("com.github.GTNewHorizons:Baubles-Expanded:${packVersion("Baubles-Expanded")}:dev") { transitive = false }
+    api("com.github.GTNewHorizons:StructureLib:${packVersion("StructureLib")}:dev") { transitive = false }
+    api("com.github.GTNewHorizons:Applied-Energistics-2-Unofficial:${packVersion("Applied-Energistics-2-Unofficial")}:dev") { transitive = false }
+    api("com.github.GTNewHorizons:GTNHLib:${packVersion("GTNHLib")}:dev") { transitive = false }
+    api("com.github.GTNewHorizons:ModularUI:${packVersion("ModularUI")}:dev") { transitive = false }
+    api("com.github.GTNewHorizons:ModularUI2:${packVersion("ModularUI2")}:dev") { transitive = false }
     // MUI2's optional client input interfaces must also be present for javac and non-FML regressions.
-    compileOnly("com.github.GTNewHorizons:lwjgl3ify:3.0.42:api") { transitive = false }
-    testImplementation("com.github.GTNewHorizons:lwjgl3ify:3.0.42:api") { transitive = false }
+    compileOnly("com.github.GTNewHorizons:lwjgl3ify:${packVersion("lwjgl3ify")}:api") { transitive = false }
+    testImplementation("com.github.GTNewHorizons:lwjgl3ify:${packVersion("lwjgl3ify")}:api") { transitive = false }
     // GT's native BlockMachines implements this interface; only the real demolition regression needs it here.
     testImplementation("com.github.GTNewHorizons:Chisel:2.17.34-GTNH:dev") { transitive = false }
-    testImplementation("com.github.GTNewHorizons:CookingForBlockheads:1.4.14-GTNH:dev") { transitive = false }
-    testImplementation("com.github.GTNewHorizons:Botania:1.13.42-GTNH:dev") { transitive = false }
-    testImplementation("com.github.GTNewHorizons:FloodLights:1.5.6:dev") { transitive = false }
-    testImplementation("com.github.GTNewHorizons:Jabba:1.5.24:dev") { transitive = false }
-    testImplementation("com.github.GTNewHorizons:StorageDrawers:2.2.31-GTNH:dev") { transitive = false }
+    testImplementation("com.github.GTNewHorizons:CookingForBlockheads:${packVersion("CookingForBlockheads")}:dev") { transitive = false }
+    testImplementation("com.github.GTNewHorizons:Botania:${packVersion("Botania")}:dev") { transitive = false }
+    testImplementation("com.github.GTNewHorizons:FloodLights:${packVersion("FloodLights")}:dev") { transitive = false }
+    testImplementation("com.github.GTNewHorizons:Jabba:${packVersion("Jabba")}:dev") { transitive = false }
+    testImplementation("com.github.GTNewHorizons:StorageDrawers:${packVersion("StorageDrawers")}:dev") { transitive = false }
     compileOnly rfg.deobf("curse.maven:neverenoughanimation-1062347:7664003-sources-7663978")
     testImplementation rfg.deobf("curse.maven:neverenoughanimation-1062347:7664003-sources-7663978")
     // Native MUI2 viewport/hover signatures; GTNHLib supplies these libraries in the target pack.
     compileOnly("it.unimi.dsi:fastutil:8.5.18") { transitive = false }
     compileOnly("org.joml:joml:1.10.8") { transitive = false }
-    compileOnly("com.github.GTNewHorizons:NotEnoughItems:2.8.171-GTNH:dev") { transitive = false }
+    compileOnly("com.github.GTNewHorizons:NotEnoughItems:${packVersion("NotEnoughItems")}:dev") { transitive = false }
     compileOnly("net.industrial-craft:industrialcraft-2:2.2.828-experimental:api") { transitive = false }
     // Optional integrations, pinned to the GTNH 2.9.0 instance; never production requirements.
-    compileOnly("com.github.GTNewHorizons:CarpentersBlocks:3.7.3-GTNH:dev") { transitive = false }
-    compileOnly("com.github.GTNewHorizons:ForgeMultipart:1.7.18:dev") { transitive = false }
-    compileOnly("com.github.GTNewHorizons:LittleTiles:1.6.63:dev") { transitive = false }
-    compileOnly("com.github.GTNewHorizons:ArchitectureCraft:1.12.19:dev") { transitive = false }
-    compileOnly("com.github.GTNewHorizons:EnderIO:2.10.51:dev") { transitive = false }
+    compileOnly("com.github.GTNewHorizons:CarpentersBlocks:${packVersion("CarpentersBlocks")}:dev") { transitive = false }
+    compileOnly("com.github.GTNewHorizons:ForgeMultipart:${packVersion("ForgeMultipart")}:dev") { transitive = false }
+    compileOnly("com.github.GTNewHorizons:LittleTiles:${packVersion("LittleTiles")}:dev") { transitive = false }
+    compileOnly("com.github.GTNewHorizons:ArchitectureCraft:${packVersion("ArchitectureCraft")}:dev") { transitive = false }
+    compileOnly("com.github.GTNewHorizons:EnderIO:${packVersion("EnderIO")}:dev") { transitive = false }
+    testCompileOnly("com.github.GTNewHorizons:EnderIO:${packVersion("EnderIO")}:dev") { transitive = false }
 
     // Opt in only for a smoke run; this configuration is excluded from published dependencies.
     if (providers.gradleProperty("hologramExtendedCompatibility").isPresent()) {
-        runtimeOnlyNonPublishable("com.github.GTNewHorizons:CarpentersBlocks:3.7.3-GTNH:dev") { transitive = false }
-        runtimeOnlyNonPublishable("com.github.GTNewHorizons:ForgeMultipart:1.7.18:dev") { transitive = false }
-        runtimeOnlyNonPublishable("com.github.GTNewHorizons:LittleTiles:1.6.63:dev") { transitive = false }
-        runtimeOnlyNonPublishable("com.github.GTNewHorizons:ArchitectureCraft:1.12.19:dev") { transitive = false }
-        runtimeOnlyNonPublishable("com.github.GTNewHorizons:EnderIO:2.10.51:dev") { transitive = false }
+        runtimeOnlyNonPublishable("com.github.GTNewHorizons:CarpentersBlocks:${packVersion("CarpentersBlocks")}:dev") { transitive = false }
+        runtimeOnlyNonPublishable("com.github.GTNewHorizons:ForgeMultipart:${packVersion("ForgeMultipart")}:dev") { transitive = false }
+        runtimeOnlyNonPublishable("com.github.GTNewHorizons:LittleTiles:${packVersion("LittleTiles")}:dev") { transitive = false }
+        runtimeOnlyNonPublishable("com.github.GTNewHorizons:ArchitectureCraft:${packVersion("ArchitectureCraft")}:dev") { transitive = false }
+        runtimeOnlyNonPublishable("com.github.GTNewHorizons:EnderIO:${packVersion("EnderIO")}:dev") { transitive = false }
         // FMP requires CCC >= 1.4.3; 1.4.22 matches GTNH 2.9.0. CreativeCore is embedded in LittleTiles.
         runtimeOnlyNonPublishable("com.github.GTNewHorizons:CodeChickenCore:1.4.22:dev") { transitive = false }
         // Exact dependencies from EnderIO 2.10.51/dependencies.gradle; GTNHLib and ModularUI2 are above.
-        runtimeOnlyNonPublishable("com.github.GTNewHorizons:EnderCore:0.5.15:dev") { transitive = false }
+        runtimeOnlyNonPublishable("com.github.GTNewHorizons:EnderCore:${packVersion("EnderCore")}:dev") { transitive = false }
         runtimeOnlyNonPublishable("curse.maven:cofh-lib-220333:2388748") { transitive = false }
         // ArchitectureCraft's TileShape reads Postea replacements; 1.2.7 matches GTNH 2.9.0.
-        runtimeOnlyNonPublishable("com.github.GTNewHorizons:Postea:1.2.7:dev") { transitive = false }
+        runtimeOnlyNonPublishable("com.github.GTNewHorizons:Postea:${packVersion("Postea")}:dev") { transitive = false }
     }
     // UniMixins/MixinExtras 由 usesMixins=true 的 GTNH convention 提供。
     if (providers.gradleProperty("hologramEssentiaSmoke").isPresent()) {
@@ -56,14 +66,14 @@ dependencies {
     }
     if (providers.gradleProperty("hologramSulfurLineSmoke").isPresent()) {
         // Exact AE2FC version from the GTNH 2.9.0 instance; finite native fluid cells are required by this fixture.
-        runtimeOnlyNonPublishable("com.github.GTNewHorizons:AE2FluidCraft-Rework:1.5.116-gtnh:dev") { transitive = false }
+        runtimeOnlyNonPublishable("com.github.GTNewHorizons:AE2FluidCraft-Rework:${packVersion("AE2FluidCraft-Rework")}:dev") { transitive = false }
         runtimeOnlyNonPublishable(files("build/hologram-support/server/mods/gtswn-v1.8.67-dev.jar"))
     }
 }
 
 // Use the matching sibling build for local Core integration before trying the published coordinate.
 dependencies {
-    def coreVersion = providers.gradleProperty("miaokatzeCoreVersion").getOrElse("0.2.30")
+    def coreVersion = providers.gradleProperty("miaokatzeCoreVersion").getOrElse("0.2.31")
     def coreDevJar = providers.gradleProperty("miaokatzeCoreDevJar").orNull
     def siblingDevJar = file("../MIAOKATZE-Core/build/libs/miaokatzecore-v${coreVersion}-dev.jar")
     if (coreDevJar != null) {

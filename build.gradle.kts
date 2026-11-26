@@ -2,6 +2,10 @@ plugins {
     id("com.gtnewhorizons.gtnhconvention")
 }
 
+// Shared with dependencies.gradle, including isolated normal-library ABI fixtures.
+val gtmbPackVersions = extra["gtmbPackVersions"] as Map<*, *>
+fun packVersion(name: String): String = gtmbPackVersions[name] as String
+
 // Blueprint metadata needs the release version independently of the Git-derived build version.
 extensions.configure<com.gtnewhorizons.retrofuturagradle.MinecraftExtension>("minecraft") {
     injectedTags.put("RELEASE_VERSION", providers.gradleProperty("RELEASE_VERSION"))
@@ -44,9 +48,9 @@ tasks.test {
 
 val hologramTestClasspath = sourceSets.getByName("test").runtimeClasspath +
     configurations.detachedConfiguration(
-        dependencies.create("com.github.GTNewHorizons:NotEnoughItems:2.8.171-GTNH:dev"),
+        dependencies.create("com.github.GTNewHorizons:NotEnoughItems:${packVersion("NotEnoughItems")}:dev"),
         dependencies.create("com.github.GTNewHorizons:CodeChickenCore:1.4.22:dev"),
-        dependencies.create("com.github.GTNewHorizons:ForgeMultipart:1.7.18:dev"),
+        dependencies.create("com.github.GTNewHorizons:ForgeMultipart:${packVersion("ForgeMultipart")}:dev"),
         dependencies.create("org.lwjgl.lwjgl:lwjgl:2.9.4-nightly-20150209"),
         dependencies.create("org.lwjgl.lwjgl:lwjgl_util:2.9.4-nightly-20150209"),
         dependencies.create("it.unimi.dsi:fastutil:8.5.18"),
@@ -92,6 +96,10 @@ mapOf(
     "runNativeRendererReleaseTest" to "com.miaokatze.gtmb.client.hologram.HologramNativeRendererReleaseRegression",
     "runProjectionDiscardUiRegression" to "com.miaokatze.gtmb.client.hologram.HologramLibraryAdminUiRegression",
     "runPlacementReviewContextRegression" to "com.miaokatze.gtmb.client.hologram.HologramPlacementReviewContextRegression",
+    "runEnderIoCapabilitiesRegression" to "com.miaokatze.gtmb.hologram.HologramEnderIoCapabilitiesRegression",
+    "runBwMaterialCompatibilityRegression" to "com.miaokatze.gtmb.hologram.HologramBwMaterialCompatibilityRegression",
+    "runAeTerminalCapabilitiesRegression" to "com.miaokatze.gtmb.hologram.HologramAeTerminalCapabilitiesRegression",
+    "runLittleTilesCompatibilityRegression" to "com.miaokatze.gtmb.hologram.HologramLittleTilesCompatibilityRegression",
     "runNativePresetSourceRegression" to "com.miaokatze.gtmb.hologram.HologramNativePresetSourceRegression"
 ).forEach { (taskName, entryPoint) ->
     tasks.register<JavaExec>(taskName) {
@@ -135,7 +143,7 @@ tasks.register<JavaExec>("runMixedZtonesSavedPlacementRegression") {
 // The unsaved-placement contract exercises the native LittleTiles host, including mixed-material geometry.
 tasks.named<JavaExec>("runUnsavedPlacementRegression") {
     classpath += configurations.detachedConfiguration(
-        dependencies.create("com.github.GTNewHorizons:LittleTiles:1.6.63:dev")
+        dependencies.create("com.github.GTNewHorizons:LittleTiles:${packVersion("LittleTiles")}:dev")
     ).apply { isTransitive = false }
 }
 
@@ -223,13 +231,14 @@ abstract class ReleaseGuiBridgeArguments : CommandLineArgumentProvider {
 
 val releaseGuiBridgeAsm = configurations.detachedConfiguration(dependencies.create("org.ow2.asm:asm:9.8"))
 val releaseGuiMuiRuntime = configurations.detachedConfiguration(
-    dependencies.create("com.github.GTNewHorizons:ModularUI2:2.3.94-1.7.10")
+    dependencies.create("com.github.GTNewHorizons:ModularUI2:${packVersion("ModularUI2")}")
 ).apply { isTransitive = false }
 val releaseGuiNormalJar = tasks.named<com.gtnewhorizons.retrofuturagradle.mcp.ReobfuscatedJar>("reobfJar").flatMap { it.archiveFile }
 val releaseGuiSrgRuntime = layout.buildDirectory.file("rfg/srg_merged_minecraft.jar")
 val releaseGuiForgeRuntime = layout.buildDirectory.file("rfg/recompiled_minecraft-1.7.10.jar")
 tasks.register<JavaExec>("runReleaseGuiBridgeTest") {
     group = "verification"
+    systemProperty("gtmb.fixture.mui2Version", packVersion("ModularUI2").substringBefore("-1.7.10"))
     description = "Verifies the normal projector UI ABI against the pinned normal MUI2 and SRG runtimes."
     dependsOn("reobfJar", "compileTestJava")
     mainClass = "com.miaokatze.gtmb.client.hologram.HologramV016ReleaseGuiBridgeProbe"
@@ -436,10 +445,19 @@ tasks.register<JavaExec>("runCutPackRegression") {
     description = "Exercises CUT, paste, protection and region readback with the pack's real owner-thread chunk index."
     mainClass = "com.miaokatze.gtmb.hologram.HologramCutProtectionRegression"
     classpath = tasks.named<JavaExec>("runHologramTest").get().classpath +
-        configurations.detachedConfiguration(dependencies.create("com.github.GTNewHorizons:Hodgepodge:2.7.221:dev"))
+        configurations.detachedConfiguration(dependencies.create("com.github.GTNewHorizons:Hodgepodge:${packVersion("Hodgepodge")}:dev"))
             .apply { isTransitive = false }
     systemProperty("gtmb.fixture.packCut", "true")
     val scratchDir = layout.buildDirectory.dir("runCutPackRegression")
     workingDir(scratchDir)
     doFirst { scratchDir.get().asFile.mkdirs() }
+}
+
+// Isolated platform graphs inspect the same production output; none enters compilation.
+apply(from = "gradle/gtnh-compatibility.gradle")
+
+tasks.named<JavaExec>("runLittleTilesCompatibilityRegression") {
+    classpath += configurations.detachedConfiguration(
+        dependencies.create("com.github.GTNewHorizons:LittleTiles:${packVersion("LittleTiles")}:dev")
+    ).apply { isTransitive = false }
 }

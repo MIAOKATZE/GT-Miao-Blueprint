@@ -1,0 +1,156 @@
+import groovy.json.JsonOutput
+import groovy.json.JsonSlurper
+import java.security.MessageDigest
+
+abstract class GTNHFixtureReport extends DefaultTask {
+    @InputFiles
+    @PathSensitive(PathSensitivity.NONE)
+    abstract ConfigurableFileCollection getArtifacts()
+
+    @Input
+    abstract ListProperty<String> getCoordinates()
+
+    @OutputFile
+    abstract RegularFileProperty getReport()
+
+    @TaskAction
+    void fingerprint() {
+        def result = [coordinates: coordinates.get(), artifacts: artifacts.files.sort { it.name }.collect { artifact ->
+            def digest = MessageDigest.getInstance('SHA-256')
+            artifact.withInputStream { stream ->
+                byte[] buffer = new byte[65536]
+                int count
+                while ((count = stream.read(buffer)) != -1) digest.update(buffer, 0, count)
+            }
+            [file: artifact.absolutePath, sha256: digest.digest().encodeHex().toString()]
+        }]
+        def target = report.get().asFile
+        target.parentFile.mkdirs()
+        target.text = JsonOutput.prettyPrint(JsonOutput.toJson(result)) + '\n'
+        logger.lifecycle("Resolved isolated GTNH fixture graph: ${target}")
+    }
+}
+
+abstract class GTNHLinkageArguments implements CommandLineArgumentProvider {
+    @Input
+    abstract Property<String> getLabel()
+
+    @Classpath
+    abstract ConfigurableFileCollection getProductionClasses()
+
+    @Classpath
+    abstract ConfigurableFileCollection getPlatformApis()
+
+    @Override
+    Iterable<String> asArguments() {
+        return [label.get(), productionClasses.asPath, platformApis.asPath]
+    }
+}
+
+abstract class GTNHGuiArguments implements CommandLineArgumentProvider {
+    @InputFile @PathSensitive(PathSensitivity.NONE)
+    abstract RegularFileProperty getNormalJar()
+    @InputFile @PathSensitive(PathSensitivity.NONE)
+    abstract RegularFileProperty getSrgRuntime()
+    @InputFile @PathSensitive(PathSensitivity.NONE)
+    abstract RegularFileProperty getForgeRuntime()
+    @InputFile @PathSensitive(PathSensitivity.NONE)
+    abstract RegularFileProperty getMuiRuntime()
+    @Override Iterable<String> asArguments() {
+        return [normalJar, srgRuntime, forgeRuntime, muiRuntime].collect { it.get().asFile.absolutePath }
+    }
+}
+
+// Detached fixture graphs: none extends or is inherited by the production compile/runtime graph.
+def compatibilityMatrix = new JsonSlurper().parse(file('gradle/gtnh-compatibility.json'))
+dependencies { testImplementation('org.ow2.asm:asm-tree:9.9') }
+// Forge's legacy asm-debug-all is a different module, so dependency conflict resolution cannot replace it.
+def linkageAsm = configurations.create('gtnhLinkageAsm') {
+    canBeConsumed = false
+    canBeResolved = true
+}
+dependencies.add(linkageAsm.name, 'org.ow2.asm:asm-tree:9.9')
+def linkageTasks = []
+def profiles = compatibilityMatrix.collectEntries { pack, versions ->
+    def profile = [version: pack, dependencies: versions]
+    def graph = configurations.create('gtnh' + profile.version.replace('.', '') + 'Fixture') {
+        canBeConsumed = false
+        canBeResolved = true
+        transitive = false
+    }
+    profile.dependencies.each { module, version ->
+        def classifier = module == 'GT5-Unofficial' ? '' : (module == 'lwjgl3ify' ? ':api' : ':dev')
+        dependencies.add(graph.name, "com.github.GTNewHorizons:${module}:${version}${classifier}")
+    }
+    def localCore = providers.gradleProperty('miaokatzeCoreDevJar').orNull
+    if (localCore != null) dependencies.add(graph.name, files(localCore))
+    else dependencies.add(graph.name, 'com.miaokatze.miaokatzecore:miaokatzecore:0.2.31:dev') { transitive = false }
+    def coordinateList = profile.dependencies.collect { module, version ->
+        "com.github.GTNewHorizons:${module}:${version}" + (module == 'GT5-Unofficial' ? '' : (module == 'lwjgl3ify' ? ':api' : ':dev'))
+    }
+    def resolution = tasks.register('resolveGTNH' + profile.version.replace('.', '') + 'Fixtures', GTNHFixtureReport) {
+        artifacts.from(graph)
+        coordinates.set(coordinateList + [localCore ?: 'com.miaokatze.miaokatzecore:miaokatzecore:0.2.31:dev'])
+        report.set(layout.buildDirectory.file('reports/compatibility/resolved-' + profile.version + '.json'))
+    }
+    def muiNormal = configurations.detachedConfiguration(dependencies.create("com.github.GTNewHorizons:ModularUI2:${versions.ModularUI2}"))
+    muiNormal.transitive = false
+    linkageTasks.add(tasks.register('verifyGTNH' + profile.version.replace('.', '') + 'GuiAbi', JavaExec) {
+        group = 'verification'
+        dependsOn('reobfJar', 'compileTestJava')
+        classpath = linkageAsm + sourceSets.test.output
+        mainClass.set('com.miaokatze.gtmb.client.hologram.HologramV016ReleaseGuiBridgeProbe')
+        systemProperty('gtmb.fixture.mui2Version', versions.ModularUI2.replace('-1.7.10', ''))
+        def guiArgs = objects.newInstance(GTNHGuiArguments)
+        guiArgs.normalJar.set(tasks.reobfJar.archiveFile)
+        guiArgs.srgRuntime.set(layout.buildDirectory.file('rfg/srg_merged_minecraft.jar'))
+        guiArgs.forgeRuntime.set(layout.buildDirectory.file('rfg/recompiled_minecraft-1.7.10.jar'))
+        guiArgs.muiRuntime.set(layout.file(providers.provider { muiNormal.singleFile }))
+        argumentProviders.add(guiArgs)
+    })
+    linkageTasks.add(tasks.register('verifyGTNH' + profile.version.replace('.', '') + 'Linkage', JavaExec) {
+        group = 'verification'
+        dependsOn(tasks.named('testClasses'))
+        classpath = linkageAsm + sourceSets.test.runtimeClasspath + sourceSets.main.compileClasspath
+        mainClass.set('com.miaokatze.gtmb.compat.PlatformLinkageContracts')
+        def arguments = objects.newInstance(GTNHLinkageArguments)
+        arguments.label.set(profile.version)
+        arguments.productionClasses.from(sourceSets.main.output.classesDirs, sourceSets.mixin.output.classesDirs)
+        arguments.platformApis.from(graph)
+        argumentProviders.add(arguments)
+        maxHeapSize = '2g'
+    })
+    // Run the same helper/test output with the original pack APIs; remove all matrix modules from the host.
+    def fixtureRuntime = tasks.named('runHologramTest').get().classpath.filter { artifact ->
+        !compatibilityMatrix.values().any { row -> row.any { module, version ->
+            artifact.name.startsWith(module + '-' + version)
+        } }
+    }
+    ['BwMaterial', 'LittleTiles'].each { kind ->
+        def entry = kind == 'BwMaterial' ? 'HologramBwMaterialCompatibilityRegression' : 'HologramLittleTilesCompatibilityRegression'
+        linkageTasks.add(tasks.register('verifyGTNH' + profile.version.replace('.', '') + kind, JavaExec) {
+            group = 'verification'
+            dependsOn('compileTestJava')
+            classpath = graph + fixtureRuntime
+            mainClass.set('com.miaokatze.gtmb.hologram.' + entry)
+            def scratch = layout.buildDirectory.dir(name)
+            workingDir(scratch)
+            doFirst { scratch.get().asFile.mkdirs() }
+        })
+    }
+    [(profile.version): resolution]
+}
+
+tasks.register('verifyGTNHPlatformLinkage') {
+    group = 'verification'
+    description = 'Check the same modern production bytecode against each isolated original API graph.'
+    dependsOn(linkageTasks)
+}
+
+tasks.register('resolveGTNHCompatibilityFixtures') {
+    group = 'verification'
+    description = 'Resolve and fingerprint isolated GTNH 2.9.0/2.9.1/2.9.2 fixture graphs (no game launch).'
+    dependsOn(profiles.values())
+}
+
+tasks.named("check") { dependsOn("verifyGTNHPlatformLinkage") }
