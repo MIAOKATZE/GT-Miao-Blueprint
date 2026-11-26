@@ -410,7 +410,10 @@ final class HologramEditorPropertiesPane {
                 () -> projectorOr(
                     "native.ui.uses_the_existing_reset_confirmation_does_not",
                     "沿用原重置 / 校准确认；不施工、不删除已保存预设。")));
-        materials.child(label(() -> ui.session.state().data.getString("status")));
+        materials.child(
+            label(
+                () -> ui.session.state().data.getBoolean("localStandardController") ? ui.host.parent()
+                    .nativeStatusCaption() : ui.session.state().data.getString("status")));
 
         list.child(
             group(
