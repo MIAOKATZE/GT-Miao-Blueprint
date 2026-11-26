@@ -22,6 +22,17 @@ public final class HologramCapabilities {
     private HologramCapabilities() {}
 
     public static Result describe(Object context, ItemStack trigger, HologramChannelTrace.Report report) {
+        return describe(context, trigger, report, true);
+    }
+
+    /** Native targets use their own capture context and StructureLib metadata, not source-specific adapters. */
+    static Result describeNative(Object context, ItemStack trigger, HologramChannelTrace.Report report,
+        IStructureDefinition<?> definition) {
+        return describe(context, trigger, report, false).withNativeDefinition(definition);
+    }
+
+    private static Result describe(Object context, ItemStack trigger, HologramChannelTrace.Report report,
+        boolean sourceChannels) {
         Result result = new Result(trigger);
         Row main = result.add("main", "主信号（未设子信道时回退）", "master");
         for (int value = 1; value <= 64; value++) main.option(value, Integer.toString(value), null);
@@ -38,7 +49,8 @@ public final class HologramCapabilities {
                     for (int i = 0; i < materials.size(); i++) row.option(i + 1, null, materials.get(i));
             }
         }
-        StructureSources.PolicyBinding source = context == null ? null : StructureSources.policy(context.getClass());
+        StructureSources.PolicyBinding source = !sourceChannels || context == null ? null
+            : StructureSources.policy(context.getClass());
         if (source != null && trigger != null) {
             NBTTagList channels = source.channels(trigger);
             for (int i = 0; i < channels.tagCount(); i++) {
@@ -114,7 +126,7 @@ public final class HologramCapabilities {
         /** The same explicit channel metadata used by the native multiblock browser. */
         Result withNativeDefinition(IStructureDefinition<?> definition) {
             if (definition == null) return this;
-            for (IChannelDefinition channel : definition.getExplicitChannelDefinitions()) {
+            for (IChannelDefinition channel : definition.getChannelDefinitions()) {
                 String id = channel.getChannel();
                 Row observed = rows.get(id);
                 if ("main".equals(id) || observed != null && !observed.options.isEmpty()) continue;
