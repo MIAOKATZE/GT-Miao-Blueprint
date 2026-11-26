@@ -1500,3 +1500,7 @@ gtmb.hologram.projector.native.preset.allow_lower_tiers=允許較低等級倉室
 gtmb.hologram.projector.native.preset.complete_target_note=更新完整結構中所有可替換外殼目標；未配置的可選位置使用機殼，宣告必需倉室保留。
 gtmb.hologram.projector.native.preset.selected_tier_only=僅使用所選等級
 gtmb.hologram.projector.native.preset.tier_policy_hint=若必需型號沒有所選等級，可允許較低等級，或使用自訂精確混搭。實際施工始終按投影中的型號核對材料。
+
+# Native projector interface
+gtmb.hologram.projector.native.lesson.projection_preset_target=預設更新完整目標中所有可替換外殼位置，保留宣告必需倉室；手選和精確混搭作為明確目標。
+gtmb.hologram.projector.native.lesson.structure_preset_target=基礎與自訂預設更新完整目標中所有可替換外殼位置，保留宣告必需倉室；手選與混搭明確指定具體設備及數量。

@@ -958,7 +958,7 @@ gtmb.hologram.projector.native_common.guide.library=单击库行更新中央草�
 gtmb.hologram.projector.native_common.guide.library_help=点库行更新中央草稿，未保存时沿用原提示；世界 ghost 先定位并锁定。
 gtmb.hologram.projector.native_common.guide.move=拖轴改单轴，拖平面同时改两轴。
 gtmb.hologram.projector.native_common.guide.move_help=轴线改单轴，平面同时改两轴；Ctrl 起拖复制。
-gtmb.hologram.projector.native_common.guide.preset=按声明配额或精确搭配生成目标，保留手选和现场设备。
+gtmb.hologram.projector.native_common.guide.preset=按预设生成目标，再核对完整规划。
 gtmb.hologram.projector.native_common.guide.preset_help=整机仓室配额用于实体结构，作者蓝图不支持 virtual 套用。
 gtmb.hologram.projector.native_common.guide.processing=选择自用或分享倾向，再逐步核对处理策略。
 gtmb.hologram.projector.native_common.guide.reference_title=现场教程与操作说明
@@ -1818,3 +1818,7 @@ gtmb.hologram.projector.native.preset.allow_lower_tiers=允许较低等级仓室
 gtmb.hologram.projector.native.preset.complete_target_note=更新完整结构中所有可替换外壳目标；未配置的可选位置使用机壳，声明必需仓室保留。
 gtmb.hologram.projector.native.preset.selected_tier_only=仅使用所选等级
 gtmb.hologram.projector.native.preset.tier_policy_hint=若必需型号没有所选等级，可允许较低等级，或使用自定义精确混搭。实际施工始终按投影中的型号核对材料。
+
+# Native projector interface
+gtmb.hologram.projector.native.lesson.projection_preset_target=预设更新完整目标中所有可替换外壳位置，保留声明必需仓室；手选和精确混搭作为显式目标。
+gtmb.hologram.projector.native.lesson.structure_preset_target=基础与自定义预设更新完整目标中所有可替换外壳位置，保留声明必需仓室；手选与混搭明确指定具体设备及数量。
