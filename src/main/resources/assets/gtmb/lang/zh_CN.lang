@@ -906,3 +906,6 @@ gtmb.hologram.projector.library.placement_title=蓝图放置
 gtmb.hologram.projector.library.placement_status_unavailable=施工状态不可用
 gtmb.hologram.projector.library.placement_return=返回世界
 gtmb.hologram.projector.library.placement_background=返回世界，后台继续
+gtmb.hologram.projector.stock.hud_preparing=正在确认施工
+gtmb.hologram.projector.stock.hud_stopping=正在停止施工
+gtmb.hologram.worldGuideStopPlacement=Shift + 右键：停止施工

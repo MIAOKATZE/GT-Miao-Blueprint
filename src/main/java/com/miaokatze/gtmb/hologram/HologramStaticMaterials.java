@@ -29,8 +29,7 @@ public final class HologramStaticMaterials {
             || !registry.equals(Item.itemRegistry.getNameForObject(item))
             || Block.getBlockFromItem(item) != block
             || Item.getItemFromBlock(block) != item
-            || metadata < 0
-            || metadata > 15) throw new IOException("Unproven ordinary inventory identity");
+            || metadata < 0) throw new IOException("Unproven ordinary inventory identity");
         return new ItemStack(item, 1, metadata);
     }
 

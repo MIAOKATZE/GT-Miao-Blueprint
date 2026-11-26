@@ -20,7 +20,6 @@ import net.minecraft.nbt.NBTTagList;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraft.world.World;
 
-import com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor;
 import com.gtnewhorizon.structurelib.alignment.constructable.IConstructable;
 import com.gtnewhorizon.structurelib.structure.IStructureElement;
 
@@ -288,16 +287,10 @@ final class HologramSession {
                 .getString(HologramSessionKeys.TOOL_ID);
         openTick = p.worldObj.getTotalWorldTime();
         context = HologramStructureDiscovery.context(target);
-        if (heldStack != null) {
-            if (heldStack.hasTagCompound()) main = Math.max(
-                1,
-                heldStack.getTagCompound()
-                    .getInteger("gtitHologramMain"));
-            mainExplicit = heldStack.hasTagCompound() && heldStack.getTagCompound()
-                .getBoolean("gtitHologramMainExplicit") || main != 1;
-            ChannelDataAccessor.iterateChannelData(heldStack)
-                .forEach(entry -> { if (entry.getValue() > 0) channels.setInteger(entry.getKey(), entry.getValue()); });
-        }
+        NBTTagCompound seed = HologramLocalControllerCapture.toolSettings(heldStack);
+        main = seed.getInteger("main");
+        mainExplicit = seed.getBoolean("mainExplicit");
+        channels = seed.getCompoundTag("channels");
         if (context instanceof MTEEnhancedMultiBlockBase) {
             machine = (MTEEnhancedMultiBlockBase<?>) context;
             facing = machine.getExtendedFacing()

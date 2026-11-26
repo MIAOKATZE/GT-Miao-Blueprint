@@ -1018,6 +1018,12 @@ final class HologramActionDispatcher {
             return;
         }
         ItemStack tool = HologramSessionPolicy.currentTool(s);
+        // This Settings action explicitly changes the tool's default; a hatch plan has its own copy.
+        if (tool != null && action.hasKey("hatchDowngrade")) {
+            if (!tool.hasTagCompound()) tool.setTagCompound(new NBTTagCompound());
+            tool.getTagCompound()
+                .setBoolean("gtitHologramDowngrade", s.hatchDowngrade);
+        }
         if (tool != null && tool.hasTagCompound()
             && tool.getTagCompound()
                 .hasKey(HologramSessionKeys.DRAFT, 10)) {

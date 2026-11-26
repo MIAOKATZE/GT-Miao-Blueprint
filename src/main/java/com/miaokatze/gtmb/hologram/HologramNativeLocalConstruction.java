@@ -302,11 +302,13 @@ public final class HologramNativeLocalConstruction {
             || toolId.isEmpty()) throw new IOException("原生施工上下文已变化");
         World world = player.worldObj;
         ItemStack held = player.getHeldItem();
-        if (!ItemNekoHologramProjector.isProjector(held) || !toolId.equals(toolId(held))
-            || !HologramWorldFlow.worldPosition(anchor[0], anchor[1], anchor[2], world.getHeight())
-            || !world.blockExists(anchor[0], anchor[1], anchor[2])
-            || !HologramSessionPolicy.previewReach(player, anchor[0], anchor[1], anchor[2]))
-            throw new IOException("手持投影仪或施工位置已变化");
+        if (!ItemNekoHologramProjector.isProjector(held) || !toolId.equals(toolId(held)))
+            throw new IOException("请手持确认施工时的投影仪");
+        if (!HologramWorldFlow.worldPosition(anchor[0], anchor[1], anchor[2], world.getHeight()))
+            throw new IOException("施工锚点超出世界边界");
+        if (!world.blockExists(anchor[0], anchor[1], anchor[2])) throw new IOException("施工锚点所在区块未加载");
+        if (!HologramSessionPolicy.previewReach(player, anchor[0], anchor[1], anchor[2]))
+            throw new IOException("离施工锚点太远");
         HologramPreviewPose pose = new HologramPreviewPose();
         for (int axis : recipe) {
             if (axis != 0 && axis != 1) throw new IOException("无效施工方向");

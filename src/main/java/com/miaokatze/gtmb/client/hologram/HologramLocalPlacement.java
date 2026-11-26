@@ -19,6 +19,7 @@ final class HologramLocalPlacement {
     private Object world, connection, player;
     private boolean locked, submitting;
     private long lockGeneration;
+    private long worldProjectionUntil = Long.MAX_VALUE;
     private int[] anchor;
     private HologramPreviewPose pose = new HologramPreviewPose();
     private final com.miaokatze.gtmb.hologram.HologramWorldFlow.KeyRepeat[] nudgeKeys = {
@@ -69,6 +70,15 @@ final class HologramLocalPlacement {
 
     HologramState display() {
         return display;
+    }
+
+    HologramState worldDisplay(long now) {
+        return submitting || now < worldProjectionUntil ? display : null;
+    }
+
+    void reviewClosed(Submission frozen) {
+        if (!submitting && frozen.current(this, Minecraft.getMinecraft()) && worldProjectionUntil == Long.MAX_VALUE)
+            worldProjectionUntil = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
     }
 
     boolean locked() {
@@ -171,6 +181,7 @@ final class HologramLocalPlacement {
 
     void use(boolean shift) {
         if (display == null || submitting) return;
+        worldProjectionUntil = Long.MAX_VALUE;
         if (shift && locked) {
             locked = false;
             anchor = null;
@@ -199,16 +210,12 @@ final class HologramLocalPlacement {
     boolean submitFrozen(Submission submission, boolean direct) {
         if (submitting || !submission.current()) return false;
         submitting = HologramLibraryClient.INSTANCE.prepareLocalPlacement(submission, direct);
-        if (submitting) {
-            var client = Minecraft.getMinecraft();
-            if (client != null && client.isIntegratedServerRunning()) HologramClientNativePlacement.showCurrent();
-            else HologramClientRemoteNativePlacement.show();
-        }
         return submitting;
     }
 
     void retry() {
         submitting = false;
+        worldProjectionUntil = 0;
     }
 
     static NBTTagCompound reviewOptions() {
@@ -268,6 +275,7 @@ final class HologramLocalPlacement {
     void clear() {
         if (display != null) HologramRenderer.nativeSnapshotChanged();
         display = null;
+        worldProjectionUntil = Long.MAX_VALUE;
         source = null;
         if (nativeLease != null) {
             nativeLease.close();

@@ -899,14 +899,10 @@ public final class HologramUiModuleRegression {
             var store = new HologramConfigurationPresets(file.toFile());
             setUiField(ui.config, "selectedHatchPreset", "Selected");
             storeField.set(null, null);
-            SimpleAssert.that(
-                !ui.config.nativeSelectedPreset() && !ui.config.nativeLastPreset(true)
-                    && !ui.config.nativeLastPreset(false),
-                "uninitialized local storage does not enable the options");
+            SimpleAssert
+                .that(!ui.config.nativeSelectedPreset(), "uninitialized local storage does not enable the options");
             storeField.set(null, store);
-            SimpleAssert.that(
-                !store.containsName("Selected") && !store.hasLast(true) && !store.hasLast(false),
-                "empty storage has no selected or previous profile");
+            SimpleAssert.that(!store.containsName("Selected"), "empty storage has no named profile");
 
             var selected = new PresetCopySpy();
             var savedHatch = new PresetCopySpy();
@@ -953,9 +949,8 @@ public final class HologramUiModuleRegression {
             data.setInteger("lastSources", 1);
             setUiField(store, "data", data);
             SimpleAssert.that(
-                ui.config.nativeSelectedPreset() && ui.config.nativeLastPreset(true)
-                    && !ui.config.nativeLastPreset(false),
-                "client local selection, separate modes and typed last tags");
+                ui.config.nativeSelectedPreset(),
+                "client selection uses named entries only, even with legacy shortcut tags");
             for (String name : new String[] { "Selected", "First duplicate", "Wrong profile", "1", "",
                 "Beyond visible limit" })
                 SimpleAssert.that(store.containsName(name), "exact legacy selection presence for raw name: " + name);
@@ -996,60 +991,42 @@ public final class HologramUiModuleRegression {
             SimpleAssert.eq("1", numericName.getString("name"), "pinned NBT exposes a numeric name as its raw string");
             SimpleAssert.eq(numericProfile, store.get("1"), "numeric name keeps the same exact detached legacy match");
             SimpleAssert.eq(new NBTTagCompound(), store.get(""), "a separate truly empty name still matches");
-            SimpleAssert.eq(null, store.last(false), "a wrong last type yields no detached payload either");
-
-            data.setTag("lastSources", new NBTTagCompound());
-            SimpleAssert.that(
-                ui.config.nativeLastPreset(false) && store.last(false) != null,
-                "a typed empty last source is available, not a missing value");
-            data.setTag("lastSources", savedSources);
             java.util.function.BiConsumer<String, NBTTagCompound> tutorial = (op, nbt) -> {
                 throw new AssertionError("a display predicate must not dispatch an action");
             };
             setUiField(ui.session, "tutorialSink", tutorial);
-            SimpleAssert.that(
-                !ui.config.nativeSelectedPreset() && !ui.config.nativeLastPreset(true)
-                    && !ui.config.nativeLastPreset(false),
-                "tutorial never consults populated local preferences");
+            SimpleAssert.that(!ui.config.nativeSelectedPreset(), "tutorial never consults populated local preferences");
             setUiField(ui.session, "tutorialSink", null);
-            SimpleAssert.that(
-                ui.config.nativeSelectedPreset() && ui.config.nativeLastPreset(true)
-                    && ui.config.nativeLastPreset(false),
-                "real adapters use current view and mode after tutorial");
+            SimpleAssert
+                .that(ui.config.nativeSelectedPreset(), "real adapters use current view and mode after tutorial");
             SimpleAssert.that(!Files.exists(file), "presentation has not written user preferences");
             SimpleAssert.eq(0, selectedRow.profileReads, "selection presence never reads the stored profile payload");
             for (var original : new PresetCopySpy[] { selected, savedHatch, savedSources })
                 SimpleAssert.eq(0, original.copies, "presentation and lookup gates never copy the profile NBT");
 
             var selectedPayload = store.get("Selected");
-            var hatchPayload = store.last(true);
-            var sourcesPayload = store.last(false);
-            var originals = new PresetCopySpy[] { selected, savedHatch, savedSources };
-            var detached = new NBTTagCompound[] { selectedPayload, hatchPayload, sourcesPayload };
-            for (int i = 0; i < originals.length; i++) {
-                SimpleAssert.eq(1, originals[i].copies, "a true payload reader still gets a single defensive copy");
-                detached[i].getCompoundTag("nested")
-                    .setString("value", "only local to caller");
-                SimpleAssert.eq(
-                    "kept",
-                    originals[i].getCompoundTag("nested")
-                        .getString("value"),
-                    "payload edit cannot affect live preference data");
-            }
+            SimpleAssert.eq(1, selected.copies, "a true payload reader still gets one defensive copy");
+            selectedPayload.getCompoundTag("nested")
+                .setString("value", "only local to caller");
+            SimpleAssert.eq(
+                "kept",
+                selected.getCompoundTag("nested")
+                    .getString("value"),
+                "payload edit is detached");
             store.delete("Selected");
             SimpleAssert.that(
                 !ui.config.nativeSelectedPreset() && !store.containsName("Selected"),
                 "an unchanged selected name immediately loses presence after deletion");
             var reopened = new HologramConfigurationPresets(file.toFile());
-            SimpleAssert.that(
-                !reopened.containsName("Selected") && reopened.hasLast(true) && reopened.hasLast(false),
-                "deletion persistence does not erase either previously accepted configuration");
+            SimpleAssert.that(!reopened.containsName("Selected"), "explicit named deletion persists");
+            try (var input = Files.newInputStream(file)) {
+                var stored = net.minecraft.nbt.CompressedStreamTools.readCompressed(input);
+                SimpleAssert.that(
+                    stored.hasKey("lastHatch", 10) && stored.hasKey("lastSources", 3),
+                    "existing obsolete shortcut data is left untouched");
+            }
             data.setString("hatches", "wrong catalog tag");
-            data.removeTag("lastHatch");
-            SimpleAssert.that(
-                !store.containsName("First duplicate") && !ui.config.nativeLastPreset(true)
-                    && ui.config.nativeLastPreset(false),
-                "wrong catalog and removed typed last do not retain stale presence");
+            SimpleAssert.that(!store.containsName("First duplicate"), "wrong catalog does not retain stale presence");
             System.out.println(
                 "GTMB local preset presence PASS: no payload copies, exact names, typed modes and detached data");
         } finally {

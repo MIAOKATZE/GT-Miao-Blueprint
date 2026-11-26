@@ -364,8 +364,12 @@ public final class HologramSmokeTest {
             require(
                 player.getHeldItem()
                     .getTagCompound()
-                    .getInteger("gtitHologramMain") == capture.state.getInteger("main"),
-                "persist_updates_current_held_NBT");
+                    .getCompoundTag(HologramSessionKeys.DRAFT)
+                    .getInteger("main") == capture.state.getInteger("main")
+                    && !player.getHeldItem()
+                        .getTagCompound()
+                        .hasKey("gtitHologramMain"),
+                "persist_keeps_current_plan_in_controller_draft_not_global_tool_settings");
             NBTTagCompound forgedConfiguration = action(capture.state, "configure");
             NBTTagCompound forgedChannels = (NBTTagCompound) capture.state.getCompoundTag("channels")
                 .copy();
@@ -379,9 +383,9 @@ public final class HologramSmokeTest {
                     .hasKey("unregistered.attack.channel"),
                 "real_service_forged_channel_rejects_configuration_atomically");
             require(
-                player.getHeldItem()
+                !player.getHeldItem()
                     .getTagCompound()
-                    .getInteger("gtitHologramMain") == 1,
+                    .hasKey("gtitHologramMain"),
                 "rejected_configuration_does_not_mutate_current_tool_NBT");
             require(
                 base.getFrontFacing() == net.minecraftforge.common.util.ForgeDirection.NORTH,

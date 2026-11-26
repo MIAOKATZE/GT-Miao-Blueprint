@@ -12,7 +12,7 @@ import net.minecraft.nbt.NBTTagList;
 
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
-/** Real NBT persistence and exact successful-command receipts; no UI or server-state prediction. */
+/** Real NBT persistence for explicitly named presets, without automatic recording. */
 public final class HologramConfigurationPresetsRegression {
 
     private HologramConfigurationPresetsRegression() {}
@@ -90,60 +90,17 @@ public final class HologramConfigurationPresetsRegression {
                 .getInteger("count"),
             "overwrite persists the complete replacement");
 
-        HologramConfigurationPresets.Pending pending = new HologramConfigurationPresets.Pending();
-        NBTTagCompound snapshot = new NBTTagCompound();
-        pending.begin("one", 12, true, profile(4, 5));
-        snapshot.setLong("uiSequence", 11);
-        snapshot.setLong("configurationAcceptedSequence", 12);
-        pending.acknowledge("one", snapshot, reopened);
-        SimpleAssert.eq(null, reopened.last(true), "a stale snapshot cannot acknowledge an apply");
-        snapshot.setLong("uiSequence", 12);
-        pending.acknowledge("another", snapshot, reopened);
-        SimpleAssert.eq(null, reopened.last(true), "a different world session cannot acknowledge an apply");
-        snapshot.setLong("configurationAcceptedSequence", 11);
-        pending.acknowledge("one", snapshot, reopened);
-        snapshot.setLong("configurationAcceptedSequence", 12);
-        pending.acknowledge("one", snapshot, reopened);
-        SimpleAssert
-            .eq(null, reopened.last(true), "a failed receipt retires the request; late snapshots cannot resurrect it");
-        pending.begin("one", 13, true, profile(4, 5));
-        snapshot.setLong("uiSequence", 13);
-        snapshot.setLong("configurationAcceptedSequence", 13);
-        pending.acknowledge("one", snapshot, reopened);
-        SimpleAssert
-            .eq(profile(4, 5), reopened.last(true), "only an exact accepted command becomes the last hatch preset");
-        NBTTagCompound sources = new NBTTagCompound();
-        sources.setBoolean("materialMain", false);
-        sources.setBoolean("materialContainers", true);
-        sources.setBoolean("materialMe", true);
-        sources.setInteger("materialPriority", 2);
-        pending.begin("one", 14, false, sources);
-        snapshot.setLong("uiSequence", 14);
-        snapshot.setLong("configurationAcceptedSequence", 14);
-        pending.acknowledge("one", snapshot, reopened);
-        pending.begin("one", 15, false, new NBTTagCompound());
-        pending.reject(15);
-        snapshot.setLong("uiSequence", 15);
-        snapshot.setLong("configurationAcceptedSequence", 15);
-        pending.acknowledge("one", snapshot, reopened);
-        HologramConfigurationPresets again = new HologramConfigurationPresets(file.toFile());
-        SimpleAssert.eq(
-            sources,
-            again.last(false),
-            "source order and enabled flags persist independently; denied drafts never replace them");
-        SimpleAssert.eq(
-            profile(4, 5),
-            again.last(true),
-            "remembering material sources leaves the last hatch combination intact");
-        again.delete("Mixed voltage");
+        try (var input = Files.newInputStream(file)) {
+            NBTTagCompound stored = net.minecraft.nbt.CompressedStreamTools.readCompressed(input);
+            SimpleAssert.that(
+                !stored.hasKey("lastHatch") && !stored.hasKey("lastSources"),
+                "the named preset store does not automatically create a last-used profile");
+        }
+        reopened.delete("Mixed voltage");
         SimpleAssert.that(
             new HologramConfigurationPresets(file.toFile()).names()
                 .isEmpty(),
             "deletion persists");
-        SimpleAssert.eq(
-            profile(4, 5),
-            again.last(true),
-            "deleting a named shortcut preserves the last successfully applied copy");
     }
 
     private static NBTTagCompound profile(int inputCount, int energyCount) {

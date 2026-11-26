@@ -65,7 +65,12 @@ public final class HologramClientStockNative {
 
     @Desugar
     record Owner(Object view, BooleanSupplier exactBeforeStart, BooleanSupplier visible, Consumer<String> notice,
-        Consumer<Reply> terminal) {
+        Consumer<Reply> terminal, BooleanSupplier detachedBeforeStart) {
+
+        Owner(Object view, BooleanSupplier exactBeforeStart, BooleanSupplier visible, Consumer<String> notice,
+            Consumer<Reply> terminal) {
+            this(view, exactBeforeStart, visible, notice, terminal, () -> false);
+        }
 
         Owner(Object view, BooleanSupplier exactBeforeStart, BooleanSupplier visible, Consumer<String> notice,
             Runnable terminal) {
@@ -200,7 +205,11 @@ public final class HologramClientStockNative {
             };
         }
 
-        boolean beginSent, afterProbe, stopSent, uncertain;
+        boolean beginSent, afterProbe, stopSent, uncertain, detached;
+
+        boolean canStart() {
+            return (detached ? owner.detachedBeforeStart : owner.exactBeforeStart).getAsBoolean();
+        }
 
         Attempt(Confirmation original, Context context, Owner owner, long deadline) {
             this.original = original;
@@ -216,6 +225,9 @@ public final class HologramClientStockNative {
         private Attempt active;
         private Context known;
         private long generation;
+        private String terminalHud = "";
+        private Context terminalContext;
+        private long terminalAt;
 
         Flow(Wire wire) {
             this.wire = wire;
@@ -233,6 +245,7 @@ public final class HologramClientStockNative {
             }
             var attempt = new Attempt(original, context, owner, now + FIRST_PROOF_NANOS);
             active = attempt;
+            terminalHud = "";
             HologramPlacementTiming.clientRequest(
                 "structure",
                 original.key()
@@ -246,7 +259,7 @@ public final class HologramClientStockNative {
                     "probe");
                 if (wire.probe(original)) {
                     HologramStockActionTrace.event("client.sent", original.key(), "PROBE");
-                    owner.notice.accept(projectorOr("stock.probe_sent", "已发送施工查询，等待服务器确认。"));
+
                     return true;
                 }
             } catch (HologramStockNativeWire.InvalidConfirmation invalid) {
@@ -268,8 +281,8 @@ public final class HologramClientStockNative {
         }
 
         private boolean begin(Attempt attempt, long usableGeneration, boolean afterProbe, long now) {
-            if (active != attempt || attempt.beginSent || !attempt.owner.exactBeforeStart.getAsBoolean()) {
-                if (active == attempt) active = null;
+            if (active != attempt || attempt.beginSent || !attempt.canStart()) {
+                if (active == attempt) discard(attempt);
                 if (attempt.owner.visible.getAsBoolean())
                     attempt.owner.notice.accept(projectorOr("stock.start_stale", "当前确认已变化，未开始施工。"));
                 return false;
@@ -286,8 +299,9 @@ public final class HologramClientStockNative {
                         .request(),
                     "begin");
                 if (!wire.begin(issued, afterProbe)) {
-                    active = null; // Production writer returns false only before any wire send.
-                    attempt.owner.notice.accept(projectorOr("stock.server_connection", "未提交施工：服务器连接不可用。"));
+                    discard(attempt); // Production writer returns false only before any wire send.
+                    if (attempt.owner.visible.getAsBoolean())
+                        attempt.owner.notice.accept(projectorOr("stock.server_connection", "未提交施工：服务器连接不可用。"));
                     return false;
                 }
             } catch (RuntimeException | LinkageError uncertain) {
@@ -295,7 +309,8 @@ public final class HologramClientStockNative {
                 return true;
             }
             HologramStockActionTrace.event("client.sent", issued.key(), afterProbe ? "BEGIN_AFTER_PROBE" : "BEGIN");
-            attempt.owner.notice.accept(projectorOr("stock.submitted", "已提交%1$s请求，等待服务器确认。", attempt.operationLabel()));
+            if (attempt.owner.visible.getAsBoolean()) attempt.owner.notice
+                .accept(projectorOr("stock.submitted", "已提交%1$s请求，等待服务器确认。", attempt.operationLabel()));
             return true;
         }
 
@@ -320,22 +335,24 @@ public final class HologramClientStockNative {
                 reply.phase()
                     .name());
             if (!attempt.beginSent) {
-                if (now >= attempt.deadline || !attempt.owner.visible.getAsBoolean()) {
-                    active = null;
+                if (now >= attempt.deadline || !attempt.detached && !attempt.owner.visible.getAsBoolean()) {
+                    discard(attempt);
                     if (attempt.owner.visible.getAsBoolean())
                         attempt.owner.notice.accept(projectorOr("stock.probe_timeout", "服务器未及时确认支持此短请求；未发送施工指令。"));
                     return;
                 }
                 if (reply.phase() == Phase.REFUSED) {
-                    active = null;
-                    attempt.owner.notice.accept(serverReason(reply.reason()));
+                    discard(attempt);
+                    rememberTerminal(attempt.context, serverReason(reply.reason()), now);
+                    if (attempt.owner.visible.getAsBoolean()) attempt.owner.notice.accept(serverReason(reply.reason()));
                     return;
                 }
                 if (reply.phase() != Phase.CAPABLE || reply.key()
                     .generation() <= 0) return;
-                if (!attempt.owner.exactBeforeStart.getAsBoolean()) {
-                    active = null;
-                    attempt.owner.notice.accept(projectorOr("stock.start_stale", "当前确认已变化，未开始施工。"));
+                if (!attempt.canStart()) {
+                    discard(attempt);
+                    if (attempt.owner.visible.getAsBoolean())
+                        attempt.owner.notice.accept(projectorOr("stock.start_stale", "当前确认已变化，未开始施工。"));
                     return;
                 }
                 // CAPABLE is permission to submit this very confirmation, never cached warm readiness.
@@ -364,25 +381,14 @@ public final class HologramClientStockNative {
             attempt.placed = reply.placed();
             if (reply.phase() == Phase.ACCEPTED || reply.phase() == Phase.ACTIVE) {
                 if (previous < attempt.placed && !attempt.stopSent) attempt.deadline = now + RESULT_NANOS;
-                if (attempt.owner.visible.getAsBoolean() && !attempt.stopSent && !attempt.uncertain)
-                    attempt.owner.notice.accept(
-                        reply.phase() == Phase.ACCEPTED ? (attempt.placing()
-                            ? projectorOr("stock.accepted_placement", "服务器已受理%1$s；尚未确认方块提交。", attempt.operationLabel())
-                            : projectorOr("stock.accepted_changes", "服务器已受理%1$s；尚未确认现场变更。", attempt.operationLabel()))
-                            : projectorOr(
-                                "stock.confirmed_cells",
-                                "%1$s：已确认 %2$s 格。",
-                                attempt.operationLabel(),
-                                attempt.placed));
                 return;
             }
-            active = null;
+            discard(attempt);
             if (reply.phase() == Phase.COMPLETE) HologramPlacementTiming.clientPhase(
                 "structure",
                 reply.key()
                     .request(),
                 "complete_seen");
-            if (!attempt.owner.visible.getAsBoolean()) return;
             String reason = serverReason(reply.reason());
             String status = switch (reply.phase()) {
                 case COMPLETE -> (attempt.placing()
@@ -409,7 +415,8 @@ public final class HologramClientStockNative {
                     attempt.placed) + (reason.isEmpty() ? "" : " " + reason);
                 default -> reason;
             };
-            attempt.owner.notice.accept(status);
+            rememberTerminal(attempt.context, status, now);
+            if (attempt.owner.visible.getAsBoolean()) attempt.owner.notice.accept(status);
             if (attempt.placed > 0 || reply.phase() == Phase.COMPLETE
                 || reply.phase() == Phase.STOPPED && attempt.placing() && !reason.isEmpty())
                 attempt.owner.terminal.accept(reply);
@@ -418,9 +425,9 @@ public final class HologramClientStockNative {
         void tick(Object view, Context context, long now) {
             retireChangedContext(context);
             Attempt attempt = active;
-            if (attempt == null || attempt.owner.view != view) return;
-            if (!attempt.beginSent && (!attempt.owner.exactBeforeStart.getAsBoolean() || now >= attempt.deadline)) {
-                active = null;
+            if (attempt == null || view != null && attempt.owner.view != view) return;
+            if (!attempt.beginSent && (!attempt.canStart() || now >= attempt.deadline)) {
+                discard(attempt);
                 if (attempt.owner.visible.getAsBoolean()) attempt.owner.notice.accept(
                     now >= attempt.deadline ? projectorOr("stock.probe_no_confirmation", "服务器未确认支持此短请求；未发送施工指令。")
                         : projectorOr("stock.request_stale", "当前确认已变化，未发送施工指令。"));
@@ -433,8 +440,47 @@ public final class HologramClientStockNative {
             retireChangedContext(context);
             Attempt attempt = active;
             if (attempt == null || attempt.owner.view != view) return;
-            if (attempt.beginSent) stopOnce(attempt);
-            active = null;
+            if (attempt.beginSent || attempt.owner.detachedBeforeStart.getAsBoolean()) attempt.detached = true;
+            else discard(attempt);
+        }
+
+        UUID requestFor(Object view, Context context) {
+            retireChangedContext(context);
+            return active != null && active.owner.view == view ? active.original.key()
+                .request() : null;
+        }
+
+        boolean pendingHere(Context context) {
+            retireChangedContext(context);
+            return active != null;
+        }
+
+        boolean cancelHere(Context context, long now) {
+            if (!pendingHere(context)) return false;
+            if (active.beginSent) return stopOnce(active);
+            rememberTerminal(context, projectorOr("stock.reason_cancelled", "Cancelled before placement."), now);
+            discard(active);
+            return true;
+        }
+
+        String worldStatus(Context context, long now) {
+            if (pendingHere(context)) {
+                if (active.stopSent) return projectorOr("stock.hud_stopping", "Stopping placement");
+                if (!active.beginSent) return projectorOr("stock.hud_preparing", "Confirming placement");
+                return projectorOr(
+                    "stock.confirmed_cells",
+                    "%1$s: %2$s cells confirmed.",
+                    active.operationLabel(),
+                    Math.max(0, active.placed));
+            }
+            return terminalContext != null && terminalContext.same(context)
+                && now - terminalAt < TimeUnit.SECONDS.toNanos(3) ? terminalHud : "";
+        }
+
+        private void rememberTerminal(Context context, String status, long now) {
+            terminalContext = context;
+            terminalHud = status;
+            terminalAt = now;
         }
 
         boolean pending(Object view) {
@@ -472,12 +518,19 @@ public final class HologramClientStockNative {
             }
         }
 
+        private void discard(Attempt attempt) {
+            HologramLocalControllerGhost.finish(
+                attempt.original.key()
+                    .request());
+            if (active == attempt) active = null;
+        }
+
         private void retireChangedContext(Context current) {
             if (known != null && !known.same(current)) {
                 known = null;
                 generation = 0;
             }
-            if (active != null && !active.context.same(current)) active = null;
+            if (active != null && !active.context.same(current)) discard(active);
         }
     }
 

@@ -171,10 +171,14 @@ final class HologramDeclaredNativeConstruction {
         }
     }
 
+    @Desugar
+    private record PreparedWrite(Member member, Target target) {}
+
     /** One native element instance and effective signal; positions never repeat declaration resolution. */
     private static final class DeclarationBatch {
 
         final List<Member> positions;
+        List<PreparedWrite> writes;
         ItemStack fixedMaterial;
         private long airGeneration = Long.MIN_VALUE;
         private boolean nativeAir, dynamicAir;
@@ -240,8 +244,8 @@ final class HologramDeclaredNativeConstruction {
     private final IdentityHashMap<DefinitionPiece, IdentityHashMap<IStructureElement<?>, List<Member>>> groupsByPiece = new IdentityHashMap<>();
     private final List<Target> moves = new ArrayList<>();
     private int batchIndex, batchOffset, plannedWrites, declaredMembers;
-    private int prerequisiteBatch, prerequisiteOffset;
-    private boolean prerequisiteChecked, prerequisiteRequired, traceEnded;
+    private int prepareBatch, prepareOffset;
+    private boolean placementFunded, traceEnded;
     private Target currentBatchTarget;
     private final Map<HologramBlueprintResources.ExactKey, Need> funding = new LinkedHashMap<>();
     private final HologramDeclarationAdapters.Bindings declarations = new HologramDeclarationAdapters.Bindings();
@@ -263,7 +267,7 @@ final class HologramDeclaredNativeConstruction {
     private Iterator<Member> memberIterator;
     private Iterator<Need> needs;
     private String family, reason = "";
-    private int pieceIndex, targets, next, placed, examined, unselectedHatches;
+    private int pieceIndex, targets, next, placed, examined;
     private State state = State.ACTIVE;
     private HologramConstructionTaskGate.Permit unsettled;
 
@@ -470,13 +474,17 @@ final class HologramDeclaredNativeConstruction {
             return false;
         }
         var batch = batches.get(batchIndex);
-        int count = batch.positions.size();
+        int count = creative ? batch.positions.size() : batch.writes == null ? 0 : batch.writes.size();
         if (batchOffset == count) {
             batchIndex++;
             batchOffset = 0;
             return true;
         }
-        if (currentBatchTarget == null) {
+        if (!creative) {
+            PreparedWrite write = batch.writes.get(batchOffset);
+            requireMemberCurrent(write.member);
+            currentBatchTarget = write.target;
+        } else if (currentBatchTarget == null) {
             currentBatchTarget = prepare(batch.positions.get(batchOffset), batch);
             if (currentBatchTarget != null) plannedWrites++;
         } else requireMemberCurrent(batch.positions.get(batchOffset));
@@ -487,13 +495,44 @@ final class HologramDeclaredNativeConstruction {
     }
 
     private void finishPlacement() {
-        if (unselectedHatches > 0) {
-            stop("仍有 " + unselectedHatches + " 处必需仓室尚未指定，结构未完成。");
-        } else if (targets == 0) {
-            stop("所选范围没有可施工目标。");
+        if (targets == 0) {
+            stop("所选范围没有投影目标。");
         } else if (!current(null) || !gate.finish(lease, HologramConstructionTaskGate.End.COMPLETE)) {
-            stop("施工归属已变化，无法确认完成。");
+            stop("施工授权已变化，无法确认完成。");
         } else state = State.COMPLETE;
+    }
+
+    // Resolve each projected write once. The stock check visits material kinds, not geometry.
+    private void preparePlacementStock() throws IOException {
+        if (prepareBatch < batches.size()) {
+            var group = batches.get(prepareBatch);
+            if (prepareOffset == 0 && selection.scope() == 3 && !family.equals(family(group.positions.get(0)))) {
+                prepareBatch++;
+                return;
+            }
+            Member member = group.positions.get(prepareOffset++);
+            Target target = prepare(member, group);
+            if (target != null) {
+                if (group.writes == null) group.writes = new ArrayList<>();
+                group.writes.add(new PreparedWrite(member, target));
+                funding.computeIfAbsent(HologramValues.stackKey(target.item), ignored -> new Need(target.item)).count++;
+                plannedWrites++;
+            }
+            if (prepareOffset == group.positions.size()) {
+                prepareBatch++;
+                prepareOffset = 0;
+            }
+            return;
+        }
+        if (needs == null) needs = funding.values()
+            .iterator();
+        if (needs.hasNext()) {
+            Need required = needs.next();
+            if (stock.count(required.specimen, required.count) != required.count)
+                throw refused("材料不足：" + required.specimen.getDisplayName() + " × " + required.count + "。未开始施工。");
+            return;
+        }
+        placementFunded = true;
     }
 
     State drain(long deadline, PermitAdmission admission) {
@@ -524,9 +563,9 @@ final class HologramDeclaredNativeConstruction {
                     if (timing != null) now = System.nanoTime();
                 }
                 if (placementBuild()) {
-                    if (selection.scope() == 0 && !prerequisiteChecked) {
+                    if (!creative && !placementFunded) {
                         if (timing != null) timing.enter(Stage.WORLD_PREPARE, now);
-                        checkWholePrerequisite();
+                        preparePlacementStock();
                         continue;
                     }
                     if (placementEnd < 0) {
@@ -537,13 +576,15 @@ final class HologramDeclaredNativeConstruction {
                     if (batchIndex < batches.size() && batchIndex >= placementEnd) return state;
                     if (batchIndex < batches.size()) {
                         var batch = batches.get(batchIndex);
-                        int groupSize = batch.positions.size();
+                        int groupSize = creative ? batch.positions.size()
+                            : batch.writes == null ? 0 : batch.writes.size();
                         if (windowGroup != batchIndex) {
                             windowGroup = batchIndex;
                             windowPositionEnd = window.groupEndExclusive(batchIndex, batchOffset, groupSize);
                             if (windowPositionEnd < batchOffset || windowPositionEnd > groupSize)
                                 throw new IllegalArgumentException("Invalid native placement group window");
-                            if (selection.scope() == 3 && batchOffset < groupSize
+                            if (creative && selection.scope() == 3
+                                && batchOffset < groupSize
                                 && !family.equals(family(batch.positions.get(0)))) {
                                 if (batchOffset != 0 || currentBatchTarget != null) return stop("当前声明材料类型已变化，未继续放置。");
                                 batchIndex++;
@@ -561,8 +602,7 @@ final class HologramDeclaredNativeConstruction {
                     continue;
                 }
                 if (needs == null) {
-                    if (targets == 0)
-                        return stop(unselectedHatches == 0 ? "所选范围没有可施工的目标。" : "请先选定所需仓室，当前范围没有其他可施工的方块。");
+                    if (targets == 0) return stop("所选范围没有可施工目标。");
                     needs = funding.values()
                         .iterator();
                 }
@@ -578,7 +618,6 @@ final class HologramDeclaredNativeConstruction {
                 if (demolition != null && removals == null) removals = removalOrder.values()
                     .iterator();
                 if (demolition != null ? activeRemoval == null && !removals.hasNext() : next == moves.size()) {
-                    if (unselectedHatches > 0) return stop("仍有 " + unselectedHatches + " 处必需仓室尚未指定，结构未完成。");
                     if (!current(null) || !gate.finish(lease, HologramConstructionTaskGate.End.COMPLETE))
                         return stop("施工许可已变化；无法确认完成。");
                     state = State.COMPLETE;
@@ -716,46 +755,6 @@ final class HologramDeclaredNativeConstruction {
             && HologramDeclaredNativeSelection.coordinate(c);
     }
 
-    /** Check only provable mandatory markers, before any setter or stock debit; never read the ordinary shell here. */
-    private void checkWholePrerequisite() throws IOException {
-        if (prerequisiteBatch == batches.size()) {
-            prerequisiteChecked = true;
-            return;
-        }
-        var group = batches.get(prerequisiteBatch);
-        if (prerequisiteOffset == 0) prerequisiteRequired = mandatoryHatch(group.positions.get(0).element);
-        if (!prerequisiteRequired) {
-            prerequisiteBatch++;
-            return;
-        }
-        Member member = group.positions.get(prerequisiteOffset++);
-        requireMemberCurrent(member);
-        Offset p = member.position;
-        var cell = new HologramCapture.Cell(
-            member.element,
-            ax + p.x(),
-            ay + p.y(),
-            az + p.z(),
-            member.definition.piece.trigger);
-        World world = endpoint.world;
-        if (!HologramWorldFlow.worldPosition(cell.x, cell.y, cell.z, world.getHeight())
-            || !world.blockExists(cell.x, cell.y, cell.z)) throw refused("必需仓室位置未加载或无效：" + coordinates(p) + "。");
-        Hatch selected = edits.get(p); // Both explicit edits and native preset choices arrive here.
-        if (selected != null) {
-            if (session.noHatches) throw refused("不放仓室的设置与已选必需仓室冲突：" + coordinates(p) + "。");
-            requireHatchFacing(cell, selected, hatch(selected.id()));
-        } else {
-            var block = world.getBlock(cell.x, cell.y, cell.z);
-            var present = world.getTileEntity(cell.x, cell.y, cell.z);
-            if (!compatibleHatch(cell, block, present) && defaultMaterial(member, cell, group) == null)
-                throw refused("必需仓室尚未指定或现有仓室不匹配：" + coordinates(p) + "。未放置或扣料。");
-        }
-        if (prerequisiteOffset == group.positions.size()) {
-            prerequisiteBatch++;
-            prerequisiteOffset = 0;
-        }
-    }
-
     private static String coordinates(Offset p) {
         return "(" + p.x() + ", " + p.y() + ", " + p.z() + ")";
     }
@@ -833,11 +832,8 @@ final class HologramDeclaredNativeConstruction {
                 return null; // Compatible installed device is not touched or charged.
             }
             item = defaultMaterial(member, cell, batch);
-            if (item == null && existing == Blocks.air && present == null && mandatoryHatch(member.element)) {
-                // A declared hatch-only slot has no ordinary casing default. Do not guess its equipment.
-                unselectedHatches++;
-                return null;
-            }
+            // An unconfigured marker contributes no projected block.
+            if (item == null && mandatoryHatch(member.element)) return null;
         }
         if (item == null || !(item.getItem() instanceof ItemBlock) || item.hasTagCompound()) {
             String kind = item == null ? "no-default" : item.hasTagCompound() ? "tagged" : "not-block-item";
@@ -1168,7 +1164,6 @@ final class HologramDeclaredNativeConstruction {
         Object value = HologramDeclarationWrappers.captured(element, "val$defaultMeta");
         if (!(declared instanceof Block block) || !(value instanceof Integer meta)
             || meta < 0
-            || meta > 15
             || block == Blocks.air
             || block.hasTileEntity(meta)
             || block instanceof com.gtnewhorizon.structurelib.structure.ICustomBlockSetting) return null;

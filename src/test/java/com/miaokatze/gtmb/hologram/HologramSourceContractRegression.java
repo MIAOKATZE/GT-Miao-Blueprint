@@ -60,6 +60,7 @@ public final class HologramSourceContractRegression {
             registryLifecycle();
             continuationAdmission();
             persistedSettingsContinuation();
+            workspaceChannelsStayScoped();
             pieceSignalBoundary();
             observationLineage();
             unknownLeafDoesNotRun();
@@ -575,6 +576,45 @@ public final class HologramSourceContractRegression {
                 SimpleAssert.eq("SOURCE_DECLARATIONS_CHANGED", declarations.failure, "reader change requests rescan");
             }
         }
+        fixture.unchanged();
+    }
+
+    private static void workspaceChannelsStayScoped() throws Exception {
+        Fixture fixture = fixture();
+        HologramSession workspace = session(fixture, null);
+        ItemStack tool = workspace.player.getHeldItem();
+        NBTTagCompound tag = tool.getTagCompound();
+        tag.setInteger("gtitHologramMain", 3);
+        tag.setBoolean("gtitHologramMainExplicit", true);
+        ChannelDataAccessor.setChannelData(tool, "coil", 1);
+
+        workspace.virtual = true;
+        workspace.main = 2;
+        workspace.mainExplicit = false;
+        workspace.channels = new NBTTagCompound();
+        workspace.channels.setInteger("glass", 4);
+        workspace.hatchDowngrade = true;
+        workspace.materialSettings.priority = 1;
+        HologramDraftPersistence.persist(workspace);
+
+        NBTTagCompound reopened = HologramLocalControllerCapture.toolSettings(tool);
+        NBTTagCompound reopenedChannels = reopened.getCompoundTag("channels");
+        SimpleAssert.eq(1, reopened.getInteger("main"), "new controller ignores old workspace-only tool main");
+        SimpleAssert.that(!reopened.getBoolean("mainExplicit"), "a fresh controller does not silently adopt a preset");
+        SimpleAssert.eq(1, reopenedChannels.getInteger("coil"), "physical tool channel survives blueprint actions");
+        SimpleAssert.eq(3, tag.getInteger("gtitHologramMain"), "legacy item metadata is not erased");
+        SimpleAssert.that(!reopenedChannels.hasKey("glass"), "blueprint channels never leak into a new controller");
+        SimpleAssert
+            .that(!tag.getBoolean("gtitHologramDowngrade"), "hatch plan policy does not become a tool preference");
+        SimpleAssert.eq(1, HologramMaterials.read(tool).priority, "global materials preference still persists");
+        ItemStack trigger = HologramSessionPolicy.trigger(workspace);
+        SimpleAssert.eq(2, trigger.stackSize, "only the detached trigger uses the active main channel");
+        SimpleAssert
+            .eq(4, ChannelDataAccessor.getChannelData(trigger, "glass"), "detached trigger uses active named channel");
+        SimpleAssert.that(
+            trigger.getTagCompound()
+                .getBoolean("gtitHologramDowngrade"),
+            "detached trigger retains the workspace policy");
         fixture.unchanged();
     }
 

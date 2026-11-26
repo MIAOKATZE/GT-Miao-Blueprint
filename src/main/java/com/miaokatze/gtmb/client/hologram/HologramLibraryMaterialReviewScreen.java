@@ -35,6 +35,8 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
     private boolean voucherSelected;
     private final java.util.List<Integer> bindGroups;
     private int groupCursor;
+    private boolean submitted;
+    private LocalFrame submittedFrame;
     private final java.util.SortedMap<Integer, Integer> choices = new java.util.TreeMap<>();
 
     private int group() {
@@ -102,12 +104,17 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
     @Override
     public void updateScreen() {
         Minecraft client = Minecraft.getMinecraft();
+        if (submitted) {
+            if (dialog != null) dialog.tick(true);
+            return;
+        }
         if (!ticket.current(client)) returnToWorld(client);
         else if (dialog != null) dialog.tick(true);
     }
 
     @Override
     public LocalFrame localFrame() {
+        if (submitted) return submittedFrame;
         Minecraft client = Minecraft.getMinecraft();
         if (!ticket.current(client)) return null;
         availability = HologramLibraryClient.INSTANCE.plainPlacementAvailability(ticket.frozen, client);
@@ -221,10 +228,16 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
                             HologramClient.selectionNotice(localVoucherBlocker() + "，请重新确认");
                             return;
                         }
+                        LocalFrame confirmedFrame = localFrame();
                         if (dispatchRefused(
                             action,
                             () -> paymentChoice(ticket.consume(client), payWithVoucher, bindingChoices()),
-                            placement::submitFrozen)) {
+                            (frozen, direct) -> {
+                                if (!placement.submitFrozen(frozen, direct)) return false;
+                                submittedFrame = confirmedFrame;
+                                submitted = true;
+                                return true;
+                            })) {
                             returnToWorld(client);
                             HologramClient.selectionNotice("施工未开始，已保留投影");
                         }
@@ -255,11 +268,13 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
     @Override
     public void onGuiClosed() {
         ticket.retire();
+        placement.reviewClosed(ticket.frozen);
     }
 
     @Override
     protected void onMuiClose() {
         ticket.retire();
+        placement.reviewClosed(ticket.frozen);
     }
 
     /** The frozen source projection survives local stock refresh; only an owned sample reads slots. */

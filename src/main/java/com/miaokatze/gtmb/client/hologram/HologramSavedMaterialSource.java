@@ -161,7 +161,6 @@ final class HologramSavedMaterialSource {
             boolean controller, String tileNbt, String itemNbt) {
             if (!tileNbt.isEmpty() || !itemNbt.isEmpty()) count(PAYLOAD);
             else if (!knownSchema || metadata < 0
-                || metadata > 15
                 || damage < 0
                 || damage > Short.MAX_VALUE
                 || facing < -1
@@ -201,7 +200,7 @@ final class HologramSavedMaterialSource {
                     return UNSUPPORTED;
             String block = registry(row.get("block")), item = registry(row.get("item"));
             boolean controller = present(controllerField) && controllerField.getAsBoolean();
-            int metadata = integer(row.get("metadata"), 0, 0, 15);
+            int metadata = integer(row.get("metadata"), 0, 0, Integer.MAX_VALUE);
             int damage = integer(row.get("damage"), 0, 0, Short.MAX_VALUE);
             int facing = integer(row.get("facing"), -1, -1, 5);
             int count = integer(row.get("count"), 1, 1, 1);

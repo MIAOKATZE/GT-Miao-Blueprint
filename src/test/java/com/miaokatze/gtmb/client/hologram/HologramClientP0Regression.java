@@ -103,13 +103,15 @@ public final class HologramClientP0Regression {
         projector.getTagCompound()
             .setString("gtitHologramDraft", "server owned");
         NBTTagCompound initial = HologramLocalControllerCapture.toolSettings(projector);
-        SimpleAssert.eq(3, initial.getInteger("main"), "unstackable projector uses its saved master signal");
+        SimpleAssert.eq(1, initial.getInteger("main"), "fresh workbook ignores the old workspace master signal");
         SimpleAssert.eq(
             4,
             initial.getCompoundTag("channels")
                 .getInteger("coil"),
             "native child signal is shown");
         NBTTagCompound active = (NBTTagCompound) initial.copy();
+        active.setInteger("main", 3);
+        active.setBoolean("mainExplicit", true);
         active.getCompoundTag("channels")
             .removeTag("coil");
         ChannelDataAccessor.setChannelData(projector, "coil", 5);

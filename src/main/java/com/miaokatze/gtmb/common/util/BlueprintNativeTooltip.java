@@ -17,6 +17,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor;
+import com.miaokatze.gtmb.hologram.HologramLocalControllerCapture;
 import com.miaokatze.miaokatzecore.api.tooltip.component.NativeTooltipPage;
 import com.miaokatze.miaokatzecore.api.tooltip.component.TooltipTable;
 
@@ -242,11 +243,7 @@ public final class BlueprintNativeTooltip {
     }
 
     private static void channels(NativeTooltipPage page, ItemStack stack) {
-        int main = stack.hasTagCompound() ? Math.max(
-            1,
-            stack.getTagCompound()
-                .getInteger("gtitHologramMain"))
-            : 1;
+        int main = HologramLocalControllerCapture.defaultMainSignal(stack);
         page.line("§7" + StatCollector.translateToLocal("gtmb.hologram.main") + ": §f" + main + "§r");
         ChannelDataAccessor.iterateChannelData(stack)
             .limit(8)

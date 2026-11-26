@@ -44,6 +44,8 @@ import io.netty.channel.embedded.EmbeddedChannel;
 /** Dedicated offline owner → private job → native ItemCasings setter → real scoped debit. Not a loaded game. */
 public final class HologramStockEbfConstructionRegression {
 
+    private static Block registeredFixtureMachines;
+
     private HologramStockEbfConstructionRegression() {}
 
     public static void main(String[] args) {
@@ -421,7 +423,7 @@ public final class HologramStockEbfConstructionRegression {
                 z = controller.zCoord + position.z();
             if (x == exhaust[0] && y == exhaust[1] && z == exhaust[2]) {
                 var leaf = elements[element];
-                Object builder = new Object();
+                Object builder = HologramDeclarationWrappers.captured(leaf, "this$0");
                 HologramHatchPolicy.declare(
                     builder,
                     java.util.Collections.singletonList(gregtech.api.enums.HatchElement.Muffler),
@@ -507,17 +509,19 @@ public final class HologramStockEbfConstructionRegression {
             proveDeclared(server, endpoint, replies, missing);
             var unfunded = finishDeclared(server, endpoint, replies, missing.forGeneration(generation));
             SimpleAssert.that(
-                unfunded.phase() == HologramStockNativeWire.Phase.STOPPED && unfunded.placed() == 0
-                    && unfunded.reason()
-                        .contains("必需仓室尚未指定")
-                    && unfunded.reason()
-                        .contains("未放置或扣料")
-                    && world.writes()
-                        .isEmpty()
-                    && inventory[1].stackSize == 32
-                    && inventory[2].stackSize == 16
+                unfunded.phase() == HologramStockNativeWire.Phase.COMPLETE && unfunded.placed() == 32
                     && world.getBlock(exhaust[0], exhaust[1], exhaust[2]) == Blocks.air,
-                "survival whole EBF with stock and a provably missing exhaust writes and debits nothing: " + unfunded);
+                "survival places the funded projection without assuming a muffler: " + unfunded);
+            for (var offset : offsets) world.seed(
+                controller.xCoord + offset.x(),
+                controller.yCoord + offset.y(),
+                controller.zCoord + offset.z(),
+                Blocks.air,
+                0);
+            inventory[1] = new ItemStack(GregTechAPI.sBlockCasings1, 32, 11);
+            inventory[2] = new ItemStack(GregTechAPI.sBlockCasings5, 16, 1);
+            world.writes()
+                .clear();
             var shellOffset = new HologramDeclaredNativeSelection.Offset(
                 shell[0] - controller.xCoord,
                 shell[1] - controller.yCoord,
@@ -593,22 +597,19 @@ public final class HologramStockEbfConstructionRegression {
             proveDeclared(server, endpoint, replies, creative);
             var free = finishDeclared(server, endpoint, replies, creative.forGeneration(generation));
             SimpleAssert.that(
-                sourceContexts.isEmpty() && !HologramMaterials.read(projector).main
+                sourceContexts.size() == 1 && !HologramMaterials.read(projector).main
                     && !HologramMaterials.read(projector).me
                     && !HologramMaterials.read(projector).containers,
-                "the creative precondition reaches no setter and leaves all source settings disabled");
+                "creative writes through one context with every stock provider disabled");
             SimpleAssert.that(
-                free.phase() == HologramStockNativeWire.Phase.STOPPED && free.placed() == 0
-                    && free.reason()
-                        .contains("必需仓室尚未指定")
-                    && world.writes()
-                        .isEmpty()
+                free.phase() == HologramStockNativeWire.Phase.COMPLETE && free.placed() > 0
                     && inventory[1] == null
                     && inventory[2] == null
                     && !HologramConstructionJournal.pending(player)
                     && world.getTileEntity(controller.xCoord, controller.yCoord, controller.zCoord) == controller
-                    && world.getBlock(coil[0], coil[1], coil[2]) == Blocks.air,
-                "creative whole EBF cannot leave a shell while its required exhaust is unassigned: " + free);
+                    && world.getBlock(coil[0], coil[1], coil[2]) != Blocks.air
+                    && world.getBlock(exhaust[0], exhaust[1], exhaust[2]) == Blocks.air,
+                "creative places the projected shell with no stock and does not add an unprojected exhaust: " + free);
             SimpleAssert.that(
                 HologramWorkspace.find(endpoint.actor) == prior && prior.blueprintDirty
                     && prior.open
@@ -707,6 +708,18 @@ public final class HologramStockEbfConstructionRegression {
                             com.gtnewhorizon.structurelib.structure.StructureUtility.withChannel("material", cell))
                         .build();
                     world.seed(vx, vy, vz, Blocks.air, 0);
+                    var exactFrame = new ItemStack(frame, 1, frameId);
+                    HologramExecutionEligibility
+                        .validateSaved(frame, frameId, exactFrame, -1, false, null, null, false);
+                    SimpleAssert.eq(
+                        frameId,
+                        HologramStaticMaterials
+                            .exactRegistryShell(
+                                net.minecraft.block.Block.blockRegistry.getNameForObject(frame)
+                                    .toString(),
+                                frameId)
+                            .getItemDamage(),
+                        "material display preserves the same extended frame variant");
                     inventory[1] = new ItemStack(frame, 2, frameId);
                     var buildFrame = create.apply(8);
                     proveDeclared(server, endpoint, replies, buildFrame);
@@ -865,12 +878,12 @@ public final class HologramStockEbfConstructionRegression {
                 proveDeclared(server, endpoint, replies, paidBatch);
                 var needsBrick = finishDeclared(server, endpoint, replies, paidBatch.forGeneration(generation));
                 SimpleAssert.that(
-                    needsBrick.phase() == HologramStockNativeWire.Phase.STOPPED && needsBrick.placed() == 2
+                    needsBrick.phase() == HologramStockNativeWire.Phase.STOPPED && needsBrick.placed() == 0
                         && world.writes()
-                            .size() == 2
-                        && inventory[1] == null
+                            .isEmpty()
+                        && inventory[1].stackSize == 2
                         && inventory[2] == null,
-                    "survival uses the same A/A batch; a later missing B must not pre-reject earlier paid writes: "
+                    "survival leaves both stock and world unchanged when a later projected group is unfunded: "
                         + needsBrick);
                 // StructureLib publicly returns its backing array: a replace-in-place must invalidate a repeat.
                 var backing = alternateDefinition[0].getStructureFor("main");
@@ -884,6 +897,12 @@ public final class HologramStockEbfConstructionRegression {
                     var originalA = writable[n];
                     try {
                         writable[n] = com.gtnewhorizon.structurelib.structure.StructureUtility.ofBlock(Blocks.glass, 0);
+                        world.seed(
+                            controller.xCoord + point.x(),
+                            controller.yCoord + point.y(),
+                            controller.zCoord + point.z(),
+                            Blocks.cobblestone,
+                            0);
                         world.writes()
                             .clear();
                         inventory[1] = new ItemStack(Blocks.glass, 1);
@@ -914,8 +933,23 @@ public final class HologramStockEbfConstructionRegression {
                     world.seedTile(x, y, z, priorTiles.get(j));
                 }
             }
+            alternateDefinition[0] = null;
+            declaredActualEbfProjectedMuffler(
+                unsafe,
+                world,
+                controller,
+                facing,
+                endpoint,
+                id,
+                server,
+                replies,
+                elements,
+                offsets,
+                tiles,
+                exhaust,
+                coil);
             System.out.println(
-                "GTMB_DECLARED_EBF_PROOF_AND_PLACEMENT missing required hatch writes/debits=0, exact survival patch=1, draft retained; explicit/installed hatches and paid prefix tested");
+                "GTMB_DECLARED_EBF_PROOF_AND_PLACEMENT unprojected muffler ignored, selected shortages prevent debits, explicit muffler placed, draft retained");
         } finally {
             for (int i = 0; i < offsets.size(); i++) {
                 var p = offsets.get(i);
@@ -935,6 +969,179 @@ public final class HologramStockEbfConstructionRegression {
             inventory[1] = heldCasing;
             inventory[2] = heldCoil;
             player.capabilities.isCreativeMode = false;
+        }
+    }
+
+    private static void declaredActualEbfProjectedMuffler(sun.misc.Unsafe unsafe, RawWorld world,
+        BaseMetaTileEntity controller, ExtendedFacing facing, HologramWorkspace.ActionEndpoint endpoint, String id,
+        HologramStockNativeServer server, List<HologramStockNativeWire.Reply> replies,
+        com.gtnewhorizon.structurelib.structure.IStructureElement<?>[] elements,
+        List<HologramDeclaredNativeSelection.Offset> offsets, List<TileEntity> tiles, int[] exhaust, int[] coil)
+        throws ReflectiveOperationException {
+        var player = endpoint.player;
+        var inventory = player.inventory.mainInventory;
+        var previousMachines = GregTechAPI.sBlockMachines;
+        int mv = gregtech.api.enums.MetaTileEntityIDs.MUFFLER_HATCH_MV.ID;
+        var previousMuffler = GregTechAPI.METATILEENTITIES[mv];
+        var previousProxy = gregtech.GTMod.proxy;
+        var watcherField = cpw.mods.fml.relauncher.ReflectionHelper
+            .findField(Entity.class, "dataWatcher", "field_70180_af");
+        Object previousWatcher = watcherField.get(player);
+        var inventoryOnly = new HologramMaterials.Settings();
+        inventoryOnly.containers = inventoryOnly.me = false;
+        var prototypeBase = gregtech.api.metatileentity.MetaTileEntity.class.getDeclaredField("mBaseMetaTileEntity");
+        prototypeBase.setAccessible(true);
+        var previousBases = new java.util.IdentityHashMap<gregtech.api.interfaces.metatileentity.IMetaTileEntity, Object>();
+        ItemStack slotThree = inventory[3];
+        try {
+            var machines = fixtureMachines(unsafe);
+            GregTechAPI.sBlockMachines = machines;
+            world.seed(controller.xCoord, controller.yCoord, controller.zCoord, machines, 0);
+            if (previousWatcher == null) {
+                var flags = new net.minecraft.entity.DataWatcher(player);
+                flags.addObject(0, Byte.valueOf((byte) 0));
+                watcherField.set(player, flags);
+            }
+            if (previousProxy == null) {
+                var proxy = (gregtech.common.GTProxy) unsafe.allocateInstance(gregtech.common.GTProxy.class);
+                var preferences = gregtech.common.GTProxy.class.getDeclaredField("mClientPrefernces");
+                preferences.setAccessible(true);
+                preferences.set(proxy, new java.util.concurrent.ConcurrentHashMap<>());
+                gregtech.GTMod.proxy = proxy;
+            }
+            var mvMuffler = new gregtech.api.metatileentity.implementations.MTEHatchMuffler(
+                "hatch.muffler.tier.02",
+                2,
+                new String[0],
+                null);
+            var registryTile = new BaseMetaTileEntity();
+            registryTile.setMetaTileID((short) mv);
+            mvMuffler.setBaseMetaTileEntity(registryTile);
+            GregTechAPI.METATILEENTITIES[mv] = mvMuffler;
+            var cursor = new HologramStructureCursor(elements, 1, 3, 0);
+            var captured = new java.util.HashSet<com.gtnewhorizon.structurelib.structure.IStructureElement<?>>();
+            while (cursor.done() < cursor.total()) {
+                int element = cursor.done();
+                var p = cursor.declarationOffset(facing);
+                if (p == null
+                    || !(elements[element] instanceof com.gtnewhorizon.structurelib.structure.IStructureElementChain<?>chain)
+                    || !captured.add(elements[element])) continue;
+                var branches = chain.fallbacks();
+                var role = gregtech.api.enums.HatchElement.OutputHatch;
+                java.util.List<gregtech.api.enums.HatchElement> roles = p.y() == 3
+                    ? java.util.Collections.singletonList(role)
+                    : java.util.Arrays.asList(
+                        role,
+                        gregtech.api.enums.HatchElement.InputHatch,
+                        gregtech.api.enums.HatchElement.InputBus,
+                        gregtech.api.enums.HatchElement.OutputBus,
+                        gregtech.api.enums.HatchElement.Maintenance,
+                        gregtech.api.enums.HatchElement.Energy);
+                Object builder = new Object();
+                HologramHatchPolicy.declare(builder, roles, true);
+                HologramHatchPolicy.built(builder, branches[0]);
+            }
+            int installed = 0;
+            for (int i = 0; i < offsets.size(); i++) {
+                var p = offsets.get(i);
+                int x = controller.xCoord + p.x(), y = controller.yCoord + p.y(), z = controller.zCoord + p.z();
+                var existing = tiles.get(i);
+                boolean keep = existing instanceof BaseMetaTileEntity
+                    && !(x == exhaust[0] && y == exhaust[1] && z == exhaust[2]);
+                world.seed(x, y, z, keep ? machines : Blocks.air, 0);
+                world.seedTile(x, y, z, keep ? existing : null);
+                if (keep) {
+                    var tile = (BaseMetaTileEntity) existing;
+                    var prototype = GregTechAPI.METATILEENTITIES[tile.getMetaTileID()];
+                    if (!previousBases.containsKey(prototype))
+                        previousBases.put(prototype, prototypeBase.get(prototype));
+                    var carrier = new BaseMetaTileEntity();
+                    carrier.setMetaTileID((short) tile.getMetaTileID());
+                    prototype.setBaseMetaTileEntity(carrier);
+                    installed++;
+                }
+            }
+            SimpleAssert.eq(4, installed, "the canonical EBF already has the four other required physical roles");
+            player.capabilities.isCreativeMode = false;
+            HologramMaterials.write(inventory[0], inventoryOnly);
+            inventory[1] = new ItemStack(GregTechAPI.sBlockCasings1, 32, 11);
+            inventory[2] = new ItemStack(GregTechAPI.sBlockCasings5, 16, 1);
+            world.writes()
+                .clear();
+            var position = new HologramDeclaredNativeSelection.Offset(
+                exhaust[0] - controller.xCoord,
+                exhaust[1] - controller.yCoord,
+                exhaust[2] - controller.zCoord);
+            for (int seq = 26; seq <= 28; seq++) {
+                boolean selected = seq != 26;
+                boolean funded = seq != 27;
+                var selection = new HologramDeclaredNativeSelection(
+                    1000,
+                    java.util.Collections.singletonMap("coil", 2),
+                    0,
+                    0,
+                    java.util.Collections.emptyList(),
+                    selected
+                        ? java.util.Collections
+                            .singletonList(new HologramDeclaredNativeSelection.Hatch(position, mv, -1))
+                        : java.util.Collections.emptyList());
+                inventory[3] = funded ? new ItemStack(machines, 1, mv) : null;
+                world.writes()
+                    .clear();
+                var confirm = HologramStockNativeWire.Confirmation.declared(
+                    new HologramStockNativeWire.Key(UUID.randomUUID(), seq, 0),
+                    player.dimension,
+                    UUID.fromString(id),
+                    controller.xCoord,
+                    controller.yCoord,
+                    controller.zCoord,
+                    2,
+                    0,
+                    facing.ordinal(),
+                    2,
+                    true,
+                    false,
+                    1,
+                    selection);
+                proveDeclared(server, endpoint, replies, confirm);
+                var reply = finishDeclared(
+                    server,
+                    endpoint,
+                    replies,
+                    confirm.forGeneration(endpoint.constructionScope.generation));
+                if (!selected) SimpleAssert.that(
+                    reply.phase() == HologramStockNativeWire.Phase.COMPLETE && reply.placed() == 28
+                        && inventory[1].stackSize == 20
+                        && inventory[2] == null
+                        && inventory[3].stackSize == 1
+                        && world.getBlock(exhaust[0], exhaust[1], exhaust[2]) == Blocks.air,
+                    "the visible shell is placeable; stocked but unprojected muffler stays out: " + reply);
+                else if (!funded) SimpleAssert.that(
+                    reply.phase() == HologramStockNativeWire.Phase.STOPPED && reply.placed() == 0
+                        && world.writes()
+                            .isEmpty()
+                        && inventory[1].stackSize == 20,
+                    "an explicitly projected but unfunded muffler does not write or debit: " + reply);
+                else SimpleAssert.that(
+                    reply.phase() == HologramStockNativeWire.Phase.COMPLETE && reply.placed() == 1
+                        && inventory[1].stackSize == 20
+                        && inventory[2] == null
+                        && inventory[3] == null
+                        && world.getTileEntity(exhaust[0], exhaust[1], exhaust[2]) instanceof BaseMetaTileEntity result
+                        && result.getMetaTileID() == mv
+                        && result
+                            .getMetaTileEntity() instanceof gregtech.api.metatileentity.implementations.MTEHatchMuffler
+                        && world.getBlockMetadata(coil[0], coil[1], coil[2]) == 1,
+                    "the selected, stocked muffler fills only the projected position: " + reply);
+            }
+        } finally {
+            for (var prior : previousBases.entrySet()) prototypeBase.set(prior.getKey(), prior.getValue());
+            world.seed(controller.xCoord, controller.yCoord, controller.zCoord, previousMachines, 0);
+            GregTechAPI.sBlockMachines = previousMachines;
+            GregTechAPI.METATILEENTITIES[mv] = previousMuffler;
+            gregtech.GTMod.proxy = previousProxy;
+            if (previousWatcher == null) watcherField.set(player, null);
+            inventory[3] = slotThree;
         }
     }
 
@@ -1130,31 +1337,21 @@ public final class HologramStockEbfConstructionRegression {
             inventory[2] = null;
             var shortReply = local.run(12, true);
             SimpleAssert.that(
-                shortReply.phase() == HologramStockNativeWire.Phase.STOPPED && shortReply.placed() == 1
+                shortReply.phase() == HologramStockNativeWire.Phase.STOPPED && shortReply.placed() == 0
                     && world.writes()
-                        .size() == 1
-                    && inventory[1].stackSize == 1
+                        .isEmpty()
+                    && inventory[1].stackSize == 2
                     && inventory[2] == null,
-                "the funded input is placed and paid; a later missing output stops only the unfinished work: "
-                    + shortReply);
-            var first = offsets.get(0);
-            var existingInput = world.getTileEntity(
-                controller.xCoord + first.x(),
-                controller.yCoord + first.y(),
-                controller.zCoord + first.z());
+                "the missing selected output prevents both placement and debit: " + shortReply);
             inventory[2] = new ItemStack(machines, 2, 61);
             var placed = local.run(13, true);
             SimpleAssert.that(
-                placed.phase() == HologramStockNativeWire.Phase.COMPLETE && placed.placed() == 1
+                placed.phase() == HologramStockNativeWire.Phase.COMPLETE && placed.placed() == 2
                     && world.writes()
                         .size() == 2
                     && inventory[1].stackSize == 1
-                    && inventory[2].stackSize == 1
-                    && world.getTileEntity(
-                        controller.xCoord + first.x(),
-                        controller.yCoord + first.y(),
-                        controller.zCoord + first.z()) == existingInput,
-                "a repeat places and pays for the remaining output without reinstalling the input: " + placed);
+                    && inventory[2].stackSize == 1,
+                "after restocking, place and pay for both of the originally projected hatches: " + placed);
             for (int index = 0; index < 2; index++) {
                 var pos = offsets.get(index);
                 var actual = world.getTileEntity(
@@ -1313,6 +1510,8 @@ public final class HologramStockEbfConstructionRegression {
     }
 
     private static Block fixtureMachines(sun.misc.Unsafe unsafe) throws ReflectiveOperationException {
+        if (registeredFixtureMachines != null) return registeredFixtureMachines;
+        String name = "gtmb_test:declared_stock_machines";
         var machines = (gregtech.common.blocks.BlockMachines) unsafe
             .allocateInstance(gregtech.common.blocks.BlockMachines.class);
         for (var field : Block.class.getDeclaredFields())
@@ -1331,10 +1530,9 @@ public final class HologramStockEbfConstructionRegression {
             && (Block.getBlockById(number) != Blocks.air || net.minecraft.item.Item.getItemById(number) != null))
             number--;
         SimpleAssert.that(number >= 3728, "free id for actual GT machine item fixture");
-        String name = "gtmb_test:declared_stock_machines";
         Block.blockRegistry.addObject(number, name, machines);
         net.minecraft.item.Item.itemRegistry.addObject(number, name, new gregtech.common.blocks.ItemMachines(machines));
-        return machines;
+        return registeredFixtureMachines = machines;
     }
 
     /** Headless registry supplies the actual GT item/metadata methods without starting the client texture loader. */

@@ -44,6 +44,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     private HologramState localControllerTarget;
     private int localControllerSide;
     private HologramState localControllerPrevious;
+    private HologramLocalControllerGhost.Profile rememberedControllerPlacement;
     private HologramState localControllerBaseline;
     private HologramState.Cell localControllerInteractionCell;
     private net.minecraft.nbt.NBTTagList localControllerCapabilities;
@@ -51,8 +52,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
 
     @Desugar
     private record NativePresetRequest(long id, HologramState state, DeclarationSiteReference site,
-        com.miaokatze.gtmb.hologram.HologramNativePresetIndex.Prepared prepared, NBTTagCompound settings, int tier,
-        int sources, long started) {}
+        com.miaokatze.gtmb.hologram.HologramNativePresetIndex.Prepared prepared, int tier, int sources, long started) {}
 
     @Desugar
     private record DeclarationSiteReference(HologramClientStockNative.DeclarationSite site, java.util.UUID tool) {}
@@ -126,11 +126,16 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         long started = HologramRuntimeMetrics.start();
         try {
             HologramLocalControllerCapture capture;
-            NBTTagCompound settings;
+            NBTTagCompound settings, inheritedSettings;
+            HologramLocalControllerGhost.Profile remembered;
             HologramState state;
             try {
-                ItemStack tool = Minecraft.getMinecraft().thePlayer.getHeldItem();
-                settings = HologramLocalControllerCapture.toolSettings(tool);
+                Minecraft client = Minecraft.getMinecraft();
+                ItemStack tool = client.thePlayer.getHeldItem();
+                inheritedSettings = HologramLocalControllerCapture.toolSettings(tool);
+                settings = (NBTTagCompound) inheritedSettings.copy();
+                remembered = HologramLocalControllerGhost.latestFor(client, tile);
+                if (remembered != null) remembered.applyChannels(settings);
                 capture = new HologramLocalControllerCapture(tile, dimension, side, tool, settings, "");
                 NBTTagCompound opening = capture.opening();
                 opening.setString("status", HologramClient.text("controllerLocalPreparing", "正在读取本地标准结构…"));
@@ -141,7 +146,8 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             HologramScreen screen = new HologramScreen(state, HologramRuntimeMetrics.start());
             screen.localController = capture;
             screen.localControllerSide = side;
-            screen.localControllerToolSettings = settings;
+            screen.localControllerToolSettings = inheritedSettings;
+            screen.rememberedControllerPlacement = remembered;
             screen.rememberControllerContext(tile);
             return screen;
         } finally {
@@ -382,7 +388,6 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
                 current,
                 new DeclarationSiteReference(site, tool),
                 prepared,
-                (NBTTagCompound) settings.copy(),
                 tier,
                 sources,
                 System.nanoTime());
@@ -462,7 +467,6 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             for (var choice : outcome.choices()) localPresetChoices.add(choice.index());
             localControllerInteractionCell = null;
             updateState(state);
-            ui.config.acceptNativePresetShortcut(pending.settings());
             ui.session.notice(HologramClient.text("nativePresetApplied", "Preset applied"));
         } catch (java.io.IOException | RuntimeException failure) {
             ui.session.notice(HologramClient.text("nativePresetUnavailable", "Preset unavailable"));
@@ -620,22 +624,30 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
                     declaredSelection(paneSite.controllerId(), currentState, active, nativeConstructionChoices()))
                 && paneSite.current(minecraft().theWorld);
         }, visible, view.review::stockNativeNotice, reply -> {
-            // The exact terminal receipt closes the submitted intent, not the current editor or material page.
+            if (reply.phase() != com.miaokatze.gtmb.hologram.HologramStockNativeWire.Phase.COMPLETE
+                || declaration.operation() != 0
+                || declaration.scope() != 0
+                || !reply.reason()
+                    .isEmpty())
+                return;
+            HologramLocalControllerGhost
+                .rememberPlacement(context, paneSite, original, displayed.data.getInteger("hatchTier"));
+            if (!visible.getAsBoolean()) return;
             HologramState current = view.session.state();
-            if (reply.phase() == com.miaokatze.gtmb.hologram.HologramStockNativeWire.Phase.COMPLETE
-                && declaration.operation() == 0
-                && declaration.scope() == 0
-                && reply.reason()
-                    .isEmpty()
-                && current.session.equals(displayed.session)
-                && current.data.getString("generation")
-                    .equals(displayed.data.getString("generation"))
+            if (current.session.equals(displayed.session) && current.data.getString("generation")
+                .equals(displayed.data.getString("generation"))
                 && current.data.getLong("planRevision") == displayed.data.getLong("planRevision")) {
                 NBTTagCompound receipt = new NBTTagCompound();
                 receipt.setBoolean("nativeBuildSatisfied", true);
                 updateState(current.withMetadata(receipt));
-                HologramLocalControllerGhost.clear();
             }
+        }, () -> {
+            var currentClient = Minecraft.getMinecraft();
+            return context.same(HologramClientStockNative.context(currentClient))
+                && currentClient.thePlayer.inventory.currentItem == original.slot()
+                && currentClient.thePlayer.capabilities.isCreativeMode == creative
+                && ItemStack.areItemStacksEqual(pinnedTool, currentClient.thePlayer.getHeldItem())
+                && paneSite.current(currentClient.theWorld);
         });
         return HologramClientStockNative.OWNER.submit(original, context, owner, System.nanoTime());
     }
@@ -940,6 +952,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             localNativeChoices.clear();
             localPresetChoices.clear();
             nativePresetRequest = null;
+            restoreRememberedHatches();
             if (pendingControllerToolSettings != null) localControllerToolSettings = pendingControllerToolSettings;
             pendingControllerToolSettings = null;
             localControllerPreparation = null;
@@ -947,6 +960,26 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.LOCAL_CONTROLLER_PREPARE, preparation);
         }
         publishLocalController(localControllerTarget, HologramRuntimeMetrics.LoadStage.CLIENT_CONTROLLER_TARGET);
+    }
+
+    private void restoreRememberedHatches() {
+        var remembered = rememberedControllerPlacement;
+        rememberedControllerPlacement = null;
+        if (remembered == null) return;
+        try {
+            var choices = remembered.choices(localControllerTarget, localController);
+            if (choices.isEmpty()) return;
+            localControllerTarget = HologramLocalControllerEdits.replaceNativePreset(
+                localControllerTarget,
+                localControllerBaseline,
+                java.util.Collections.emptySet(),
+                choices,
+                remembered.tier(),
+                true);
+            for (var choice : choices) localPresetChoices.add(choice.index());
+        } catch (java.io.IOException | RuntimeException | LinkageError stale) {
+            // The cached channel selection can remain; incompatible hatch choices must never enter the new plan.
+        }
     }
 
     private NBTTagCompound localControllerCapabilityMetadata() {
@@ -1274,11 +1307,14 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             } else if (controllerRequest == 0 && !localWorkspaceView()) ui.router.onGuiClosed();
             else org.lwjgl.input.Keyboard.enableRepeatEvents(false);
         } finally {
-            if (!detached && controllerRequest == 0
-                && localControllerStandard()
-                && !HologramClientStockNative.OWNER.pending(this)
-                && controllerContextCurrent()) {
-                HologramLocalControllerGhost.retain(minecraft(), openingController, openingToolId, ui.session.state());
+            if (!detached && controllerRequest == 0 && localControllerStandard() && controllerContextCurrent()) {
+                var stockContext = HologramClientStockNative.context(minecraft());
+                HologramLocalControllerGhost.retain(
+                    minecraft(),
+                    openingController,
+                    openingToolId,
+                    ui.session.state(),
+                    HologramClientStockNative.OWNER.requestFor(this, stockContext));
             }
             HologramClientStockNative.OWNER.close(this, HologramClientStockNative.context(minecraft()));
             retireLocalController();
