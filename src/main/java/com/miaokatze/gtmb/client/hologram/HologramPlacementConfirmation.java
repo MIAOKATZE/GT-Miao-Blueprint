@@ -24,6 +24,14 @@ final class HologramPlacementConfirmation {
     static String localStructureReviewBlocker(HologramState state, NBTTagCompound settings, boolean localEdits) {
         NBTTagCompound data = state.data;
         if (!data.getBoolean("localStandardController")) return "";
+        if (data.hasKey("nativeTargetRevision", 4)) {
+            if (data.getInteger("nativeAction") == 3 && data.getLong("nativeObservationToken") > 0) return "";
+            if (data.getBoolean("localStructureUnavailable")) return projectorOr(
+                "native.ui.complete_target_generation_failed_adjust_the_configuration",
+                "当前完整目标生成失败，请调整配置或重新读取结构。");
+            return data.getBoolean("nativeTargetReady") ? ""
+                : projectorOr("native.ui.updating_the_complete_target", "正在更新当前完整目标。");
+        }
         if (data.getBoolean("localStructureUnavailable") || !data.getBoolean("supported"))
             return projectorOr("stock.unavailable", "当前控制器没有可用于施工的原生结构。");
         if (data.getBoolean("localPlanPending")) return projectorOr("stock.updating_plan", "正在更新计划");
@@ -37,6 +45,7 @@ final class HologramPlacementConfirmation {
     }
 
     static boolean finishedWholeNativePlacement(HologramState state, NBTTagCompound settings, boolean localEdits) {
+        if (state.data.hasKey("nativeTargetRevision", 4)) return false;
         return state.data.getBoolean("nativeBuildSatisfied") && wholeNativeScope(state.data, settings);
     }
 
@@ -56,6 +65,8 @@ final class HologramPlacementConfirmation {
     /** Candidate enrichment does not change the sealed target or its construction ledger. */
     static boolean wholeNativeTargetReady(HologramState state, NBTTagCompound settings, boolean localEdits) {
         NBTTagCompound data = state.data;
+        if (data.getBoolean("localStandardController") && data.hasKey("nativeTargetRevision", 4))
+            return data.getBoolean("nativeTargetReady") && !data.getBoolean("localStructureUnavailable");
         return !localEdits && wholeNativeScope(data, settings)
             && !data.getBoolean("presetActive")
             && data.getBoolean("target")
@@ -161,10 +172,11 @@ final class HologramPlacementConfirmation {
         NBTTagCompound selected = cacheSummaryResource(state);
         if (selected == null) return "";
         String key = selected.getString("key");
-        if (!"cache.EU".equals(key) && !"cache.AE".equals(key)) return "设备缓存无法付取，将以空缓存放置";
-        return ("cache.EU".equals(key) ? "EU" : "AE") + " 缓存需 "
+        if (!"cache.EU".equals(key) && !"cache.AE".equals(key))
+            return projectorOr("native.ui.device_caches_cannot_be_paid_for_placement", "设备缓存无法付取，将以空缓存放置");
+        return ("cache.EU".equals(key) ? "EU" : "AE") + (" " + projectorOr("native.ui.cache_required", "缓存需") + " ")
             + selected.getString("required")
-            + " / 可用 "
+            + (" " + projectorOr("native.ui.available_536", "/ 可用") + " ")
             + selected.getString("available");
     }
 
@@ -245,8 +257,12 @@ final class HologramPlacementConfirmation {
     }
 
     static String confirmationAction(NBTTagCompound state, long reviewedRevision, boolean placement) {
-        if (emptyCacheFallback(state))
-            return forceReview(state, reviewedRevision) ? "确认仅放已有 · 空缓存" : placement ? "确认空缓存放置" : "确认空缓存施工";
-        return forceReview(state, reviewedRevision) ? "确认仅放已有" : placement ? "确认放置" : "确认执行施工";
+        if (emptyCacheFallback(state)) return forceReview(state, reviewedRevision)
+            ? projectorOr("native.ui.place_available_only_empty_caches", "确认仅放已有 · 空缓存")
+            : placement ? projectorOr("native.ui.confirm_empty_cache_placement", "确认空缓存放置")
+                : projectorOr("native.ui.confirm_empty_cache_construction", "确认空缓存施工");
+        return forceReview(state, reviewedRevision) ? projectorOr("native.ui.place_available_only", "确认仅放已有")
+            : placement ? projectorOr("native.ui.confirm_placement", "确认放置")
+                : projectorOr("native.ui.confirm_construction", "确认执行施工");
     }
 }

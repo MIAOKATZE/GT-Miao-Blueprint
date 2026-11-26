@@ -3,6 +3,8 @@
 
 package com.miaokatze.gtmb.client.hologram;
 
+import static com.miaokatze.gtmb.client.hologram.HologramUiText.projectorOr;
+
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -115,10 +117,11 @@ final class HologramMaterialReview {
             this.index = index;
             required = amount(data, "required");
             boolean stockUnknown = local && !data.getBoolean("availableKnown");
-            available = stockUnknown ? "未知" : data.getBoolean("unlimited") ? "∞" : amount(data, "available");
-            missing = stockUnknown ? "未知" : amount(data, "missing");
+            available = stockUnknown ? projectorOr("native.ui.unknown", "未知")
+                : data.getBoolean("unlimited") ? "∞" : amount(data, "available");
+            missing = stockUnknown ? projectorOr("native.ui.unknown", "未知") : amount(data, "missing");
             shortage = !stockUnknown && !"0".equals(missing) && !missing.isEmpty();
-            unit = data.getString("unit");
+            unit = HologramNativeUiText.unit(data.getString("unit"));
             // Numeric registry IDs are not portable across installations. Never fall back to an unrelated item.
             item = HologramMaterialQuote.readItem(data);
             fluid = data.hasKey("fluid", 10) ? FluidStack.loadFluidStackFromNBT(data.getCompoundTag("fluid")) : null;
@@ -127,7 +130,9 @@ final class HologramMaterialReview {
             String label = data.getString("label");
             name = item != null ? HologramMaterialRowPresentation.itemName(item, data.getString("itemRegistry"))
                 : fluid != null ? fluid.getLocalizedName()
-                    : label.isEmpty() || "item".equals(data.getString("kind")) ? "无法解析的材料" : label;
+                    : label.isEmpty() || "item".equals(data.getString("kind"))
+                        ? projectorOr("native.material_unresolved", "无法解析的材料")
+                        : label;
         }
 
         String identity() {

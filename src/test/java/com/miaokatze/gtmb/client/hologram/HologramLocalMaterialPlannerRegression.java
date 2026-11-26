@@ -31,7 +31,7 @@ public final class HologramLocalMaterialPlannerRegression {
             review.ready() && review.visible()
                 .getTagList("rows", 10)
                 .tagCount() == 1,
-            "material opening consumes the source-time aggregate without a queued geometry scan");
+            "the complete published native target opens one grouped material row without a queued scan");
         HologramSelection selected = new HologramSelection();
         selected.bindMaterials(repeated);
         selected.click(1, false);
@@ -70,7 +70,7 @@ public final class HologramLocalMaterialPlannerRegression {
             .getTagList("rows", 10)
             .getCompoundTagAt(0);
         SimpleAssert.that(
-            review.ready() && "123369".equals(row.getString("requiredExact"))
+            review.ready() && "123369".equals(HologramMaterialReview.amount(row, "required"))
                 && row.getBoolean("availableKnown")
                 && row.getLong("available") == 7
                 && "123362".equals(row.getString("missingExact")),
@@ -79,6 +79,7 @@ public final class HologramLocalMaterialPlannerRegression {
         HologramLocalMaterialReview cancelled = new HologramLocalMaterialReview(repeated, config);
         NBTTagCompound pending = new NBTTagCompound();
         pending.setBoolean("capturePending", true);
+        pending.setBoolean("nativeTargetReady", false);
         HologramState recapturing = repeated.withMetadata(pending);
         SimpleAssert.that(
             recapturing.cells == repeated.cells && !cancelled.current(recapturing, 0),
@@ -104,11 +105,10 @@ public final class HologramLocalMaterialPlannerRegression {
                 "mixed material/metadata and tagged-device paths remain descriptive, never authoritative");
             for (int i = 0; i < rows.tagCount(); i++) {
                 NBTTagCompound candidate = rows.getCompoundTagAt(i);
-                if (candidate.getCompoundTag("stack")
-                    .hasKey("tag", 10))
-                    SimpleAssert.that(
-                        !candidate.getBoolean("availableKnown") || candidate.getLong("available") == 0,
-                        "an untagged backpack stack cannot be counted as exact tagged stock");
+                ItemStack exact = com.miaokatze.gtmb.hologram.HologramMaterialQuote.readItem(candidate);
+                if (exact != null && exact.hasTagCompound()) SimpleAssert.that(
+                    !candidate.getBoolean("availableKnown") || candidate.getLong("available") == 0,
+                    "an untagged backpack stack cannot be counted as exact tagged stock");
             }
             mixed.close();
             mixed.refresh(stock, 0);
@@ -129,7 +129,7 @@ public final class HologramLocalMaterialPlannerRegression {
             ItemStack item = com.miaokatze.gtmb.hologram.HologramMaterialQuote.readItem(row);
             if (item == null || item.getItem() != net.minecraft.item.Item.getItemFromBlock(Blocks.chest)) continue;
             chest = row.getBoolean("availableKnown") && row.getLong("available") == 2
-                && "3".equals(row.getString("requiredExact"))
+                && "3".equals(HologramMaterialReview.amount(row, "required"))
                 && "1".equals(row.getString("missingExact"));
         }
         SimpleAssert.that(
@@ -148,8 +148,8 @@ public final class HologramLocalMaterialPlannerRegression {
         NBTTagCompound stale = new NBTTagCompound();
         stale.setString("generation", "other-capture");
         SimpleAssert.that(
-            !captured.current(settled.withMetadata(stale), 0) && !captured.current(settled, 1),
-            "another controller generation or layer cannot reuse the pane");
+            !captured.current(settled.withMetadata(stale), 0) && captured.current(settled, 1),
+            "another controller generation retires the pane while a visual layer change leaves its full target intact");
 
         NBTTagCompound change = settled.cells.get(0)
             .tag();
@@ -219,6 +219,8 @@ public final class HologramLocalMaterialPlannerRegression {
         NBTTagCompound metadata = new NBTTagCompound();
         metadata.setString("session", "controlled-local-material-planner");
         metadata.setBoolean("localStandardController", true);
+        metadata.setLong("nativeTargetRevision", 1);
+        metadata.setBoolean("nativeTargetReady", true);
         metadata.setLong("planRevision", 1);
         metadata.setBoolean("capturePending", captureCounts);
         metadata.setString("generation", "local-capture-one");

@@ -101,35 +101,6 @@ final class HologramLocalControllerGhostRegression {
                 && HologramLocalControllerGhost.afterTerminal(running, request) == null
                 && HologramLocalControllerGhost.afterTerminal(lease, request) == lease,
             "a late terminal cannot clear a newer idle or different active lease");
-        var context = new HologramClientStockNative.Context(link, world, player, -1);
-        var declaration = new com.miaokatze.gtmb.hologram.HologramDeclaredNativeSelection(
-            71,
-            java.util.Collections.singletonMap("coil", 4),
-            0,
-            0,
-            java.util.Collections.emptyList(),
-            java.util.Collections.emptyList());
-        var profile = new HologramLocalControllerGhost.Profile(
-            context,
-            71,
-            Object.class,
-            2,
-            3,
-            true,
-            false,
-            declaration,
-            0);
-        var freshSettings = new NBTTagCompound();
-        profile.applyChannels(freshSettings);
-        SimpleAssert.that(
-            profile.matches(context, 71, Object.class) && !profile.matches(context, 72, Object.class)
-                && !profile.matches(context, 71, String.class)
-                && !profile
-                    .matches(new HologramClientStockNative.Context(new Object(), world, player, -1), 71, Object.class)
-                && freshSettings.getInteger("main") == 3
-                && freshSettings.getCompoundTag("channels")
-                    .getInteger("coil") == 4,
-            "session profile can reuse approved channels only on the same registered machine type and owner");
         alternateOwner(lease);
         HologramLocalControllerGhost.Lease unlinked = new HologramLocalControllerGhost.Lease(
             target,

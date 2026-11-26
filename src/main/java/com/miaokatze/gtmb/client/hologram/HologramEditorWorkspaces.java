@@ -3,6 +3,8 @@
 
 package com.miaokatze.gtmb.client.hologram;
 
+import static com.miaokatze.gtmb.client.hologram.HologramUiText.projectorOr;
+
 import net.minecraft.nbt.NBTTagCompound;
 
 /** Presentation intent is separate from both library navigation and the server's geometry flags. */
@@ -119,11 +121,12 @@ final class HologramEditorWorkspaces {
             || ui.ae.awaitingAePreview()
             || ui.ae.aeReview() != null && ui.ae.aeReview().review
             || ui.tutorial.active()) {
-            ui.session.notice("请先完成当前操作，再浏览剪切工作区；草稿和选区保留");
+            ui.session.notice(projectorOr("native_common.workspace.wait_cut", "请先完成当前操作，再浏览剪切工作区；草稿和选区保留"));
             return false;
         }
         if (hasProjectionContent()) {
-            ui.session.notice("请先关闭当前投影工作台，再从剪切模式打开暂存；投影和草稿保留。");
+            ui.session
+                .notice(projectorOr("native_common.workspace.close_projection", "请先关闭当前投影工作台，再从剪切模式打开暂存；投影和草稿保留。"));
             return false;
         }
         ui.shell.prepareCut();
@@ -135,7 +138,7 @@ final class HologramEditorWorkspaces {
     private void activate(Mode requested) {
         if (domain(ui.session.state()) == requested) {
             if (cut && HologramCutClient.INSTANCE.workspaceSwitchBusy()) {
-                ui.session.notice("请先等待剪切操作完成，再返回工作区");
+                ui.session.notice(projectorOr("native_common.workspace.wait_cut_operation", "请先等待剪切操作完成，再返回工作区"));
                 return;
             }
             cut = false;
@@ -157,7 +160,7 @@ final class HologramEditorWorkspaces {
             || ui.session.state().data.getBoolean("virtualPlacement")
             || ui.processing.processingFlow() != null
             || ui.tutorial.active()) {
-            ui.session.notice("请先完成当前操作，再切换工作区；草稿和选区保留");
+            ui.session.notice(projectorOr("native_common.workspace.wait_switch", "请先完成当前操作，再切换工作区；草稿和选区保留"));
             return false;
         }
         return true;

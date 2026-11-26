@@ -164,8 +164,15 @@ public final class HologramNativePresetStock {
             reject(endpoint, id, "controller");
             return;
         }
-        var settings = HologramMaterials.read(held);
-        if (HologramProjectedMainPolicy.settingsKey(settings) != tag.getInteger("sources")) {
+        int selected = tag.getInteger("sources");
+        var settings = new HologramMaterials.Settings();
+        settings.main = (selected & 1) != 0;
+        settings.containers = (selected & 2) != 0;
+        settings.me = (selected & 4) != 0;
+        settings.priority = (selected >>> 3) & 3;
+        settings.recoveryDestination = (selected >>> 5) & 1;
+        // A read-only quote may deliberately select no providers. It grants no construction/payment authority.
+        if (HologramProjectedMainPolicy.structurePlacementKey(settings, true) != selected) {
             reject(endpoint, id, "sources");
             return;
         }

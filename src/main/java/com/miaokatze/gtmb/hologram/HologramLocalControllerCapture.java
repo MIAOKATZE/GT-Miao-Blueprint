@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -71,11 +72,14 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
     private final NBTTagCompound settings;
     private final ItemStack trigger;
     private final boolean alreadyDetached;
+    private final boolean nativeWorkflow;
     private MTEEnhancedMultiBlockBase<?> detached;
     private TileEntity detachedTile;
     private Object detachedContext;
     private HologramCapture capture;
     private HologramNativeStructurePreview nativePreview;
+    private HologramNativeTargetPlan nativeTarget;
+    private List<HologramCapture.Cell> nativeTargetCells;
     private HologramNativeStructurePreview.PresetCandidates sourcePresetCandidates;
     private final HologramDeclarationAdapters.Bindings presetDeclarations = new HologramDeclarationAdapters.Bindings();
     private Iterator<HologramCapture.Cell> declared;
@@ -114,12 +118,18 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
         generation = session.isEmpty() ? this.session : "local-controller:" + UUID.randomUUID();
         this.settings = (NBTTagCompound) settings.copy();
         alreadyDetached = detachedFacing != null;
-        this.trigger = previewTrigger(tool, this.settings);
         liveContext = HologramStructureDiscovery.context(tile);
         controllerBlock = world == null || !world.blockExists(x, y, z) ? Blocks.air : world.getBlock(x, y, z);
         controllerMeta = controllerBlock == Blocks.air ? 0 : world.getBlockMetadata(x, y, z);
         controllerId = tile instanceof IGregTechTileEntity gt ? gt.getMetaTileID() : -1;
-        facing = alreadyDetached ? detachedFacing : facing(tile, liveContext, side);
+        nativeWorkflow = !alreadyDetached && controllerId >= 0
+            && liveContext instanceof com.gtnewhorizon.structurelib.alignment.constructable.ISurvivalConstructable;
+        this.trigger = nativeWorkflow
+            ? HologramNativeTargetPlan
+                .canonicalTrigger(this.settings.getInteger("main"), this.settings.getCompoundTag("channels"))
+            : previewTrigger(tool, this.settings);
+        facing = alreadyDetached ? detachedFacing
+            : nativeWorkflow ? nativeFacing(tile, liveContext, side) : facing(tile, liveContext, side);
         title = liveContext instanceof MTEEnhancedMultiBlockBase<?>machine ? machine.getLocalName()
             : controllerBlock.getLocalizedName();
     }
@@ -256,7 +266,7 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
             && current.getTileEntity(x, y, z) == tile
             && HologramStructureDiscovery.context(tile) == liveContext
             && (!(tile instanceof IGregTechTileEntity gt) || gt.getMetaTileID() == controllerId)
-            && facing(tile, liveContext, side) == facing;
+            && (nativeWorkflow ? nativeFacing(tile, liveContext, side) : facing(tile, liveContext, side)) == facing;
     }
 
     /** A header has the existing projection shape but no server session identity or receipts. */
@@ -288,7 +298,7 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
         NBTTagCompound metadata = header();
         metadata.setBoolean("projectionDataComplete", true);
         metadata.setTag("capabilities", readyCapabilities());
-        if (!alreadyDetached) site.publish(metadata);
+        if (!alreadyDetached && nativeTarget == null) site.publish(metadata);
         if (nativePreview != null) metadata.setTag("structureDescription", nativePreview.description());
         publishInstalledSite(metadata);
         if (!alreadyDetached) {
@@ -326,9 +336,9 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
             if (targetCells == null) {
                 targetCells = new ArrayList<>();
                 targetMaterials = new HologramControllerMaterialCounts.Builder();
-                if (!alreadyDetached && world.isRemote) presetIndex = new HologramNativePresetIndex(
-                    StructureSources.hasSource(liveContext.getClass()) ? null : liveContext);
-                if (!alreadyDetached && world.isRemote) {
+                if (!nativeWorkflow && !alreadyDetached && world.isRemote)
+                    presetIndex = new HologramNativePresetIndex(liveContext);
+                if (!nativeWorkflow && !alreadyDetached && world.isRemote) {
                     installedShape = HologramInstalledControllerShape.read(liveContext, trigger);
                     if (installedShape != null) {
                         installedCells = new ArrayList<>();
@@ -364,7 +374,8 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
             HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.LOCAL_CONTROLLER_ROWS, rowStart);
         }
         if (hasNext()) return false;
-        if (nativePlacements != null && previewAnchor == null) appendCell(anchor(), targetOnly);
+        if ((nativePlacements != null || nativeTarget != null) && previewAnchor == null)
+            appendCell(anchor(), targetOnly);
         if (installedShape == null) return true;
         // Reuse the overlapping observations. Only the installed declaration contributes extra SITE rows.
         long deadline = started + maxNanos;
@@ -414,6 +425,35 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
     public NBTTagCompound captureNativeHatchProfile(Map<Integer, ItemStack> overrides, NBTTagCompound options)
         throws IOException {
         checkStep(1, 1);
+        if (nativeTarget != null) {
+            NBTTagCompound profile = new NBTTagCompound();
+            profile.setInteger("tier", options.getInteger("hatchTier"));
+            profile.setBoolean("downgrade", options.getBoolean("hatchDowngrade"));
+            Map<HologramBlueprintResources.ExactKey, NBTTagCompound> entries = new LinkedHashMap<>();
+            for (int index = 0; index < targetCells.size(); index++) {
+                ItemStack item = overrides.containsKey(index) ? overrides.get(index)
+                    : targetCells.get(index)
+                        .targetStack();
+                if (HologramCellPolicy.hatchTier(item) == Integer.MAX_VALUE) continue;
+                var key = HologramValues.stackKey(item);
+                NBTTagCompound row = entries.get(key);
+                if (row == null) {
+                    row = new NBTTagCompound();
+                    row.setString("role", "native_hatch");
+                    row.setString(
+                        "item",
+                        String.valueOf(net.minecraft.item.Item.itemRegistry.getNameForObject(item.getItem())));
+                    row.setInteger("damage", item.getItemDamage());
+                    entries.put(key, row);
+                }
+                row.setInteger("count", row.getInteger("count") + 1);
+            }
+            NBTTagList rows = new NBTTagList();
+            entries.values()
+                .forEach(rows::appendTag);
+            profile.setTag("entries", rows);
+            return profile;
+        }
         if (!targetPublished || presetIndex == null) throw new IOException("当前仓室尚未就绪。");
         return presetIndex.captureProfile(
             overrides,
@@ -426,6 +466,7 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
     public HologramNativePresetIndex.Prepared prepareNativePreset(NBTTagCompound options,
         Map<Integer, Integer> manualHatchIds) throws IOException {
         checkStep(1, 1);
+        if (nativeTarget != null) return prepareNativeTargetPreset(options, manualHatchIds);
         if (!targetPublished || presetIndex == null || options.getBoolean("noHatches"))
             return HologramNativePresetIndex.Prepared.unavailable("当前原生结构没有可用的仓室预设。");
         if (nativePreview == null && capture == null)
@@ -492,6 +533,14 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
         if (!targetPublished || index < 0 || index >= targetCells.size()) return null;
         HologramControllerTarget.Cell target = targetCells.get(index);
         if (target.anchor()) return null;
+        if (nativeTarget != null) {
+            HologramCapture.Cell cell = nativeTargetCells.get(index);
+            HologramNativeTargetPlan.Cell material = nativeTargetCell(target.dx(), target.dy(), target.dz());
+            cell.candidates = material == null ? java.util.Collections.emptyList() : nativeTarget.offers(material);
+            cell.candidateComplete = false;
+            cell.candidateBoundary = "原生自动建造候选；配置后将重新生成完整目标";
+            return nativeOffers(cell, target.targetStack());
+        }
         HologramCapture.Cell cell = capture != null ? capture.cells.get(index)
             : nativePreview.candidateCell(
                 target.dx() + detachedTile.xCoord,
@@ -511,6 +560,68 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
             }
         }
         return nativeOffers(cell, target.targetStack());
+    }
+
+    private HologramNativeTargetPlan.Cell nativeTargetCell(int dx, int dy, int dz) {
+        if (nativeTarget != null) for (var cell : nativeTarget.cells())
+            if (cell.dx() == dx && cell.dy() == dy && cell.dz() == dz) return cell;
+        return null;
+    }
+
+    private HologramNativePresetIndex.Prepared prepareNativeTargetPreset(NBTTagCompound options,
+        Map<Integer, Integer> manual) throws IOException {
+        if (!targetPublished || options.getBoolean("noHatches"))
+            return HologramNativePresetIndex.Prepared.unavailable("当前目标尚未准备好仓室配置。");
+        NBTTagCompound config = (NBTTagCompound) options.copy();
+        config.setBoolean("presetActive", true);
+        NBTTagList pins = new NBTTagList();
+        for (var entry : manual.entrySet()) {
+            if (entry.getKey() < 0 || entry.getKey() >= targetCells.size()) continue;
+            var cell = targetCells.get(entry.getKey());
+            NBTTagCompound row = new NBTTagCompound();
+            row.setInteger("x", cell.dx());
+            row.setInteger("y", cell.dy());
+            row.setInteger("z", cell.dz());
+            row.setInteger("id", entry.getValue());
+            row.setInteger("facing", -1);
+            pins.appendTag(row);
+        }
+        config.setTag("nativeHatchChoices", pins);
+        config.removeTag("nativeStock");
+        return HologramNativePresetIndex.Prepared.nativePlan(new int[0], (stock, creative) -> {
+            try {
+                checkStep(1, 1);
+                NBTTagCompound selected = (NBTTagCompound) config.copy();
+                HologramNativeTargetPlan result = HologramNativeTargetPlan
+                    .compile(controllerId, facing, trigger, selected);
+                List<HologramNativePresetIndex.Choice> choices = new ArrayList<>();
+                for (var cell : result.cells())
+                    if (HologramCellPolicy.hatchTier(cell.material()) != Integer.MAX_VALUE) {
+                        int index = -1;
+                        for (int n = 0; n < targetCells.size(); n++) {
+                            var previous = targetCells.get(n);
+                            if (previous.dx() == cell.dx() && previous.dy() == cell.dy()
+                                && previous.dz() == cell.dz()) {
+                                index = n;
+                                break;
+                            }
+                        }
+                        if (index < 0) throw new IOException("原生配置改变了结构几何，请重新打开目标。");
+                        choices.add(
+                            new HologramNativePresetIndex.Choice(
+                                index,
+                                cell.material()
+                                    .getItemDamage(),
+                                cell.facing()));
+                    }
+                return new HologramNativePresetIndex.Outcome(choices, true, "原生完整仓室目标已生成。");
+            } catch (IOException | RuntimeException invalid) {
+                return new HologramNativePresetIndex.Outcome(
+                    java.util.Collections.emptyList(),
+                    false,
+                    invalid.getMessage() == null ? "原生目标生成失败。" : invalid.getMessage());
+            }
+        });
     }
 
     /** Frozen per-declaration options. Public ItemStack reads return defensive copies. */
@@ -636,7 +747,7 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
         if (complete) throw new IllegalStateException("Local controller model already published");
         if (!supports(tile) || liveContext == null || facing == null)
             throw new IOException("LOCAL_DECLARATION_UNAVAILABLE");
-        String boundary = StructureSources.sourceFailure(liveContext.getClass());
+        String boundary = nativeWorkflow ? null : StructureSources.sourceFailure(liveContext.getClass());
         if (boundary != null) throw new IOException(boundary);
         if (!alreadyDetached
             && !(targetPublished ? controllerContextMatches(world, dimension) : matches(world, dimension)))
@@ -693,6 +804,8 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
         nativePlacements = null;
         if (nativePreview != null) nativePreview.close();
         nativePreview = null;
+        nativeTarget = null;
+        nativeTargetCells = null;
         if (sourcePresetCandidates != null) sourcePresetCandidates.clear();
         sourcePresetCandidates = null;
         report = null;
@@ -714,6 +827,33 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
     }
 
     private boolean prepareGeometry(long deadline) throws IOException {
+        if (nativeWorkflow) {
+            nativeTarget = HologramNativeTargetPlan.compile(controllerId, facing, trigger, settings);
+            detachedTile = nativeTarget.controller();
+            detachedContext = nativeTarget.context();
+            report = nativeTarget.channels();
+            nativeTargetCells = new ArrayList<>();
+            for (HologramNativeTargetPlan.Cell value : nativeTarget.cells()) {
+                HologramCapture.Cell cell = new HologramCapture.Cell(
+                    value.element(),
+                    detachedTile.xCoord + value.dx(),
+                    detachedTile.yCoord + value.dy(),
+                    detachedTile.zCoord + value.dz(),
+                    value.trigger(),
+                    true);
+                cell.block = value.block();
+                cell.meta = value.metadata();
+                cell.previewStack = value.material();
+                cell.previewFacing = value.facing();
+                cell.targetDisplay = value.display();
+                cell.role = HologramCellPolicy.hatchTier(value.material()) == Integer.MAX_VALUE ? "block" : "hatch";
+                cell.renderKind = value.material() != null && value.material()
+                    .getItem() instanceof ItemMachines ? "item" : "block";
+                nativeTargetCells.add(cell);
+            }
+            declared = nativeTargetCells.iterator();
+            return true;
+        }
         if (nativePreview == null && liveContext instanceof MTEEnhancedMultiBlockBase<?>
             && StructureSources.hasSource(liveContext.getClass())) {
             if (detached == null) detached = alreadyDetached ? (MTEEnhancedMultiBlockBase<?>) liveContext
@@ -794,7 +934,7 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
 
     public static int liveOrientation(TileEntity tile, int side) {
         if (tile == null || tile.isInvalid()) return -1;
-        ExtendedFacing pose = facing(tile, HologramStructureDiscovery.context(tile), side);
+        ExtendedFacing pose = nativeFacing(tile, HologramStructureDiscovery.context(tile), side);
         return pose == null ? -1 : pose.ordinal();
     }
 
@@ -807,6 +947,12 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
         if (tile instanceof IGregTechTileEntity gt) return ExtendedFacing.of(gt.getFrontFacing());
         ForgeDirection direction = ForgeDirection.getOrientation(side);
         return direction == ForgeDirection.UNKNOWN ? ExtendedFacing.DEFAULT : ExtendedFacing.of(direction);
+    }
+
+    private static ExtendedFacing nativeFacing(TileEntity tile, Object context, int side) {
+        IAlignment alignment = alignment(tile, context);
+        return alignment == null ? ExtendedFacing.of(ForgeDirection.getOrientation(side))
+            : alignment.getExtendedFacing();
     }
 
     private static IAlignment alignment(TileEntity tile, Object context) {
@@ -837,14 +983,17 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
     }
 
     private NBTTagList capabilities(HologramChannelTrace.Report report) {
-        HologramCapabilities.Result capabilities = HologramCapabilities.describe(detachedContext, trigger, report)
+        HologramCapabilities.Result capabilities = HologramCapabilities
+            .describe(nativeTarget == null ? detachedContext : null, trigger, report)
             .withNativeDefinition(
-                nativePreview != null ? nativePreview.definition() : capture == null ? null : capture.definition)
+                nativeTarget != null ? nativeTarget.definition()
+                    : nativePreview != null ? nativePreview.definition() : capture == null ? null : capture.definition)
             .withSavedChannels(settings.getCompoundTag("channels"));
         if (nativePreview != null && controllerId >= 0) capabilities.withFixedSignal("gt_hatch", 1);
-        if (detachedContext != null && "com.miaokatze.gtsr.common.machine.orecenter.MTEMineralIntegrationCenter".equals(
-            detachedContext.getClass()
-                .getName()))
+        if (nativeTarget == null && detachedContext != null
+            && "com.miaokatze.gtsr.common.machine.orecenter.MTEMineralIntegrationCenter".equals(
+                detachedContext.getClass()
+                    .getName()))
             capabilities.withDefaultSignal("ore_center_sectors", 1);
         return capabilities.toNBT();
     }
@@ -868,6 +1017,24 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
         state.setBoolean("supported", true);
         state.setBoolean("keepController", true);
         state.setBoolean("quotesIncomplete", true);
+        state.setBoolean("nativeExecutionSupported", nativeWorkflow);
+        if (nativeTarget != null) {
+            state.setString("nativeInputDigest", nativeTarget.inputDigest());
+            state.setString("nativeTargetDigest", nativeTarget.targetDigest());
+            state.setString("nativeFootprintDigest", nativeTarget.footprintDigest());
+            state.setBoolean("nativeTargetReady", true);
+            state.setBoolean(
+                "siteFormed",
+                liveContext instanceof gregtech.api.metatileentity.implementations.MTEMultiBlockBase machine
+                    && machine.mMachine);
+            int present = 0, unknown = 0;
+            if (targetCells != null) for (var cell : targetCells) if (!cell.anchor()) {
+                if (cell.localObservationMissing()) unknown++;
+                else if (cell.actualBlock() != null && cell.actualBlock() != Blocks.air) present++;
+            }
+            state.setInteger("siteNonAir", present);
+            state.setInteger("siteUnknown", unknown);
+        }
         state.setInteger("dimension", dimension);
         state.setInteger("x", x);
         state.setInteger("y", y);
@@ -982,7 +1149,15 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
             }
         }
         String status = cell.anchor ? "protected" : cell.unknown ? "unsupported" : "missing";
-        if (!installedOnly && !alreadyDetached && world.isRemote && !cell.anchor) {
+        if (nativeTarget != null && !cell.anchor) {
+            boolean same = !observationMissing && !gtIdentityMissing && actualBlock == block && meta == wantMeta;
+            if (same && target != null && target.getItem() instanceof ItemMachines)
+                same = actual != null && actual.getItemDamage() == target.getItemDamage()
+                    && actualFacing == cell.previewFacing;
+            status = same ? "satisfied"
+                : observationMissing || gtIdentityMissing ? "unknown"
+                    : actualBlock == Blocks.air ? "missing" : "occupied";
+        } else if (!installedOnly && !alreadyDetached && world.isRemote && !cell.anchor) {
             status = site.observe(
                 cell.element,
                 observationMissing || gtIdentityMissing,
@@ -1083,6 +1258,15 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
 
     private int facingMask(HologramCapture.Cell cell, ItemStack sample) {
         if (cell.element == null) return 0;
+        if (nativeTarget != null) {
+            var target = nativeTargetCell(
+                cell.x - detachedTile.xCoord,
+                cell.y - detachedTile.yCoord,
+                cell.z - detachedTile.zCoord);
+            if (target != null && target.facing() >= 0 && HologramValues.sameMaterial(target.material(), sample))
+                return 1 << target.facing();
+            return 0; // A different model gets its facing from the next complete native replay.
+        }
         Map<HologramBlueprintResources.ExactKey, Integer> masks = facingMasks
             .computeIfAbsent(cell.element, ignored -> new HashMap<>());
         Integer present = masks.get(HologramBlueprintResources.ExactKey.borrowed(sample));

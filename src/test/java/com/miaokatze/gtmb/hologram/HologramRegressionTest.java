@@ -403,13 +403,11 @@ public final class HologramRegressionTest {
                 throw new RuntimeException(failure);
             }
         });
-        cases.put("isolated_stock_coke_oven_native_profile", () -> {
-            try {
-                HologramStockCokeOvenProfileRegression.run();
-            } catch (Exception failure) {
-                throw new RuntimeException(failure);
-            }
-        });
+        cases.put("native_full_target_action_protocol_and_observation", HologramNativeProjectionWireRegression::run);
+        cases.put("native_confirmation_anchor_cannot_be_replaced", HologramNativeAnchorIdentityRegression::run);
+        cases.put(
+            "native_controller_access_is_independent_of_control_permissions",
+            HologramNativeControllerAccessRegression::run);
         cases.put(
             "native_generated_source_water_preserves_editing_without_placement_authority",
             HologramNativeSourceWaterRegression::run);
