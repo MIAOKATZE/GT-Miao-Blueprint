@@ -36,7 +36,21 @@ final class HologramFourMachineWireAudit {
     private boolean closed;
     private String failure = "";
     private int beginCommands;
-    private int beginSources = -1, beginDestination = -1;
+    private Begin latestBegin;
+
+    static final class Begin {
+
+        final UUID request;
+        final int ordinal, operation, sources, destination;
+
+        Begin(UUID request, int ordinal, NBTTagCompound payload) {
+            this.request = request;
+            this.ordinal = ordinal;
+            operation = payload.getInteger("projectionOperation");
+            sources = payload.getInteger("sources");
+            destination = payload.getInteger("destination");
+        }
+    }
 
     HologramFourMachineWireAudit(Minecraft mc) throws Exception {
         connection = mc.getNetHandler();
@@ -70,8 +84,14 @@ final class HologramFourMachineWireAudit {
                                 || command == HologramStockNativeWire.Command.BEGIN_AFTER_PROBE.ordinal())
                                 synchronized (events) {
                                     beginCommands++;
-                                    beginSources = tag.getInteger("sources");
-                                    beginDestination = tag.getInteger("destination");
+                                    try {
+                                        latestBegin = new Begin(
+                                            UUID.fromString(tag.getString("nativeStockRequest")),
+                                            beginCommands,
+                                            tag);
+                                    } catch (IllegalArgumentException malformed) {
+                                        failure = "Real native BEGIN omitted a valid request UUID";
+                                    }
                                 }
                         }
                         append(event);
@@ -151,38 +171,15 @@ final class HologramFourMachineWireAudit {
         }
     }
 
-    int beginSources() {
+    Begin beginAfter(int ordinal) {
         synchronized (events) {
-            return beginSources;
-        }
-    }
-
-    int beginDestination() {
-        synchronized (events) {
-            return beginDestination;
+            return latestBegin != null && latestBegin.ordinal > ordinal ? latestBegin : null;
         }
     }
 
     HologramStockNativeWire.Reply latest(UUID request) {
         synchronized (events) {
             return latest.get(request);
-        }
-    }
-
-    HologramStockNativeWire.Reply latestTerminal() {
-        synchronized (events) {
-            HologramStockNativeWire.Reply last = null;
-            for (var reply : latest.values()) if ("COMPLETE".equals(
-                reply.phase()
-                    .name())
-                || "REFUSED".equals(
-                    reply.phase()
-                        .name())
-                || "STOPPED".equals(
-                    reply.phase()
-                        .name()))
-                last = reply;
-            return last;
         }
     }
 

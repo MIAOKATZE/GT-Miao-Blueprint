@@ -62,7 +62,8 @@ final class HologramFourMachineRuntimeProbe {
     private CompletableFuture<NBTTagCompound> cleanup;
     private List<Target> target, previous = new ArrayList<>();
     private NBTTagCompound before;
-    private UUID oldTerminal;
+    private HologramFourMachineWireAudit.Begin submittedBegin;
+    private int submittedOperation, submittedSources, submittedDestination;
     private int beginsBefore;
     private long submittedAt;
     private long cleanupAuditAt;
@@ -771,11 +772,7 @@ final class HologramFourMachineRuntimeProbe {
                 click("launcher.3");
                 return false;
             }
-            HologramStockNativeWire.Reply terminal = wire.latestTerminal();
-            oldTerminal = terminal == null ? null
-                : terminal.key()
-                    .request();
-            beginsBefore = wire.beginCount();
+            submittedBegin = null;
             require(
                 screen.nativeActionBlocker(operation)
                     .isEmpty(),
@@ -808,6 +805,12 @@ final class HologramFourMachineRuntimeProbe {
             }
             if (!present("materials.control.55") || !screen.ui.review.materialControlEnabled(55)) return false;
             record("material-confirm-" + operation, screen.ui.review.materialDialogProbeState());
+            beginsBefore = wire.beginCount();
+            submittedOperation = operation.ordinal();
+            submittedSources = (screen.ui.config.sourceEnabled("materialMain") ? 1 : 0)
+                | (screen.ui.config.sourceEnabled("materialContainers") ? 2 : 0)
+                | (screen.ui.config.sourceEnabled("materialMe") ? 4 : 0);
+            submittedDestination = destination;
             click("materials.control.55");
             record("material-submit-post-input-" + operation, screen.ui.review.materialDialogProbeState());
             record("material-submit-post-notice-" + operation, screen.ui.session.notice());
@@ -819,10 +822,31 @@ final class HologramFourMachineRuntimeProbe {
     }
 
     private boolean completed() {
-        HologramStockNativeWire.Reply reply = wire.latestTerminal();
-        if (reply == null || reply.key()
-            .request()
-            .equals(oldTerminal)) {
+        if (submittedBegin == null) {
+            submittedBegin = wire.beginAfter(beginsBefore);
+            if (submittedBegin != null) {
+                require(
+                    submittedBegin.ordinal == beginsBefore + 1,
+                    "Multiple real business BEGINs followed one submit");
+                require(
+                    submittedBegin.operation == submittedOperation && (submittedBegin.sources & 7) == submittedSources
+                        && submittedBegin.destination == submittedDestination,
+                    "Real business BEGIN differs from the submitted UI operation, source mask or destination");
+                record(
+                    "native-business-request",
+                    "request=" + submittedBegin.request
+                        + "; operation="
+                        + submittedBegin.operation
+                        + "; sources="
+                        + submittedBegin.sources
+                        + "; destination="
+                        + submittedBegin.destination);
+            }
+        }
+        HologramStockNativeWire.Reply reply = submittedBegin == null ? null : wire.latest(submittedBegin.request);
+        if (reply == null || reply.phase() != HologramStockNativeWire.Phase.COMPLETE
+            && reply.phase() != HologramStockNativeWire.Phase.REFUSED
+            && reply.phase() != HologramStockNativeWire.Phase.STOPPED) {
             if (System.nanoTime() - submittedAt > 2_000_000_000L && !HologramClientStockNative.OWNER
                 .pendingHere(HologramClientStockNative.context(Minecraft.getMinecraft())))
                 throw new IllegalStateException(
@@ -835,12 +859,14 @@ final class HologramFourMachineRuntimeProbe {
         require(
             reply.phase() == HologramStockNativeWire.Phase.COMPLETE,
             "Actual native action did not complete: " + reply);
-        require(wire.beginCount() > beginsBefore, "Terminal arrived without a real outbound business BEGIN");
+        require(
+            wire.beginCount() == submittedBegin.ordinal && submittedBegin.ordinal == beginsBefore + 1,
+            "Terminal did not correspond to exactly one real outbound business BEGIN");
         if (aeOnlyBuild() && phase == 4 || aeRecoveryReplace() && phase == 23) require(
-            (wire.beginSources() & 7) == 4,
+            (submittedBegin.sources & 7) == 4,
             "AE-only GUI selection did not enter actual business wire source mask");
         if (aeRecoveryReplace() && (phase == 23 || phase == 34)) require(
-            wire.beginDestination() == 1,
+            submittedBegin.destination == 1,
             "AE replacement recovery did not enter actual business wire destination");
         return true;
     }
