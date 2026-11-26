@@ -273,9 +273,11 @@ final class HologramHatchHintCaptureRegression {
                     && candidates.allows(material, false)
                     && candidates.allows(material, true),
                 "the exact sheet-metal contract is the native delegate's single fixed material");
+            HologramCasingFallback.Target fallback = HologramCasingFallback
+                .resolve(sheet, new ItemStack(Items.feather));
             SimpleAssert.that(
-                HologramCasingFallback.resolve(sheet, new ItemStack(Items.feather)) == null,
-                "sheet-metal support does not widen the ordinary casing fallback metadata boundary");
+                fallback != null && fallback.block == sheetBlock && fallback.meta == metadata,
+                "the exact inert fixed-block delegate retains its complete native sheet-metal metadata");
             IStructureElement<Object> custom = new gregtech.api.util.GTStructureUtility.ProxyStructureElement<Object, IStructureElement<Object>>(
                 StructureUtility.ofBlock(sheetBlock, metadata)) {
 

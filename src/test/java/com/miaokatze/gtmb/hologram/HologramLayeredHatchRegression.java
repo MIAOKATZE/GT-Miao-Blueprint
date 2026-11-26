@@ -249,8 +249,13 @@ final class HologramLayeredHatchRegression {
             });
         SimpleAssert.that(
             chooser.offers(c, 2, 64, 0, trigger)
-                .isEmpty() && factories[0] == 0,
-            "reviewed stock casing C uses the existing path and never instantiates a redundant controller");
+                .size() == 1 && HologramValues.same(
+                    chooser.offers(c, 2, 64, 0, trigger)
+                        .get(0),
+                    energy)
+                && factories[0] == 1
+                && queries[0] == 1,
+            "reviewed stock C has its own energy offer and opens the one capture-owned unfilled controller");
 
         HologramCapture.Cell rowA = new HologramCapture.Cell(a, 0, 64, 0, trigger, true);
         HologramNativeStructurePreview.readCandidates(
@@ -281,7 +286,7 @@ final class HologramLayeredHatchRegression {
             "C retains its own settled roles with neither A's buses nor a manual-only marker");
         SimpleAssert.that(
             chooser.offers(a, 4, 64, 0, trigger)
-                .size() == 2 && queries[0] == 1,
+                .size() == 2 && queries[0] == 2,
             "the same captured A root reuses only its own plain atLeast result");
 
         HologramCapture.Cell rowFluid = new HologramCapture.Cell(fluidRow, 6, 64, 0, trigger, true);
@@ -296,7 +301,7 @@ final class HologramLayeredHatchRegression {
                 && !rowFluid.candidateComplete
                 && HologramValues.same(rowFluid.candidates.get(0), extended)
                 && HologramValues.same(rowFluid.candidates.get(1), fluid)
-                && queries[0] == 2
+                && queries[0] == 3
                 && factories[0] == 1,
             "native fluid sibling remains available even without settled candidates and never becomes a preset");
         SimpleAssert.that(
@@ -309,7 +314,7 @@ final class HologramLayeredHatchRegression {
         ChannelDataAccessor.setChannelData(changedTrigger, "gtmb_test_mixed_hatch", 5);
         SimpleAssert.that(
             chooser.offers(a, 4, 64, 0, changedTrigger)
-                .size() == 2 && queries[0] == 3,
+                .size() == 2 && queries[0] == 4,
             "an exact changed trigger does not reuse a prior capture signal's offers");
         chooser.clear();
 

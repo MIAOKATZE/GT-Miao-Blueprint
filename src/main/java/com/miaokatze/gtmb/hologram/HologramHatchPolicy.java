@@ -51,6 +51,7 @@ public final class HologramHatchPolicy {
     private static final Map<IStructureElement<?>, NativeBrowse> NATIVE_BROWSE_ELEMENTS = new WeakHashMap<>();
     private static final Map<Object, Object> SINGLE_ROLE_BROWSE_BUILDERS = new WeakHashMap<>();
     private static final Map<IStructureElement<?>, NativeBrowse> SINGLE_ROLE_BROWSE_ELEMENTS = new WeakHashMap<>();
+    private static long automaticGeneration;
 
     private static final class NativeBrowse {
 
@@ -157,10 +158,13 @@ public final class HologramHatchPolicy {
         entries.forEach((type, count) -> values.put(type, Math.max(0, count.intValue())));
         REQUIREMENTS.put(builder, values);
         COLD_BUILDERS.remove(builder);
-        // The atLeast mixin supplies this after declare. Unlike declaration proof, native preview can
-        // ask a mixed role's own item filter on an owned, unfilled controller.
-        if (!DECLARED.containsKey(builder)) NATIVE_BROWSE_BUILDERS.put(builder, new Object());
+        // The atLeast return hook runs after declare. Restore the reviewed stock/Either route without adding
+        // native count queries to declarations with custom/layer counters. The previous mixed browse route stays
+        // advisory and is never used by the automatic candidate reader.
+        if (NATIVE_BROWSE_BUILDERS.remove(builder) != null) automaticGeneration++;
         try {
+            if (!DECLARED.containsKey(builder) || previewRule(DECLARED.get(builder), entries, true) != null)
+                NATIVE_BROWSE_BUILDERS.put(builder, new Object());
             Predicate<ItemStack> cold = coldPreviewRule(DECLARED.get(builder), entries);
             if (cold != null) COLD_BUILDERS.put(builder, cold);
         } catch (RuntimeException | LinkageError unavailable) {
@@ -170,17 +174,26 @@ public final class HologramHatchPolicy {
 
     private static Predicate<ItemStack> coldPreviewRule(List<IHatchElement<?>> declared,
         Map<? extends IHatchElement<?>, ? extends Number> entries) {
-        // Reproduce the pinned atLeast item filter on a cold context, where reviewed stock counts are zero.
+        return previewRule(declared, entries, false);
+    }
+
+    private static Predicate<ItemStack> previewRule(List<IHatchElement<?>> declared,
+        Map<? extends IHatchElement<?>, ? extends Number> entries, boolean automatic) {
+        // The manual cold rule reproduces zero stock counts. The automatic rule uses the allocator's separately
+        // accounted whole-machine deficits, so only native matching/blacklist data is needed here.
         // The blacklist is shared across ALL declared roles, not just those with a positive minimum.
-        if (declared == null || !entries.keySet()
-            .equals(new HashSet<>(declared))) return null;
+        if (declared == null || entries == null
+            || !entries.keySet()
+                .equals(new HashSet<>(declared)))
+            return null;
         List<IHatchElement<?>> needed = new ArrayList<>();
         Set<Class<? extends IMetaTileEntity>> blacklist = new HashSet<>();
         for (IHatchElement<?> type : declared) {
             Number minimum = entries.get(type);
             if (!(minimum instanceof Byte || minimum instanceof Short
                 || minimum instanceof Integer
-                || minimum instanceof Long) || !stockColdCount(type)) return null;
+                || minimum instanceof Long)
+                || !(automatic ? stockPresetRole(type, 0, new IdentityHashMap<>()) : stockColdCount(type))) return null;
             if (minimum.longValue() > 0) needed.add(type);
             blacklist.addAll(type.mteBlacklist());
         }
@@ -200,6 +213,43 @@ public final class HologramHatchPolicy {
             case Muffler, Maintenance, InputHatch, InputBus, OutputHatch, OutputBus, Energy, Dynamo -> true;
             default -> false;
         };
+    }
+
+    /**
+     * The whole-machine allocator accounts installed hatches itself. Its candidate rule needs stock matching and
+     * blacklist data, never the controller's current count. In particular .265 ExoticEnergy.count calls an
+     * overridable getter; do not execute it to browse the standard ExoticEnergy.or(Energy) declaration.
+     */
+    private static boolean stockPresetRole(IHatchElement<?> element, int depth,
+        IdentityHashMap<IHatchElement<?>, Boolean> path) {
+        if (element == null || depth >= 12 || path.put(element, Boolean.TRUE) != null) return false;
+        try {
+            if (stockColdCount(element) || element == HatchElement.ExoticEnergy) return true;
+            Class<?> type = element.getClass();
+            if (type.getClassLoader() != IHatchElement.class.getClassLoader()) return false;
+            if (type.getName()
+                .equals("gregtech.api.interfaces.HatchElementEither")) {
+                Field first = type.getDeclaredField("first"), second = type.getDeclaredField("second");
+                if (first.getType() != IHatchElement.class || second.getType() != IHatchElement.class) return false;
+                first.setAccessible(true);
+                second.setAccessible(true);
+                return stockPresetRole((IHatchElement<?>) first.get(element), depth + 1, path)
+                    && stockPresetRole((IHatchElement<?>) second.get(element), depth + 1, path);
+            }
+            if (!type.getName()
+                .equals("gregtech.api.interfaces.HatchElement") || MATCHES_HATCH == null) return false;
+            Field backing = type.getDeclaredField("mBacking"), count = type.getDeclaredField("mCount");
+            if (backing.getType() != IHatchElement.class || count.getType() != java.util.function.ToLongFunction.class)
+                return false;
+            backing.setAccessible(true);
+            count.setAccessible(true);
+            return count.get(element) == null
+                && stockPresetRole((IHatchElement<?>) backing.get(element), depth + 1, path);
+        } catch (ReflectiveOperationException | RuntimeException changedContract) {
+            return false;
+        } finally {
+            path.remove(element);
+        }
     }
 
     public static synchronized Map<IHatchElement<?>, Integer> requirements(IStructureElement<?> element) {
@@ -249,6 +299,8 @@ public final class HologramHatchPolicy {
 
     public static synchronized void declare(Object builder, Collection<? extends IHatchElement<?>> elements,
         boolean sharedBlacklist) {
+        if (NATIVE_BROWSE_BUILDERS.containsKey(builder) || SINGLE_ROLE_BROWSE_BUILDERS.containsKey(builder))
+            automaticGeneration++;
         SINGLE_IDS.remove(builder);
         COLD_BUILDERS.remove(builder);
         NATIVE_BROWSE_BUILDERS.remove(builder);
@@ -352,6 +404,8 @@ public final class HologramHatchPolicy {
 
     // Native shouldReject gates survival auto-placement, not the explicit, observed hatch ID.
     public static synchronized void automaticReject(Object builder) {
+        if (NATIVE_BROWSE_BUILDERS.containsKey(builder) || SINGLE_ROLE_BROWSE_BUILDERS.containsKey(builder))
+            automaticGeneration++;
         BUILDERS.remove(builder);
         REQUIREMENTS.remove(builder);
         DECLARED.remove(builder);
@@ -430,6 +484,8 @@ public final class HologramHatchPolicy {
         // GT's structural check calls the native adder only. Additional item filters govern automatic funding
         // and candidate queries, and are never invoked for the already selected model's structural proof.
         SINGLE_IDS.remove(builder);
+        if (NATIVE_BROWSE_BUILDERS.containsKey(builder) || SINGLE_ROLE_BROWSE_BUILDERS.containsKey(builder))
+            automaticGeneration++;
         BUILDERS.remove(builder);
         COLD_BUILDERS.remove(builder);
         NATIVE_BROWSE_BUILDERS.remove(builder);
@@ -451,10 +507,13 @@ public final class HologramHatchPolicy {
         if (element != null && DECLARED.containsKey(builder)) ELEMENT_DECLARED.put(element, DECLARED.get(builder));
         Predicate<ItemStack> cold = COLD_BUILDERS.get(builder);
         if (cold != null && element != null) COLD_ELEMENTS.put(element, cold);
+        else COLD_ELEMENTS.remove(element);
         Object browse = NATIVE_BROWSE_BUILDERS.get(builder);
         if (element != null && browse != null) NATIVE_BROWSE_ELEMENTS.put(element, new NativeBrowse(builder, browse));
+        else NATIVE_BROWSE_ELEMENTS.remove(element);
         Object single = SINGLE_ROLE_BROWSE_BUILDERS.get(builder);
         if (single != null) SINGLE_ROLE_BROWSE_ELEMENTS.put(element, new NativeBrowse(builder, single));
+        else SINGLE_ROLE_BROWSE_ELEMENTS.remove(element);
     }
 
     /** Only the plain native atLeast filter; arbitrary filters and wrappers do not inherit this marker. */
@@ -470,6 +529,17 @@ public final class HologramHatchPolicy {
     /** Known native reference offers, not structural or auto-placement authority. */
     static synchronized Predicate<ItemStack> coldPreviewPredicate(IStructureElement<?> element) {
         return COLD_ELEMENTS.get(element);
+    }
+
+    /** Automatic presets use reviewed stock matching/blacklists, with the live mutable-builder token. */
+    static synchronized Predicate<ItemStack> automaticAtLeastPredicate(IStructureElement<?> element) {
+        return nativeBrowseAtLeast(element)
+            ? previewRule(ELEMENT_DECLARED.get(element), ELEMENT_REQUIREMENTS.get(element), true)
+            : null;
+    }
+
+    static synchronized long automaticGeneration() {
+        return automaticGeneration;
     }
 
     static synchronized Predicate<ItemStack> structuralPredicate(IStructureElement<?> element, Object context,

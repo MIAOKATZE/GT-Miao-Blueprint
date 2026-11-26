@@ -741,7 +741,7 @@ public final class HologramLocalPreviewRegression {
             + "{\"block\":\"detached:unregistered\",\"item\":\"detached:unregistered\",\"excluded\":true},"
             + "{\"block\":\"detached:unregistered\",\"item\":\"detached:unregistered\",\"metadata\":1.2},"
             + "{\"block\":\"detached:unregistered\",\"item\":\"detached:unregistered\",\"futureMaterialField\":true},"
-            + "{\"block\":\"minecraft:air\",\"metadata\":16}],"
+            + "{\"block\":\"minecraft:air\",\"metadata\":-1}],"
             + "\"nbt\":[\""
             + encoded
             + "\"]}";

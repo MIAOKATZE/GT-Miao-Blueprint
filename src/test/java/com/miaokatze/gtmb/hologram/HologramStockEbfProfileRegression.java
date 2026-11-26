@@ -58,7 +58,7 @@ public final class HologramStockEbfProfileRegression {
         int status = 0;
         try {
             if (MinecraftTestBootstrap.enter(HologramStockEbfProfileRegression.class, args)) {
-                run();
+                HologramNativeSavedWorldRegression.withOfflineRegistries(HologramStockEbfProfileRegression::run);
                 System.out.println("HologramStockEbfProfileRegression passed (offline, no world mutation)");
             }
         } catch (Throwable failure) {
@@ -121,7 +121,10 @@ public final class HologramStockEbfProfileRegression {
                 throw new AssertionError("qualification must not request extension materials");
             }
         };
-        HologramNativePlacement.register(adapterId, unexpected);
+        // The standalone profile checks prove the closed EBF path never queries an extension. The supplied
+        // construction fixture also exercises generic declared materials, whose admission deliberately queries
+        // registered placement adapters. Do not apply the closed-profile tripwire to that separate contract.
+        if (check == null) HologramNativePlacement.register(adapterId, unexpected);
         try {
             var access = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
             access.setAccessible(true);
@@ -266,6 +269,7 @@ public final class HologramStockEbfProfileRegression {
             actor.inventory = new InventoryPlayer(actor);
             var inventory = actor.inventory;
             var settings = new HologramMaterials.Settings();
+            settings.containers = settings.me = false;
             var casing = qualified.component(Part.TOP);
             var coil = qualified.component(Part.COIL);
             casing.stackSize = HologramStockEbfProfile.CASING_BOUND;
@@ -277,8 +281,16 @@ public final class HologramStockEbfProfileRegression {
                     && casing.stackSize + coil.stackSize == 28,
                 "both exact stock identities fund at most 28 shell writes");
             settings.priority = 1;
-            SimpleAssert
-                .that(!qualified.fullyFunded(inventory, 0, settings), "never substitute main for configured priority");
+            SimpleAssert.that(
+                qualified.fullyFunded(inventory, 0, settings) && casing.stackSize + coil.stackSize == 28,
+                "priority orders enabled providers; an enabled main source remains valid and is not debited");
+            settings.main = false;
+            settings.containers = true;
+            SimpleAssert.that(
+                !qualified.fullyFunded(inventory, 0, settings) && casing.stackSize + coil.stackSize == 28,
+                "container-only qualification cannot count or debit disabled main stock");
+            settings.main = true;
+            settings.containers = false;
             settings.priority = 0;
             coil.setItemDamage(1);
             SimpleAssert
@@ -297,7 +309,7 @@ public final class HologramStockEbfProfileRegression {
         } catch (ReflectiveOperationException | java.io.IOException failure) {
             throw new AssertionError("actual EBF offline profile fixture", failure);
         } finally {
-            HologramNativePlacement.unregister(adapterId, unexpected);
+            if (check == null) HologramNativePlacement.unregister(adapterId, unexpected);
             for (int i = 0; i < IDS.length; i++) GregTechAPI.METATILEENTITIES[IDS[i]] = saved[i];
             GregTechAPI.sBlockCasings1 = savedCasing;
             GregTechAPI.sBlockCasings5 = savedCoil;

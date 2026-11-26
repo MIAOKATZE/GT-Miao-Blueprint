@@ -40,7 +40,7 @@ public final class HologramNativeSavedWorldRegression {
 
     private static boolean installedAeFixture;
 
-    static void withOfflineRegistries(Runnable work) throws Exception {
+    public static void withOfflineRegistries(Runnable work) throws Exception {
         isolated(unsafe -> work.run());
     }
 

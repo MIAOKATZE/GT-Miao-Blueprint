@@ -665,7 +665,8 @@ final class HologramEditorConfigurationDialogs {
                 () -> ui.config.nativePresetDowngrade() ? "缺料允许降级 ✓" : "缺料严格保持等级",
                 () -> true,
                 () -> "保留原结构配额、手选目标与现场仓室。"));
-        basic.child(note(() -> "可选快捷搭配；不选择预设也可确认构建。"));
+        basic.child(
+            note(() -> ui.config.basicPresetActionAvailable() ? "可选快捷搭配；不选择预设也可确认构建。" : "未选择预设时先选择等级；不选择预设也可确认构建。"));
         Flow custom = Flow.col()
             .sizeRel(1f)
             .childPadding(4);
@@ -697,7 +698,7 @@ final class HologramEditorConfigurationDialogs {
                 106,
                 () -> ui.config.nativeCustomPresets() ? "应用所选搭配" : "生成预设目标",
                 () -> editable() && ui.session.state().data.getBoolean("supported")
-                    && (ui.config.nativeCustomPresets() ? ui.config.nativeSelectedPreset()
+                    && (ui.config.nativeCustomPresets() ? ui.config.customPresetActionAvailable()
                         : ui.config.basicPresetActionAvailable()),
                 () -> ui.session.state().data.getBoolean("localStandardController") ? "明确提交后由服务器核对并应用原结构声明配额；不扣料、不施工。"
                     : reason()).expanded());
