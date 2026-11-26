@@ -295,6 +295,13 @@ public final class HologramDemolition {
 
     static Removal removeBlock(EntityPlayerMP player, World world, int x, int y, int z,
         java.util.function.BooleanSupplier ownership) throws IOException {
+        return removeBlock(player, world, x, y, z, ownership, ownership);
+    }
+
+    /** Native execution can retain its exact permit after its final controller has legitimately become air. */
+    static Removal removeBlock(EntityPlayerMP player, World world, int x, int y, int z,
+        java.util.function.BooleanSupplier ownership, java.util.function.BooleanSupplier removedOwnership)
+        throws IOException {
         boolean scoped = ownership != null;
         java.util.function.BooleanSupplier stillOwned = scoped ? ownership : () -> true;
         if (!stillOwned.getAsBoolean()) return new Removal(false, Collections.emptyList(), null);
@@ -302,6 +309,14 @@ public final class HologramDemolition {
         Block block = world.getBlock(x, y, z);
         int metadata = world.getBlockMetadata(x, y, z);
         TileEntity tile = world.getTileEntity(x, y, z);
+        // Permission and source identity are independent: callbacks before removal still require the exact source.
+        java.util.function.BooleanSupplier sourceOwned = () -> stillOwned.getAsBoolean()
+            && (!scoped || HologramWorldTransactions.sameWorldCell(world, cell, block, metadata, tile));
+        java.util.function.BooleanSupplier harvestOwned = () -> removedOwnership != null
+            && removedOwnership.getAsBoolean()
+            && world.blockExists(x, y, z)
+            && (HologramWorldTransactions.sameWorldCell(world, cell, block, metadata, tile)
+                || world.getBlock(x, y, z) == net.minecraft.init.Blocks.air && world.getTileEntity(x, y, z) == null);
         if (!player.capabilities.allowEdit || block.getBlockHardness(world, x, y, z) < 0
             || !world.canMineBlock(player, x, y, z)
             || !player.canPlayerEdit(x, y, z, 1, player.getHeldItem()))
@@ -310,42 +325,62 @@ public final class HologramDemolition {
             DropScope scope = new DropScope(world, scoped, x, y, z)) {
             try {
                 BlockEvent.BreakEvent event = new BlockEvent.BreakEvent(x, y, z, world, block, metadata, player);
-                if (!stillOwned.getAsBoolean() || MinecraftForge.EVENT_BUS.post(event)
+                if (!sourceOwned.getAsBoolean() || MinecraftForge.EVENT_BUS.post(event)
                     || !HologramWorldTransactions.sameWorldCell(world, cell, block, metadata, tile)
-                    || !stillOwned.getAsBoolean())
+                    || !sourceOwned.getAsBoolean())
                     return new Removal(
                         !HologramWorldTransactions.sameWorldCell(world, cell, block, metadata, tile),
                         scope.items,
-                        null);
+                        scoped ? new IOException("原生拆除检查被取消或源格发生变化。") : null);
                 ItemStack held = player.getHeldItem();
                 if (held != null && held.getItem()
                     .onBlockStartBreak(held, x, y, z, player)
                     || !HologramWorldTransactions.sameWorldCell(world, cell, block, metadata, tile)
-                    || !stillOwned.getAsBoolean())
+                    || !sourceOwned.getAsBoolean())
                     return new Removal(
                         !HologramWorldTransactions.sameWorldCell(world, cell, block, metadata, tile),
                         scope.items,
-                        null);
+                        scoped ? new IOException("原生拆除检查被取消或源格发生变化。") : null);
                 // Unlike manual mining, a rejected harvest keeps the block instead of destroying it without loot.
-                if (!block.canHarvestBlock(player, metadata) || !stillOwned.getAsBoolean())
-                    return new Removal(false, scope.items, null);
+                if (!block.canHarvestBlock(player, metadata) || !sourceOwned.getAsBoolean()) return new Removal(
+                    scoped && !HologramWorldTransactions.sameWorldCell(world, cell, block, metadata, tile),
+                    scope.items,
+                    scoped ? new IOException("原生采收资格或执行授权已变化。") : null);
                 if (held != null) {
                     held.func_150999_a(world, block, x, y, z, player);
                     if (held.stackSize == 0) player.destroyCurrentEquippedItem();
                 }
                 if (!HologramWorldTransactions.sameWorldCell(world, cell, block, metadata, tile))
-                    return new Removal(true, scope.items, null);
-                if (!stillOwned.getAsBoolean()) return new Removal(false, scope.items, null);
+                    return new Removal(true, scope.items, scoped ? new IOException("原生工具回调改变了源格。") : null);
+                if (!sourceOwned.getAsBoolean()) return new Removal(
+                    scoped && !HologramWorldTransactions.sameWorldCell(world, cell, block, metadata, tile),
+                    scope.items,
+                    scoped ? new IOException("原生拆除授权已变化。") : null);
                 block.onBlockHarvested(world, x, y, z, metadata, player);
-                if (!HologramWorldTransactions.sameWorldCell(world, cell, block, metadata, tile))
-                    return new Removal(world.isAirBlock(x, y, z), scope.items, null);
-                if (!stillOwned.getAsBoolean() || !block.removedByPlayer(world, player, x, y, z, true))
-                    return new Removal(false, scope.items, null);
+                if (!HologramWorldTransactions.sameWorldCell(world, cell, block, metadata, tile)) return new Removal(
+                    scoped ? !HologramWorldTransactions.sameWorldCell(world, cell, block, metadata, tile)
+                        : world.isAirBlock(x, y, z),
+                    scope.items,
+                    scoped ? new IOException("原生拆除前置回调改变了源格。") : null);
+                if (!sourceOwned.getAsBoolean()) return new Removal(
+                    scoped && !HologramWorldTransactions.sameWorldCell(world, cell, block, metadata, tile),
+                    scope.items,
+                    scoped ? new IOException("原生拆除授权已变化。") : null);
+                if (!block.removedByPlayer(world, player, x, y, z, true)) return new Removal(
+                    scoped && !HologramWorldTransactions.sameWorldCell(world, cell, block, metadata, tile),
+                    scope.items,
+                    scoped ? new IOException("原生拆除回调拒绝完成，实际变化和掉落保留。") : null);
+                // Ordinary blocks remove immediately; GT machines can defer removal until harvestBlock.
+                // Only this successful removedByPlayer transition admits original identity or exact empty air.
+                if (scoped && !harvestOwned.getAsBoolean()) return new Removal(
+                    !HologramWorldTransactions.sameWorldCell(world, cell, block, metadata, tile),
+                    scope.items,
+                    new IOException("原生拆除后的授权或源格状态已变化，未继续采收。"));
                 block.onBlockDestroyedByPlayer(world, x, y, z, metadata);
-                // Audited GT removal defers the real write to harvestBlock. A listener that replaced the
-                // original meanwhile cannot make harvestBlock consume its neighbor/new device.
-                if (scoped && !stillOwned.getAsBoolean())
-                    return new Removal(world.blockExists(x, y, z) && world.isAirBlock(x, y, z), scope.items, null);
+                if (scoped && !harvestOwned.getAsBoolean()) return new Removal(
+                    !HologramWorldTransactions.sameWorldCell(world, cell, block, metadata, tile),
+                    scope.items,
+                    new IOException("原生拆除后的授权或源格状态已变化，未继续采收。"));
                 block.harvestBlock(world, player, x, y, z, metadata);
                 block.dropXpOnBlockBreak(world, x, y, z, event.getExpToDrop());
                 return new Removal(

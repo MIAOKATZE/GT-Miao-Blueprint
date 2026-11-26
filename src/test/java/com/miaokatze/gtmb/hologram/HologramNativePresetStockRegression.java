@@ -35,7 +35,7 @@ final class HologramNativePresetStockRegression {
         var wire = (QuoteChannel) unsafe.allocateInstance(QuoteChannel.class);
         wire.context = context;
         wire.player = player;
-        int id = HologramStockCokeOvenProfile.HATCH;
+        int id = gregtech.api.enums.MetaTileEntityIDs.COKE_OVEN_HATCH.ID;
         int[] hatch = { id };
         int sources = HologramProjectedMainPolicy.settingsKey(HologramMaterials.read(player.getHeldItem()));
         var previous = player.inventory.mainInventory[2];
@@ -63,11 +63,16 @@ final class HologramNativePresetStockRegression {
                     .equals("owner"),
                 "wrong projector cannot query");
             SimpleAssert.that(
-                wire.ask(3, tool, source, sources ^ 2, hatch) && wire.last.reason()
+                wire.ask(3, tool, source, (sources & ~24) | 24, hatch) && wire.last.reason()
                     .equals("sources"),
-                "client cannot choose sources other than current tool settings");
+                "an invalid source priority is rejected before querying providers");
             SimpleAssert.that(
-                wire.ask(4, tool, source, sources, new int[] { HologramStockCokeOvenProfile.CONTROLLER })
+                wire.ask(
+                    4,
+                    tool,
+                    source,
+                    sources,
+                    new int[] { gregtech.api.enums.MetaTileEntityIDs.COKE_OVEN_CONTROLLER.ID })
                     && wire.last.reason()
                         .equals("invalid"),
                 "an ordinary MTE cannot be used as a stock oracle");
@@ -117,7 +122,7 @@ final class HologramNativePresetStockRegression {
                 source.x,
                 source.y,
                 source.z,
-                HologramStockCokeOvenProfile.CONTROLLER,
+                gregtech.api.enums.MetaTileEntityIDs.COKE_OVEN_CONTROLLER.ID,
                 source.machine.getExtendedFacing()
                     .ordinal(),
                 source.slot,

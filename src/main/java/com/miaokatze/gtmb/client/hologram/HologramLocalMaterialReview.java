@@ -3,6 +3,8 @@
 
 package com.miaokatze.gtmb.client.hologram;
 
+import static com.miaokatze.gtmb.client.hologram.HologramUiText.projectorOr;
+
 import java.math.BigInteger;
 import java.util.HashMap;
 import java.util.Map;
@@ -25,7 +27,7 @@ final class HologramLocalMaterialReview {
     private final int selected, scope, layer;
     private final int[] selection;
     private final boolean sealedWholeTarget;
-    final HologramLocalHatchDelta hatchDelta;
+    final HologramNativeTargetReview hatchDelta;
     private int targetCount, unaccounted;
     private NBTTagCompound theory, visible = new NBTTagCompound();
     private ItemStack[] observed;
@@ -48,9 +50,8 @@ final class HologramLocalMaterialReview {
         scope = settings.getInteger("scope");
         layer = settings.getInteger("layer");
         selection = this.settings.getIntArray("selectedIndices");
-        int mode = source.data.getInteger("mode");
-        hatchDelta = source.data.getBoolean("localStandardController") && (mode == 1 || mode == 2)
-            ? new HologramLocalHatchDelta(source, this.settings)
+        hatchDelta = source.data.getBoolean("localStandardController")
+            ? new HologramNativeTargetReview(source, this.settings)
             : null;
         if (hatchDelta != null) {
             theory = hatchDelta.theory;
@@ -89,7 +90,15 @@ final class HologramLocalMaterialReview {
     }
 
     boolean current(HologramState state, int layer) {
-        if (hatchDelta != null) return !closed && source == state && this.layer == layer;
+        if (hatchDelta != null) return !closed && source.cells == state.cells
+            && source.session.equals(state.session)
+            && source.data.getString("generation")
+                .equals(state.data.getString("generation"))
+            && !state.data.getBoolean("targetClosed")
+            && source.data.getLong("nativeTargetRevision") == state.data.getLong("nativeTargetRevision")
+            && source.data.getInteger("nativeAction") == state.data.getInteger("nativeAction")
+            && (state.data.getBoolean("nativeTargetReady")
+                || state.data.getInteger("nativeAction") == 3 && state.data.getLong("nativeObservationToken") > 0);
         if (source.nativeViewport != null)
             return !closed && source == state && this.layer == layer && source.nativeViewport.currentProviders();
         return !closed && source.localMaterialIndex == state.localMaterialIndex
@@ -128,16 +137,22 @@ final class HologramLocalMaterialReview {
     }
 
     String scopeLabel() {
-        return scope == 2 ? "已选范围的目标材料" : "当前范围的目标材料";
+        return scope == 2 ? projectorOr("native.ui.target_materials_in_the_selected_scope", "已选范围的目标材料")
+            : projectorOr("native.ui.target_materials_in_the_current_scope", "当前范围的目标材料");
     }
 
     String status() {
         if (hatchDelta != null) return hatchDelta.status();
-        if (!ready() && source.nativeViewport != null) return "此范围尚未核算，不能作为零用量";
-        if (!ready()) return "当前来源尚未提供材料汇总，请重新读取结构";
-        String status = targetCount + " 个目标格";
-        if (unaccounted > 0) status += " · " + unaccounted + " 格未核算";
-        if (theory.getBoolean("alternatives") || theory.getBoolean("cacheReviewRequired")) status += " · 替代料或设备缓存待施工核验";
+        if (!ready() && source.nativeViewport != null)
+            return projectorOr("native.ui.this_scope_is_not_calculated_it_cannot", "此范围尚未核算，不能作为零用量");
+        if (!ready())
+            return projectorOr("native.ui.this_source_has_not_supplied_material_totals", "当前来源尚未提供材料汇总，请重新读取结构");
+        String status = targetCount + (" " + projectorOr("native.ui.target_cells", "个目标格"));
+        if (unaccounted > 0)
+            status += " · " + unaccounted + (" " + projectorOr("native.ui.uncalculated_cells", "格未核算"));
+        if (theory.getBoolean("alternatives") || theory.getBoolean("cacheReviewRequired")) status += (" " + projectorOr(
+            "native.ui.alternatives_or_device_caches_require_construction_verification",
+            "· 替代料或设备缓存待施工核验"));
         return status;
     }
 

@@ -3,6 +3,8 @@
 
 package com.miaokatze.gtmb.client.hologram;
 
+import static com.miaokatze.gtmb.client.hologram.HologramUiText.projectorOr;
+
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
@@ -67,29 +69,29 @@ final class HologramEditorNativeTools {
         row.child(
             local(
                 HologramEditorTools.PROJECTION_MODE,
-                () -> "\u6295\u5f71",
+                () -> projectorOr("native_common.tab.projection", "投影"),
                 null,
                 () -> !ui.workspaces.switching(),
                 ui.workspaces::projection,
-                () -> "\u771f\u5b9e\u63a7\u5236\u5668\u6295\u5f71\uff1b\u4e0e\u84dd\u56fe\u8349\u7a3f\u72ec\u7acb",
+                () -> projectorOr("native_common.tab.projection_help", "真实控制器投影；与蓝图草稿独立"),
                 false).size(42, 18));
         row.child(
             local(
                 HologramEditorTools.BLUEPRINT_MODE,
-                () -> "\u84dd\u56fe",
+                () -> projectorOr("native_common.tab.blueprint", "蓝图"),
                 null,
                 () -> !ui.workspaces.switching(),
                 ui.workspaces::blueprint,
-                () -> "\u72ec\u7acb\u84dd\u56fe\u8349\u7a3f\uff1b\u4fdd\u7559\u6295\u5f71\u8bbe\u7f6e",
+                () -> projectorOr("native_common.tab.blueprint_help", "独立蓝图草稿；保留投影设置"),
                 false).size(42, 18));
         row.child(
             local(
                 HologramEditorTools.CUT_MODE,
-                () -> "\u526a\u5207",
+                () -> projectorOr("native_common.tab.cut", "剪切"),
                 null,
                 () -> !ui.workspaces.switching(),
                 ui.workspaces::isCut,
-                () -> "\u540c\u5de5\u4f5c\u53f0\u5185\u67e5\u770b\u72ec\u7acb\u526a\u5207\u5217\u8868",
+                () -> projectorOr("native_common.tab.cut_help", "同工作台内查看独立剪切列表"),
                 false).size(42, 18));
         return row;
     }
@@ -110,7 +112,8 @@ final class HologramEditorNativeTools {
             .coverChildrenWidth()
             .height(18)
             .childPadding(2);
-        String[] labels = { "\u7b49\u8ddd", "\u524d", "\u9876", "\u4fa7" };
+        String[] labels = { projectorOr("native_common.view.iso", "等距"), projectorOr("native_common.view.front", "前"),
+            projectorOr("native_common.view.top", "顶"), projectorOr("native_common.view.side", "侧") };
         String[] names = { "resetView", "frontView", "topView", "rightView" };
         for (int i = 0; i < names.length; i++) {
             final String name = names[i], label = labels[i];
@@ -134,7 +137,7 @@ final class HologramEditorNativeTools {
         rail.child(
             HologramEditorNativeTheme
                 .toolButton(
-                    () -> "结构列表",
+                    () -> projectorOr("native_common.structure_list_short", "结构列表"),
                     "structure",
                     ui.shell::toggleStructures,
                     () -> true,
@@ -166,7 +169,7 @@ final class HologramEditorNativeTools {
                 .railPresentation(
                     local(
                         HologramEditorTools.TOGGLE_FLOATING,
-                        () -> "浮动工具",
+                        () -> projectorOr("native_common.floating_tools", "浮动工具"),
                         "detach",
                         () -> true,
                         this::floatingOpen,
@@ -261,20 +264,25 @@ final class HologramEditorNativeTools {
 
     private String commandHelp(String name) {
         String help = commands().help(name);
-        return "selectAll".equals(name) ? help + "\n画布点选单格；Shift 拖动框选；拖动鼠标调整视角，滚轮缩放。" : help;
+        return "selectAll".equals(name)
+            ? help + "\n" + projectorOr("native_common.selection_help", "画布点选单格；Shift 拖动框选；拖动鼠标调整视角，滚轮缩放。")
+            : help;
     }
 
     private String commandLabel(String name) {
         int control = commands().get(name).control;
         if (control >= 10 && control <= 15) {
             String label = ui.preview.viewControlLabel(control);
-            return control == 10 ? "显示：" + label : label;
+            return control == 10 ? projectorOr("native_common.display_prefix", "显示：%s", label) : label;
         }
         if (control == 196) return ui.bindings.selectedNetworkGroup()
             .isEmpty()
-                ? "量子绑定 · " + ui.bindings.networkGroups()
-                    .tagCount()
-                : "网络组 " + ui.bindings.selectedNetworkGroup();
+                ? projectorOr(
+                    "native_common.quantum_prefix",
+                    "量子绑定 · %s",
+                    ui.bindings.networkGroups()
+                        .tagCount())
+                : projectorOr("native_common.network_prefix", "网络组 %s", ui.bindings.selectedNetworkGroup());
         return commands().get(name).label;
     }
 
@@ -364,7 +372,7 @@ final class HologramEditorNativeTools {
             .padding(7)
             .childPadding(5);
         body.child(
-            HologramEditorNativeTheme.label(() -> "编辑工具 · 拖动空白处移动")
+            HologramEditorNativeTheme.label(() -> projectorOr("native_common.float_title", "编辑工具 · 拖动空白处移动"))
                 .widthRel(1f)
                 .height(18));
         ListWidget<IWidget, ?> rows = new ListWidget<>().name("editor_native_floating_actions")
@@ -377,7 +385,7 @@ final class HologramEditorNativeTools {
         body.child(
             local(
                 HologramEditorTools.COLLAPSE_FLOATING,
-                () -> "收起工具",
+                () -> projectorOr("native_common.collapse_tools", "收起工具"),
                 "collapse-down",
                 () -> true,
                 () -> false,
@@ -385,7 +393,11 @@ final class HologramEditorNativeTools {
                 false).widthRel(1f)
                     .height(18));
         panel.child(body);
-        ui.shell.registerControl(FLOAT_PANEL, panel, () -> "浮动工具", this::floatingOpen);
+        ui.shell.registerControl(
+            FLOAT_PANEL,
+            panel,
+            () -> projectorOr("native_common.floating_tools", "浮动工具"),
+            this::floatingOpen);
         return panel;
     }
 
@@ -426,7 +438,7 @@ final class HologramEditorNativeTools {
             .padding(7)
             .childPadding(4);
         body.child(
-            HologramEditorNativeTheme.label(() -> "当前选择")
+            HologramEditorNativeTheme.label(() -> projectorOr("native_common.current_selection", "当前选择"))
                 .widthRel(1f)
                 .height(16));
         ListWidget<IWidget, ?> entries = new ListWidget<>().name("editor_native_context_actions")
@@ -447,15 +459,19 @@ final class HologramEditorNativeTools {
         body.child(
             local(
                 HologramEditorTools.MENU_CLOSE,
-                () -> "返回编辑",
+                () -> projectorOr("native_common.return_edit", "返回编辑"),
                 "close",
                 () -> true,
                 () -> false,
-                () -> "关闭此菜单，保留选择 · Esc / E",
+                () -> projectorOr("native_common.close_menu_help", "关闭此菜单，保留选择 · Esc / E"),
                 false).widthRel(1f)
                     .height(18));
         panel.child(body);
-        ui.shell.registerControl(CONTEXT_PANEL, panel, () -> "右键工具", this::contextOpen);
+        ui.shell.registerControl(
+            CONTEXT_PANEL,
+            panel,
+            () -> projectorOr("native_common.context_tools", "右键工具"),
+            this::contextOpen);
         return panel;
     }
 
@@ -484,7 +500,7 @@ final class HologramEditorNativeTools {
             .padding(8)
             .childPadding(5);
         body.child(
-            HologramEditorNativeTheme.label(() -> "编辑器快捷键 · 点击条目后按新组合")
+            HologramEditorNativeTheme.label(() -> projectorOr("native_common.shortcut_title", "编辑器快捷键 · 点击条目后按新组合"))
                 .widthRel(1f)
                 .height(18));
         ListWidget<IWidget, ?> rows = new ListWidget<>().name("editor_native_shortcut_list")
@@ -498,7 +514,9 @@ final class HologramEditorNativeTools {
                 action(
                     id,
                     () -> command.label + "："
-                        + (ui.shortcuts.captureBinding() == index ? "请按键（Esc取消）" : commands().shortcut(command.name)),
+                        + (ui.shortcuts.captureBinding() == index
+                            ? projectorOr("native_common.shortcut_capture", "请按键（Esc取消）")
+                            : commands().shortcut(command.name)),
                     command.icon,
                     () -> true,
                     () -> ui.shortcuts.captureBinding() == index,
@@ -509,7 +527,8 @@ final class HologramEditorNativeTools {
         }
         body.child(rows);
         body.child(
-            HologramEditorNativeTheme.label(() -> "字段焦点优先 · E/Esc逐级返回 · 撤销不回滚世界")
+            HologramEditorNativeTheme
+                .label(() -> projectorOr("native_common.shortcut_priority", "字段焦点优先 · E/Esc逐级返回 · 撤销不回滚世界"))
                 .widthRel(1f)
                 .height(16));
         Flow footer = Flow.row()
@@ -519,22 +538,22 @@ final class HologramEditorNativeTools {
         footer.child(
             action(
                 BASE + 960,
-                () -> "恢复默认",
+                () -> projectorOr("native_common.restore_defaults", "恢复默认"),
                 "reset-view",
                 () -> true,
                 () -> false,
-                () -> "恢复全部编辑器命令的默认键位。",
+                () -> projectorOr("native_common.shortcut_restore_help", "恢复全部编辑器命令的默认键位。"),
                 false,
                 () -> ui.shortcuts.activateControl(115)).width(105)
                     .height(20));
         footer.child(
             action(
                 BASE + 961,
-                () -> "返回编辑",
+                () -> projectorOr("native_common.return_edit", "返回编辑"),
                 "close",
                 () -> true,
                 () -> false,
-                () -> "关闭键位编辑窗口。",
+                () -> projectorOr("native_common.shortcut_close_help", "关闭键位编辑窗口。"),
                 false,
                 this::closeShortcuts).width(105)
                     .height(20));
@@ -544,7 +563,11 @@ final class HologramEditorNativeTools {
             ui.shortcuts.shortcutsDrawer(false);
             ui.shortcuts.cancelBindingCapture();
         });
-        ui.shell.registerControl(KEYS_PANEL, panel, () -> "快捷键", this::shortcutsOpen);
+        ui.shell.registerControl(
+            KEYS_PANEL,
+            panel,
+            () -> projectorOr("native_common.shortcuts", "快捷键"),
+            this::shortcutsOpen);
         return panel;
     }
 
@@ -572,14 +595,14 @@ final class HologramEditorNativeTools {
             .padding(8)
             .childPadding(5);
         body.child(
-            HologramEditorNativeTheme.label(() -> "视图与工作区")
+            HologramEditorNativeTheme.label(() -> projectorOr("native_common.view_workspace", "视图与工作区"))
                 .widthRel(1f)
                 .height(18));
         ListWidget<IWidget, ?> rows = new ListWidget<>().name("editor_native_view_workspace_list")
             .sizeRel(1f)
             .expanded();
         rows.child(
-            HologramEditorNativeTheme.label(() -> "显示与切片")
+            HologramEditorNativeTheme.label(() -> projectorOr("native_common.display_slice", "显示与切片"))
                 .widthRel(1f)
                 .height(19));
         for (String name : new String[] { "viewCycle", "allLayers", "layerDown", "layerUp", "resetView", "frontView",
@@ -588,7 +611,7 @@ final class HologramEditorNativeTools {
                 command(4, name, false).widthRel(1f)
                     .height(18));
         rows.child(
-            HologramEditorNativeTheme.label(() -> "现有工作区操作")
+            HologramEditorNativeTheme.label(() -> projectorOr("native_common.workspace_actions", "现有工作区操作"))
                 .widthRel(1f)
                 .height(18));
         rows.child(
@@ -610,7 +633,8 @@ final class HologramEditorNativeTools {
             command(4, "networkBindings", false).widthRel(1f)
                 .height(18));
         rows.child(networks);
-        IWidget noNetworks = HologramEditorNativeTheme.label(() -> "当前蓝图没有已登记的量子类群")
+        IWidget noNetworks = HologramEditorNativeTheme
+            .label(() -> projectorOr("native_common.no_quantum_groups", "当前蓝图没有已登记的量子类群"))
             .widthRel(1f)
             .height(18)
             .setEnabledIf(
@@ -627,18 +651,22 @@ final class HologramEditorNativeTools {
         body.child(rows);
         IWidget closeView = action(
             BASE + 962,
-            () -> "返回编辑",
+            () -> projectorOr("native_common.return_edit", "返回编辑"),
             "close",
             () -> true,
             () -> false,
-            () -> "关闭窗口，保持当前选择。",
+            () -> projectorOr("native_common.close_keep_selection", "关闭窗口，保持当前选择。"),
             false,
             this::closeViewWorkspace).widthRel(1f)
                 .height(18);
         ui.shell.registerTarget("modal.close", closeView);
         body.child(closeView);
         panel.child(body);
-        ui.shell.registerControl(VIEW_PANEL, panel, () -> "视图与工作区", this::viewWorkspaceOpen);
+        ui.shell.registerControl(
+            VIEW_PANEL,
+            panel,
+            () -> projectorOr("native_common.view_workspace", "视图与工作区"),
+            this::viewWorkspaceOpen);
         viewWorkspacePanel = panel;
         return panel;
     }
@@ -690,7 +718,7 @@ final class HologramEditorNativeTools {
 
     private void open(IPanelHandler handler, boolean refresh) {
         if (handler == null) {
-            ui.session.notice("原生工具尚未挂接编辑器面板");
+            ui.session.notice(projectorOr("native_common.not_attached", "原生工具尚未挂接编辑器面板"));
             return;
         }
         ui.host.parent()

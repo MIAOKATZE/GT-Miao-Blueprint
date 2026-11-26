@@ -130,6 +130,7 @@ public final class HologramCapture {
     }
 
     public static boolean piece(Object controller, String name, ItemStack trigger, boolean hints, int a, int b, int c) {
+        HologramNativeTargetPlan.piece(controller, trigger);
         HologramCapture capture = ACTIVE.get();
         if (capture == null || capture.context != controller || !hints) return false;
         if (capture.buildOrHintsCalls) throw capture.rejectedBuild("BUILD_OR_HINTS_MIXED: 一次采集混用了两种声明入口，无法确认同一份结构图");
@@ -140,6 +141,7 @@ public final class HologramCapture {
     /** Captures StructureLib's direct entry before its native element traversal, including relative world anchors. */
     public static boolean piece(IStructureDefinition<?> definition, Object controller, ItemStack trigger, String name,
         World world, ExtendedFacing facing, int x, int y, int z, int a, int b, int c, boolean hints) {
+        HologramNativeTargetPlan.piece(definition, controller, trigger, world);
         HologramCapture capture = ACTIVE.get();
         if (capture == null) return false;
         if (capture.context != controller || !(controller instanceof MTEEnhancedMultiBlockBase<?>))
@@ -186,7 +188,7 @@ public final class HologramCapture {
 
     public static boolean hint(World world, int x, int y, int z, Block block, int meta) {
         HologramCapture capture = ACTIVE.get();
-        if (capture == null) return false;
+        if (capture == null) return HologramNativeTargetPlan.consumesHint(world);
         Cell cell = capture.current;
         if (cell != null && cell.x == x && cell.y == y && cell.z == z && block != null) {
             cell.block = block;
@@ -199,7 +201,7 @@ public final class HologramCapture {
 
     public static boolean iconHint(World world, int x, int y, int z, IIcon[] icons, short[] tint) {
         HologramCapture capture = ACTIVE.get();
-        if (capture == null) return false;
+        if (capture == null) return HologramNativeTargetPlan.consumesHint(world);
         Cell cell = capture.current;
         if (cell != null && cell.x == x && cell.y == y && cell.z == z) {
             cell.iconOnly = true;

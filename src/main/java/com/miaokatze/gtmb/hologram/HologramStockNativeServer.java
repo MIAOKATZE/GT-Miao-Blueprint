@@ -14,6 +14,9 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
+import net.minecraft.tileentity.TileEntity;
+import net.minecraft.world.World;
+
 import com.github.bsideup.jabel.Desugar;
 import com.miaokatze.gtmb.hologram.HologramStockNativeWire.Command;
 import com.miaokatze.gtmb.hologram.HologramStockNativeWire.Confirmation;
@@ -48,7 +51,36 @@ final class HologramStockNativeServer {
 
     @Desugar
     private record ColdProof(ActionEndpoint endpoint, Confirmation confirmation,
-        HologramStockNativeEntry.Submission submitted, long expires) {}
+        HologramStockNativeEntry.Submission submitted, AnchorIdentity anchor, long expires) {}
+
+    /** Main-thread witness of the exact observed controller; matching coordinates or GT IDs cannot replace it. */
+    @Desugar
+    record AnchorIdentity(World world, TileEntity tile, int x, int y, int z) {
+
+        static AnchorIdentity capture(World world, int x, int y, int z) {
+            if (world == null || !world.blockExists(x, y, z)) return null;
+            TileEntity tile = world.getTileEntity(x, y, z);
+            if (tile == null || tile.isInvalid()
+                || tile.getWorldObj() != world
+                || tile.xCoord != x
+                || tile.yCoord != y
+                || tile.zCoord != z) return null;
+            return new AnchorIdentity(world, tile, x, y, z);
+        }
+
+        boolean current(World actualWorld, int actualX, int actualY, int actualZ) {
+            return actualWorld == world && actualX == x
+                && actualY == y
+                && actualZ == z
+                && !tile.isInvalid()
+                && tile.getWorldObj() == world
+                && tile.xCoord == x
+                && tile.yCoord == y
+                && tile.zCoord == z
+                && world.blockExists(x, y, z)
+                && world.getTileEntity(x, y, z) == tile;
+        }
+    }
 
     /** Payload-free watermark for the physical authenticated channel, not the current world/editor generation. */
     private static final class ProofHistory {
@@ -175,10 +207,6 @@ final class HologramStockNativeServer {
 
     /** Called only by the existing server scheduler. One actual tick budget, no forced disk/whole-plan work. */
     void tick(long deadline) {
-        tick(deadline, HologramDeclaredNativeConstruction.PlacementWindow.ALL);
-    }
-
-    void tick(long deadline, HologramDeclaredNativeConstruction.PlacementWindow placementWindow) {
         if (draining) return;
         draining = true;
         try {
@@ -209,8 +237,8 @@ final class HologramStockNativeServer {
                     synchronized (inbound) {
                         return resetRequested || stopQueued.contains(job.key) ? null : gate.beginTransaction(lease);
                     }
-                }, placementWindow);
-                if (state == HologramStockNativeConstruction.State.ACTIVE) {
+                });
+                if (state == HologramNativeProjectionJob.State.ACTIVE) {
                     if (job.entry.placed() != job.reported) {
                         job.reported = job.entry.placed();
                         emit(job.endpoint, reply(job, Phase.ACTIVE));
@@ -264,7 +292,7 @@ final class HologramStockNativeServer {
             case PROBE -> { /* handled before task dispatch */ }
             case STOP -> {
                 if (match && current.entry.stop(endpoint, identity.request.gateRequest()))
-                    terminal(current, HologramStockNativeConstruction.State.STOPPED);
+                    terminal(current, HologramNativeProjectionJob.State.STOPPED);
                 else if (!match && cancelBufferedBegin(waiting))
                     tombstone(waiting.endpoint, identity, Phase.STOPPED, "已取消，未开始施工。");
                 else unknown(endpoint, identity);
@@ -321,13 +349,28 @@ final class HologramStockNativeServer {
             emit(endpoint, new Reply(key, Phase.REFUSED, 0, refusal));
             return;
         }
+        HologramStockNativeWire.ServerObservation observation;
+        AnchorIdentity anchor;
+        var confirmation = waiting.request.confirmation();
+        try {
+            anchor = AnchorIdentity.capture(endpoint.world, confirmation.x(), confirmation.y(), confirmation.z());
+            if (anchor == null) throw new IOException("控制器或区块在观察前已变化，请重新读取。");
+            observation = HologramStockNativeEntry.observe(waiting.submission);
+            if (!anchor.current(endpoint.world, confirmation.x(), confirmation.y(), confirmation.z()))
+                throw new IOException("原生观察期间控制器已被替换，请重新读取。");
+        } catch (IOException | RuntimeException | LinkageError failure) {
+            emit(
+                endpoint,
+                new Reply(key, Phase.REFUSED, 0, failure.getMessage() == null ? "服务器无法重建原生目标。" : failure.getMessage()));
+            return;
+        }
         long now = System.nanoTime();
         expireColdProofs(now);
         if (coldProofs.size() >= PROOF_CAP || !HologramWorkspace.currentActionEndpoint(endpoint)) return;
         coldProofs.put(
             endpoint.actor,
-            new ColdProof(endpoint, waiting.request.confirmation(), waiting.submission, now + COLD_NANOS));
-        emit(endpoint, new Reply(key, Phase.CAPABLE, 0, ""));
+            new ColdProof(endpoint, waiting.request.confirmation(), waiting.submission, anchor, now + COLD_NANOS));
+        emit(endpoint, new Reply(key, Phase.CAPABLE, 0, "", observation));
     }
 
     /** STOP may overtake only the exact authenticated buffered BEGIN, not future or different intentions. */
@@ -376,7 +419,7 @@ final class HologramStockNativeServer {
         Owned other = active.get(waiting.endpoint.actor);
         if (other != null && !HologramWorkspace.currentActionEndpoint(other.endpoint)) {
             var retired = other.entry.tick(Long.MAX_VALUE, (current, lease) -> null);
-            if (retired != HologramStockNativeConstruction.State.ACTIVE) terminal(other, retired);
+            if (retired != HologramNativeProjectionJob.State.ACTIVE) terminal(other, retired);
         }
         ProofHistory history = proofHistory(waiting.endpoint);
         if (history == null) return;
@@ -396,6 +439,11 @@ final class HologramStockNativeServer {
                 || proof.expires <= System.nanoTime()
                 || !proof.confirmation.equals(waiting.request.confirmation())) {
                 tombstone(waiting.endpoint, key, Phase.REFUSED, "首次短请求回执已失效；未开始施工。");
+                return;
+            }
+            var confirmation = waiting.request.confirmation();
+            if (!proof.anchor.current(waiting.endpoint.world, confirmation.x(), confirmation.y(), confirmation.z())) {
+                tombstone(waiting.endpoint, key, Phase.REFUSED, "已确认的控制器被替换、移动或卸载；请重新读取后确认。");
                 return;
             }
             coldProofs.remove(waiting.endpoint.actor, proof); // Hand off this exact confirmation once, even on refusal.
@@ -442,13 +490,13 @@ final class HologramStockNativeServer {
             stopped = stopQueued.contains(key);
         }
         if (stopped && entry.stop(waiting.endpoint, key.request.gateRequest()))
-            terminal(job, HologramStockNativeConstruction.State.STOPPED);
+            terminal(job, HologramNativeProjectionJob.State.STOPPED);
         else emit(waiting.endpoint, reply(job, Phase.ACCEPTED));
     }
 
-    private void terminal(Owned job, HologramStockNativeConstruction.State state) {
+    private void terminal(Owned job, HologramNativeProjectionJob.State state) {
         active.remove(job.endpoint.actor, job);
-        if (state == HologramStockNativeConstruction.State.RECOVERY_PENDING) {
+        if (state == HologramNativeProjectionJob.State.RECOVERY_PENDING) {
             // Retain the original authority/evidence even after disconnect or an in-process display reset.
             unresolved.put(job.key, job);
             emit(job.endpoint, reply(job, Phase.RECOVERY_PENDING));
@@ -457,7 +505,7 @@ final class HologramStockNativeServer {
         remember(
             job.endpoint,
             job.key,
-            reply(job, state == HologramStockNativeConstruction.State.COMPLETE ? Phase.COMPLETE : Phase.STOPPED));
+            reply(job, state == HologramNativeProjectionJob.State.COMPLETE ? Phase.COMPLETE : Phase.STOPPED));
     }
 
     private static Reply reply(Owned job, Phase phase) {
@@ -496,6 +544,7 @@ final class HologramStockNativeServer {
 
     /** Old owner thread only; discard queued controls, not an unresolved permit. */
     void reset() {
+        HologramNativeProjectionJob.clearBaselines();
         if (draining) {
             resetRequested = true;
             return;
@@ -511,10 +560,10 @@ final class HologramStockNativeServer {
         }
         for (Owned job : new ArrayList<>(active.values())) {
             if (job.entry.stop(job.endpoint, job.key.request.gateRequest())) {
-                terminal(job, HologramStockNativeConstruction.State.STOPPED);
+                terminal(job, HologramNativeProjectionJob.State.STOPPED);
             } else if (!HologramWorkspace.currentActionEndpoint(job.endpoint)) {
                 var state = job.entry.tick(Long.MAX_VALUE, (current, lease) -> null);
-                if (state != HologramStockNativeConstruction.State.ACTIVE) terminal(job, state);
+                if (state != HologramNativeProjectionJob.State.ACTIVE) terminal(job, state);
             }
         }
         coldProofs.clear();

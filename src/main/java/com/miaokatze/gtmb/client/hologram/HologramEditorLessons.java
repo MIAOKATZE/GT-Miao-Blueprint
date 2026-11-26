@@ -291,7 +291,8 @@ final class HologramEditorLessons {
         add(
             s,
             "实体仓室预设",
-            "基础配额保留手选、现场仓室和最低壳体；允许降级是单独策略。",
+            HologramUiText
+                .projectorOr("native.lesson.projection_preset_target", "预设更新完整目标中所有可替换外壳位置，保留声明必需仓室；手选和精确混搭作为显式目标。"),
             "modal",
             action(Operation.CLOSE_PANEL, "modal.close"),
             control(94),
@@ -580,7 +581,9 @@ final class HologramEditorLessons {
         add(
             s,
             "基础与命名搭配",
-            "基础按声明配额分配；自定义保留设备及数量，不覆盖手选或现场仓室。",
+            HologramUiText.projectorOr(
+                "native.lesson.structure_preset_target",
+                "基础与自定义预设更新完整目标中所有可替换外壳位置，保留声明必需仓室；手选与混搭明确指定具体设备及数量。"),
             "modal",
             action(Operation.CLOSE_PANEL, "modal.close"),
             control(94),

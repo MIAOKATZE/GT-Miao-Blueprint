@@ -3,6 +3,8 @@
 
 package com.miaokatze.gtmb.client.hologram;
 
+import static com.miaokatze.gtmb.client.hologram.HologramUiText.projectorOr;
+
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -26,13 +28,13 @@ final class HologramEditorCommands {
         Command(String name, String label, String icon, int control, int key, int modifiers, boolean held,
             String help) {
             this.name = name;
-            this.label = label;
+            this.label = projectorOr("native.command." + name + ".label", label);
             this.icon = icon;
             this.control = control;
             this.key = this.defaultKey = key;
             this.modifiers = this.defaultModifiers = modifiers;
             this.held = held;
-            this.help = help;
+            this.help = projectorOr("native.command." + name + ".help", help);
         }
     }
 
@@ -154,7 +156,7 @@ final class HologramEditorCommands {
 
     String shortcut(String name) {
         Command command = get(name);
-        if (command == null || command.key == Keyboard.KEY_NONE) return "未绑定";
+        if (command == null || command.key == Keyboard.KEY_NONE) return projectorOr("native.ui.unbound", "未绑定");
         String keyName = Keyboard.getKeyName(command.key);
         return ((command.modifiers & 1) != 0 ? "Ctrl+" : "") + ((command.modifiers & 2) != 0 ? "Shift+" : "")
             + ((command.modifiers & 4) != 0 ? "Alt+" : "")
@@ -169,7 +171,7 @@ final class HologramEditorCommands {
             + shortcut(name)
             + "\n"
             + command.help
-            + (unavailable.isEmpty() ? "" : "\n当前不可用：" + unavailable);
+            + (unavailable.isEmpty() ? "" : (projectorOr("native.ui.unavailable", "\n当前不可用：") + " ") + unavailable);
     }
 
     boolean matches(String name, int key, int modifiers) {
@@ -294,7 +296,8 @@ final class HologramEditorCommands {
             }
         } catch (IOException | RuntimeException invalid) {
             defaults();
-            ui.session.notice("编辑器快捷键文件无效，已使用默认键位");
+            ui.session
+                .notice(projectorOr("native.ui.invalid_editor_shortcut_file_defaults_restored", "编辑器快捷键文件无效，已使用默认键位"));
         }
     }
 
@@ -357,22 +360,41 @@ final class HologramEditorCommands {
     }
 
     String reason(String name) {
-        if (get(name) == null) return "未知编辑器命令";
-        if (workspaceCommand(name)) return ui.workspaces.switching() ? "正在切换工作区，请等待回执" : "";
+        if (get(name) == null) return projectorOr("native.ui.unknown_editor_command", "未知编辑器命令");
+        if (workspaceCommand(name)) return ui.workspaces.switching()
+            ? projectorOr("native.ui.switching_workspace_wait_for_the_response", "正在切换工作区，请等待回执")
+            : "";
         if (ui.workspaces.emptyProjection() && !(cameraNavigation(name) && ui.library.openingLocalSource()))
-            return "shortcuts".equals(name) ? "" : "右击控制器开启投影模式";
-        if (cameraNavigation(name)) return ui.shell.sceneNavigable() ? "" : "先关闭当前窗口或等待蓝图显示，再调整视角";
-        if ("viewWorkspace".equals(name)) return viewContextAvailable() ? "" : "先完成当前窗口或任务，再查看视图与工作区";
+            return "shortcuts".equals(name) ? ""
+                : projectorOr("native.ui.right_click_a_controller_to_open_projection", "右击控制器开启投影模式");
+        if (cameraNavigation(name)) return ui.shell.sceneNavigable() ? ""
+            : projectorOr("native.ui.close_the_current_window_or_wait_for", "先关闭当前窗口或等待蓝图显示，再调整视角");
+        if ("viewWorkspace".equals(name)) return viewContextAvailable() ? ""
+            : projectorOr("native.ui.finish_the_current_window_or_task_before", "先完成当前窗口或任务，再查看视图与工作区");
         if (legacyViewCommand(name)) {
-            if (!viewContextAvailable()) return "先完成当前窗口或任务，再调整视图";
+            if (!viewContextAvailable())
+                return projectorOr("native.ui.finish_the_current_window_or_task_before_669", "先完成当前窗口或任务，再调整视图");
             int control = get(name).control;
             if (ui.preview.viewControlEnabled(control)) return "";
-            if (ui.library.browsePreviewActive())
-                return control == 11 || control == 12 || control == 13 ? "只读预览网格尚未就绪或已到图层边界" : "只读浏览仅开放已就绪网格的图层查看";
+            if (ui.library.browsePreviewActive()) return control == 11 || control == 12 || control == 13
+                ? projectorOr("native.ui.read_only_preview_mesh_is_not_ready", "只读预览网格尚未就绪或已到图层边界")
+                : projectorOr("native.ui.read_only_browsing_allows_only_layer_controls", "只读浏览仅开放已就绪网格的图层查看");
             return ui.canvas.disabledReason(control);
         }
-        if (ui.library.browsePreviewActive()) return "当前为只读蓝图库预览，此操作不开放";
-        if (!commandContextAvailable()) return "先完成当前窗口或任务，再返回编辑画布";
+        if (ui.library.browsePreviewActive())
+            return projectorOr("native.ui.this_action_is_unavailable_in_a_read", "当前为只读蓝图库预览，此操作不开放");
+        if (!commandContextAvailable())
+            return projectorOr("native.ui.finish_the_current_window_or_task_before_673", "先完成当前窗口或任务，再返回编辑画布");
+        if (ui.session.state().data.getBoolean("localStandardController")) {
+            var action = nativeOperation(name);
+            if (action != null) return ui.host == null ? ui.session.editingReason()
+                : ui.host.parent()
+                    .nativeActionBlocker(action);
+            if ("hatchPreset".equals(name) || "channels".equals(name) || "sources".equals(name))
+                return ui.session.configurationEditable() ? "" : ui.session.editingReason();
+            if ("hatchFacing".equals(name))
+                return projectorOr("native.ui.native_hatch_facing_is_generated_by_the", "原生仓室朝向由控制器的建造流程生成。");
+        }
         HologramState.Cell cell = ui.session.selectedCell();
         boolean editable = ui.session.editable();
         return switch (name) {
@@ -380,55 +402,95 @@ final class HologramEditorCommands {
             case "areaSelection", "clearWorkspace" -> editable ? "" : ui.session.editingReason();
             case "networkBindings" -> !editable ? ui.session.editingReason()
                 : ui.bindings.networkGroups()
-                    .tagCount() > 0 ? "" : "当前蓝图没有已登记的量子类群";
+                    .tagCount() > 0 ? ""
+                        : projectorOr("native.ui.this_blueprint_has_no_registered_quantum_groups", "当前蓝图没有已登记的量子类群");
             case "aeMarking" -> ui.ae.canOpenAePreview() && !ui.canvas.localPlanBlockedControl(179) ? ""
                 : ui.canvas.disabledReason(179);
-            case "selectAll" -> ui.session.state().cells.isEmpty() ? "当前没有可选择的格" : "";
-            case "sameType", "sameTypeAdd", "clearSelection" -> cell == null ? "先选择一个目标格" : "";
+            case "selectAll" -> ui.session.state().cells.isEmpty()
+                ? projectorOr("native.ui.there_are_no_selectable_cells", "当前没有可选择的格")
+                : "";
+            case "sameType", "sameTypeAdd", "clearSelection" -> cell == null
+                ? projectorOr("native.ui.select_a_target_cell_first", "先选择一个目标格")
+                : "";
             case "moveHandles" -> ui.preview.canMoveSelection() ? "" : ui.preview.moveHandleReason();
             case "editUndo" -> !editable ? ui.session.editingReason()
-                : ui.session.state().data.getBoolean("editCanUndo") ? "" : "当前没有可撤销的规划编辑";
+                : ui.session.state().data.getBoolean("editCanUndo") ? ""
+                    : projectorOr("native.ui.no_planning_edit_to_undo", "当前没有可撤销的规划编辑");
             case "editRedo" -> !editable ? ui.session.editingReason()
-                : ui.session.state().data.getBoolean("editCanRedo") ? "" : "当前没有可重做的规划编辑";
-            case "editCopy", "rotateCell" -> !editable ? ui.session.editingReason() : cell == null ? "先选择目标格" : "";
+                : ui.session.state().data.getBoolean("editCanRedo") ? ""
+                    : projectorOr("native.ui.no_planning_edit_to_redo", "当前没有可重做的规划编辑");
+            case "editCopy", "rotateCell" -> !editable ? ui.session.editingReason()
+                : cell == null ? projectorOr("native.ui.select_target_cells_first", "先选择目标格") : "";
             case "editCut", "restoreCell" -> !editable ? ui.session.editingReason()
-                : cell == null ? "先选择目标格" : cell.anchor ? "控制器锚点受保护" : "";
+                : cell == null ? projectorOr("native.ui.select_target_cells_first", "先选择目标格")
+                    : cell.anchor ? projectorOr("native.ui.the_controller_anchor_is_protected", "控制器锚点受保护") : "";
             case "editPaste" -> !editable ? ui.session.editingReason()
-                : cell == null ? "先选择目标格" : !ui.session.state().data.getBoolean("editCanPaste") ? "当前剪贴板不能粘贴到此目标" : "";
+                : cell == null ? projectorOr("native.ui.select_target_cells_first", "先选择目标格")
+                    : !ui.session.state().data.getBoolean("editCanPaste")
+                        ? projectorOr("native.ui.the_current_clipboard_cannot_be_pasted_here", "当前剪贴板不能粘贴到此目标")
+                        : "";
             case "candidates", "inventory" -> !editable ? ui.session.editingReason()
-                : ui.preview.canInventoryPin() ? "" : "先选中可指定目标的非锚点格；拆除模式不指定新目标";
+                : ui.preview.canInventoryPin() ? ""
+                    : projectorOr("native.ui.select_a_non_anchor_cell_that_accepts", "先选中可指定目标的非锚点格；拆除模式不指定新目标");
             case "hatchFacing" -> !editable ? ui.session.editingReason()
-                : cell != null && ui.session.hatchFacings().length > 0 ? "" : "本格没有合法仓室朝向";
+                : cell != null && ui.session.hatchFacings().length > 0 ? ""
+                    : projectorOr("native.ui.this_cell_has_no_valid_hatch_facing", "本格没有合法仓室朝向");
             case "hatchPreset" -> !editable ? ui.session.editingReason()
-                : ui.session.state().data.getBoolean("virtual") ? "整机仓室配额仅适用于真实控制器规划"
-                    : ui.session.state().data.getInteger("mode") == 2 ? "拆除模式不生成仓室预设"
-                        : !ui.session.state().data.getBoolean("supported") ? "当前来源尚不支持仓室配置" : "";
+                : ui.session.state().data.getBoolean("virtual")
+                    ? projectorOr("native.ui.whole_machine_hatch_quotas_apply_only_to", "整机仓室配额仅适用于真实控制器规划")
+                    : ui.session.state().data.getInteger("mode") == 2
+                        ? projectorOr("native.ui.demolition_mode_does_not_generate_hatch_presets", "拆除模式不生成仓室预设")
+                        : !ui.session.state().data.getBoolean("supported")
+                            ? projectorOr("native.ui.this_source_does_not_support_hatch_configuration", "当前来源尚不支持仓室配置")
+                            : "";
             case "channels" -> !editable ? ui.session.editingReason()
                 : ui.session.state().data.getBoolean("virtual") && ui.session.state().data.getString("activeStructure")
-                    .isEmpty() ? "先进入实际来源结构" : "";
+                    .isEmpty() ? projectorOr("native.ui.enter_the_actual_source_structure_first", "先进入实际来源结构") : "";
             case "structure" -> !editable ? ui.session.editingReason()
                 : ui.config.selectedStructureId()
-                    .isEmpty() ? "先选中来源结构" : cell != null && cell.sourceMissing ? "结构来源缺失" : "";
+                    .isEmpty()
+                        ? projectorOr("native.ui.select_a_source_structure_first", "先选中来源结构")
+                        : cell != null && cell.sourceMissing
+                            ? projectorOr("native.ui.the_structure_source_is_missing", "结构来源缺失")
+                            : "";
             case "overview" -> !editable ? ui.session.editingReason()
                 : ui.session.state().data.getString("activeStructure")
-                    .isEmpty() ? "当前已是区域总览" : "";
+                    .isEmpty() ? projectorOr("native.ui.already_at_the_area_overview", "当前已是区域总览") : "";
             case "sources" -> editable ? "" : ui.session.editingReason();
             case "modeBuild", "modeReplace" -> editable ? "" : ui.session.editingReason();
             case "modeRemove" -> !editable ? ui.session.editingReason()
-                : ui.session.state().data.getBoolean("virtual") ? "虚拟蓝图不能进入实体拆除规划" : "";
+                : ui.session.state().data.getBoolean("virtual") ? projectorOr(
+                    "native.ui.virtual_blueprints_cannot_use_physical_demolition_planning",
+                    "虚拟蓝图不能进入实体拆除规划") : "";
             case "process" -> !editable ? ui.session.editingReason()
-                : HologramGuidance.authorWorkspace(ui.session.state()) ? "" : "当前不是可处理的作者蓝图";
-            case "save" -> !editable ? ui.session.editingReason() : ui.session.state().cells.isEmpty() ? "先载入蓝图内容" : "";
-            case "text" -> ui.textBoxes.allowed(false) ? "" : "当前模式或依赖不允许编辑文字附件";
-            case "image" -> ui.textBoxes.allowed(true) ? "" : "当前模式或依赖不允许编辑图片附件";
+                : HologramGuidance.authorWorkspace(ui.session.state()) ? ""
+                    : projectorOr("native.ui.this_is_not_a_processable_author_blueprint", "当前不是可处理的作者蓝图");
+            case "save" -> !editable ? ui.session.editingReason()
+                : ui.session.state().cells.isEmpty() ? projectorOr("native.ui.load_blueprint_content_first", "先载入蓝图内容")
+                    : "";
+            case "text" -> ui.textBoxes.allowed(false) ? ""
+                : projectorOr("native.ui.the_current_mode_or_dependencies_do_not", "当前模式或依赖不允许编辑文字附件");
+            case "image" -> ui.textBoxes.allowed(true) ? ""
+                : projectorOr("native.ui.the_current_mode_or_dependencies_do_not_695", "当前模式或依赖不允许编辑图片附件");
             case "rotateTextVertical" -> !editable ? ui.session.editingReason()
-                : ui.textBoxes.selectedDefinition() == null ? "先选择文字附件" : "";
-            default -> "当前状态不支持此操作";
+                : ui.textBoxes.selectedDefinition() == null
+                    ? projectorOr("native.ui.select_a_text_attachment_first", "先选择文字附件")
+                    : "";
+            default -> projectorOr("native.ui.this_operation_is_unavailable_in_the_current", "当前状态不支持此操作");
         };
     }
 
     boolean workspaceCommand(String name) {
         return "projectionWorkspace".equals(name) || "blueprintWorkspace".equals(name) || "cutWorkspace".equals(name);
+    }
+
+    private static com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation nativeOperation(String name) {
+        return switch (name) {
+            case "modeBuild" -> com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.REPAIR;
+            case "modeReplace" -> com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.REPLACE;
+            case "modeRemove" -> com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.DEMOLISH;
+            default -> null;
+        };
     }
 
     boolean execute(String name) {
@@ -438,6 +500,13 @@ final class HologramEditorCommands {
         if (!reason.isEmpty()) {
             ui.session.notice(reason);
             return true;
+        }
+        if (ui.session.state().data.getBoolean("localStandardController")) {
+            var action = nativeOperation(name);
+            if (action != null) {
+                ui.router.activate(1720 + action.ordinal());
+                return true;
+            }
         }
         switch (name) {
             case "projectionWorkspace" -> ui.workspaces.activateProjection();

@@ -5,7 +5,6 @@ package com.miaokatze.gtmb.client.hologram;
 
 import static com.miaokatze.gtmb.client.hologram.HologramUiText.projectorOr;
 
-import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
@@ -22,17 +21,11 @@ import com.miaokatze.gtmb.hologram.HologramStockActionTrace;
 import com.miaokatze.gtmb.hologram.HologramStockNativeWire;
 import com.miaokatze.gtmb.hologram.HologramStockNativeWire.Command;
 import com.miaokatze.gtmb.hologram.HologramStockNativeWire.Confirmation;
-import com.miaokatze.gtmb.hologram.HologramStockNativeWire.EbfHatch;
 import com.miaokatze.gtmb.hologram.HologramStockNativeWire.Key;
 import com.miaokatze.gtmb.hologram.HologramStockNativeWire.Phase;
 import com.miaokatze.gtmb.hologram.HologramStockNativeWire.Reply;
 
-import gregtech.api.GregTechAPI;
-import gregtech.api.enums.MetaTileEntityIDs;
 import gregtech.api.metatileentity.BaseMetaTileEntity;
-import gregtech.api.metatileentity.implementations.MTEHatchCokeOven;
-import gregtech.common.tileentities.machines.multi.MTECokeOven;
-import gregtech.common.tileentities.machines.multi.MTEElectricBlastFurnace;
 
 /** One existing local confirmation, one exact client owner. Preview/material browsing never touches this writer. */
 public final class HologramClientStockNative {
@@ -79,56 +72,6 @@ public final class HologramClientStockNative {
     }
 
     @Desugar
-    record Site(TileEntity controller, BaseMetaTileEntity hatch, int controllerFacing, int hx, int hy, int hz,
-        int hatchFacing, List<EbfHatch> ebfHatches) {
-
-        boolean ebf() {
-            return ebfHatches != null;
-        }
-
-        boolean current(World world) {
-            if (ebf()) {
-                return controller instanceof BaseMetaTileEntity base
-                    && base.getMetaTileEntity() instanceof MTEElectricBlastFurnace ebf
-                    && ebf.getExtendedFacing()
-                        .ordinal() == controllerFacing
-                    && ebfHatches.equals(HologramStockNativeWire.observedEbfHatches(world, controller));
-            }
-            if (world == null || controller.isInvalid()
-                || hatch.isInvalid()
-                || controller.getWorldObj() != world
-                || hatch.getWorldObj() != world
-                || !(controller instanceof BaseMetaTileEntity tile)
-                || !(tile.getMetaTileEntity() instanceof MTECokeOven oven)
-                || oven.getExtendedFacing()
-                    .ordinal() != controllerFacing)
-                return false;
-            int x = controller.xCoord + hx, y = controller.yCoord + hy, z = controller.zCoord + hz;
-            return world.blockExists(x, y, z) && world.getBlock(x, y, z) == GregTechAPI.sBlockMachines
-                && world.getTileEntity(x, y, z) == hatch
-                && realHatch(hatch)
-                && hatch.getFrontFacing()
-                    .ordinal() == hatchFacing;
-        }
-
-        String submitLabel() {
-            return ebf() ? "所选来源补建 · 先备 12 个耐热外壳和 16 个所选线圈，只按缺位扣除" : "所选来源补建 · 先备 24 块焦炉砖，只按缺位扣除";
-        }
-
-        String description() {
-            if (ebf()) return "保留已安装的 5 个电力高炉仓室";
-            return "保留已安装 ULV 焦炉仓室 (" + (controller.xCoord + hx)
-                + ", "
-                + (controller.yCoord + hy)
-                + ", "
-                + (controller.zCoord + hz)
-                + ") · "
-                + net.minecraftforge.common.util.ForgeDirection.getOrientation(hatchFacing)
-                    .name();
-        }
-    }
-
-    @Desugar
     record DeclarationSite(BaseMetaTileEntity controller,
         gregtech.api.metatileentity.implementations.MTEEnhancedMultiBlockBase<?> machine, int controllerId,
         int facing) {
@@ -163,22 +106,7 @@ public final class HologramClientStockNative {
 
     /** Translate known vanilla-stock protocol reasons client-side. Older or external reasons stay intact. */
     private static String serverReason(String reason) {
-        return switch (reason) {
-            case "所选材料来源不足，未开始放置。" -> projectorOr("stock.reason_materials", "所选材料来源不足，未开始放置。");
-            case "原生现场或配置无法核对；未开始施工。" -> projectorOr("stock.reason_site", "原生现场或配置无法核对；未开始施工。");
-            case "施工格已有不匹配的方块；补建不会替换。" -> projectorOr("stock.reason_conflict", "施工格已有不匹配的方块；补建不会替换。");
-            case "控制器、材料来源或原工作台已变化。" -> projectorOr("stock.reason_changed", "控制器、材料来源或原工作台已变化。");
-            case "施工范围包含未加载或无效的坐标。" -> projectorOr("stock.reason_invalid_cells", "施工范围包含未加载或无效的坐标。");
-            case "请先选定所需仓室，当前范围没有其他可施工的方块。" -> projectorOr("stock.reason_selected_hatch", "请先选定所需仓室，当前范围没有其他可施工的方块。");
-            case "所选范围没有可施工的目标。" -> projectorOr("stock.reason_no_targets", "所选范围没有可施工的目标。");
-            case "已取消，未开始施工。" -> projectorOr("stock.reason_cancelled", "已取消，未开始施工。");
-            case "已停止原生操作，已确认的世界与材料变更保留。" -> projectorOr("stock.reason_stopped", "已停止原生操作，已确认的世界与材料变更保留。");
-            case "原生结构或施工权限已变化。" -> projectorOr("stock.reason_permission", "原生结构或施工权限已变化。");
-            case "施工结果待核定；未继续放置。可请管理员使用 /gtmb recovery。" -> projectorOr(
-                "stock.reason_recovery",
-                "施工结果待核定；未继续放置。可请管理员使用 /gtmb recovery。");
-            default -> reason;
-        };
+        return HologramNativeUiText.reason(reason);
     }
 
     private static final class Attempt {
@@ -191,18 +119,16 @@ public final class HologramClientStockNative {
         int placed = -1;
 
         boolean placing() {
-            return original.declaration() == null || original.declaration()
-                .operation() == 0;
+            return original.projection()
+                .operation() == HologramStockNativeWire.Operation.BUILD
+                || original.projection()
+                    .operation() == HologramStockNativeWire.Operation.REPAIR;
         }
 
         String operationLabel() {
-            if (original.declaration() == null) return projectorOr("stock.action_fill", "原生补建");
-            return switch (original.declaration()
-                .operation()) {
-                case 1 -> projectorOr("stock.action_replace", "原生换装");
-                case 2 -> projectorOr("stock.action_remove", "原生拆除");
-                default -> projectorOr("stock.action_build", "原生施工");
-            };
+            return HologramNativeControllerState.label(
+                original.projection()
+                    .operation());
         }
 
         boolean beginSent, afterProbe, stopSent, uncertain, detached;
@@ -558,7 +484,11 @@ public final class HologramClientStockNative {
     public static void install() {
         HologramNetwork.setStockNativeReplies((reply, from) -> {
             Minecraft client = Minecraft.getMinecraft();
-            client.func_152344_a(() -> OWNER.receive(reply, from, context(client), System.nanoTime()));
+            client.func_152344_a(() -> {
+                if (client.currentScreen instanceof HologramScreen screen
+                    && screen.receiveNativeObservation(reply, from)) return;
+                OWNER.receive(reply, from, context(client), System.nanoTime());
+            });
         });
     }
 
@@ -580,65 +510,4 @@ public final class HologramClientStockNative {
         }
     }
 
-    /** Only exact supported stock shapes with all declared hatches installed; never guess an ambiguous site. */
-    static Site choose(World world, TileEntity target) {
-        if (world == null || target == null || target.getClass() != BaseMetaTileEntity.class) return null;
-        BaseMetaTileEntity base = (BaseMetaTileEntity) target;
-        if (base.getMetaTileID() == MetaTileEntityIDs.EBF_CONTROLLER.ID
-            && base.getMetaTileEntity() instanceof MTEElectricBlastFurnace ebf) {
-            List<EbfHatch> hatches = HologramStockNativeWire.observedEbfHatches(world, target);
-            return hatches.isEmpty() ? null
-                : new Site(
-                    target,
-                    null,
-                    ebf.getExtendedFacing()
-                        .ordinal(),
-                    0,
-                    0,
-                    0,
-                    0,
-                    hatches);
-        }
-        if (base.getMetaTileID() != MetaTileEntityIDs.COKE_OVEN_CONTROLLER.ID
-            || !(base.getMetaTileEntity() instanceof MTECokeOven oven)
-            || oven.getClass() != MTECokeOven.class
-            || oven.mMachine) return null;
-        var facing = oven.getExtendedFacing();
-        int[] abc = new int[3], delta = new int[3];
-        Site chosen = null;
-        for (int c = 0; c <= 2; c++) for (int b = -1; b <= 1; b++) for (int a = -1; a <= 1; a++) {
-            if (a == 0 && b == 0 && c < 2) continue;
-            abc[0] = a;
-            abc[1] = b;
-            abc[2] = c;
-            facing.getWorldOffset(abc, delta);
-            int x = base.xCoord + delta[0], y = base.yCoord + delta[1], z = base.zCoord + delta[2];
-            if (!world.blockExists(x, y, z)) return null;
-            if (world.getBlock(x, y, z) != GregTechAPI.sBlockMachines) continue;
-            if (!(world.getTileEntity(x, y, z) instanceof BaseMetaTileEntity hatch) || !realHatch(hatch)) continue;
-            if (chosen != null) return null;
-            chosen = new Site(
-                base,
-                hatch,
-                facing.ordinal(),
-                delta[0],
-                delta[1],
-                delta[2],
-                hatch.getFrontFacing()
-                    .ordinal(),
-                null);
-        }
-        return chosen;
-    }
-
-    private static boolean realHatch(BaseMetaTileEntity base) {
-        return base.getClass() == BaseMetaTileEntity.class && !base.isInvalid()
-            && base.getMetaTileID() == MetaTileEntityIDs.COKE_OVEN_HATCH.ID
-            && base.getMetaTileEntity() instanceof MTEHatchCokeOven hatch
-            && hatch.getClass() == MTEHatchCokeOven.class
-            && hatch.mTier == 0
-            && base.getFrontFacing() != null
-            && base.getFrontFacing()
-                .ordinal() < 6;
-    }
 }

@@ -3,6 +3,8 @@
 
 package com.miaokatze.gtmb.client.hologram;
 
+import static com.miaokatze.gtmb.client.hologram.HologramUiText.projectorOr;
+
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -50,7 +52,7 @@ final class HologramMaterialConfirmationDialog {
         VOUCHER,
         BIND_GROUP,
         BIND_SLOT,
-        DEMOLITION_DESTINATION
+        RECOVERY_DESTINATION
     }
 
     /** The port lends its current detached rows for read-only rendering. */
@@ -71,7 +73,7 @@ final class HologramMaterialConfirmationDialog {
         boolean localSubmitAvailable();
 
         default String localSubmitBlocker() {
-            return localSubmitAvailable() ? "" : "当前无法提交。";
+            return localSubmitAvailable() ? "" : projectorOr("native.ui.cannot_submit_now", "当前无法提交。");
         }
 
         default boolean localHatchDelta() {
@@ -81,14 +83,14 @@ final class HologramMaterialConfirmationDialog {
         default void localSubmitDenied() {}
 
         default String localSubmitLabel() {
-            return "提交施工并核验…";
+            return projectorOr("native.ui.submit_construction_for_verification", "提交施工并核验…");
         }
 
-        default boolean localDemolitionAvailable() {
+        default boolean localRecoveryAvailable() {
             return false;
         }
 
-        default String localDemolitionDestinationLabel() {
+        default String localRecoveryDestinationLabel() {
             return "";
         }
 
@@ -109,7 +111,7 @@ final class HologramMaterialConfirmationDialog {
         }
 
         default String localVoucherBlocker() {
-            return "此操作不使用装饰券";
+            return projectorOr("native.ui.this_operation_does_not_use_decorative_vouchers", "此操作不使用装饰券");
         }
 
         default boolean localVoucherSelected() {
@@ -117,11 +119,11 @@ final class HologramMaterialConfirmationDialog {
         }
 
         default String localSourcesLabel() {
-            return "材料来源：执行时由服务端核验";
+            return projectorOr("native.ui.material_sources_verified_by_the_server_during", "材料来源：执行时由服务端核验");
         }
 
         default String localVoucherLabel() {
-            return "装饰抵扣";
+            return projectorOr("native.ui.decorative_discount", "装饰抵扣");
         }
 
         void localAction(LocalAction action); // Revalidate deferred callbacks before using local or server data.
@@ -144,6 +146,7 @@ final class HologramMaterialConfirmationDialog {
     private final RenderItem iconRenderer = new RenderItem();
     private final Map<Integer, BooleanSupplier> enabledControls = new HashMap<>();
     private final Map<Integer, IntSupplier> controlAccents = new HashMap<>();
+    private final Map<Integer, ButtonWidget<?>> controlWidgets = new HashMap<>();
     private Runnable lessonClose;
     private MaterialPanel livePanel;
 
@@ -173,7 +176,7 @@ final class HologramMaterialConfirmationDialog {
         this(parent, null, java.util.Objects.requireNonNull(localView));
     }
 
-    private HologramMaterialConfirmationDialog(ModularPanel parent, HologramUiModules ui, LocalView localView) {
+    HologramMaterialConfirmationDialog(ModularPanel parent, HologramUiModules ui, LocalView localView) {
         this.parent = parent;
         this.ui = ui;
         this.localView = localView;
@@ -217,6 +220,10 @@ final class HologramMaterialConfirmationDialog {
 
     int[] controlPoint(int id) {
         if (!isOpen() || drawnFrames == 0) return null;
+        if (ui != null) {
+            int[] bounds = ui.shell.nativeWidgetBounds(controlWidgets.get(id));
+            return bounds == null ? null : new int[] { bounds[0] + bounds[2] / 2, bounds[1] + bounds[3] / 2 };
+        }
         int[] bounds = switch (id) {
             case 54 -> new int[] { 14, 402, 160 };
             case 55 -> new int[] { 184, 402, 434 };
@@ -229,6 +236,7 @@ final class HologramMaterialConfirmationDialog {
             case 245 -> new int[] { 400, 340, 218 };
             case 246 -> new int[] { 476, 369, 142 };
             case 247 -> new int[] { 338, 369, 132 };
+            case 252 -> new int[] { 165, 369, 165 };
             default -> null;
         };
         if (bounds == null) return null;
@@ -250,6 +258,16 @@ final class HologramMaterialConfirmationDialog {
         result.setInteger("drawRowBound", LIST_HEIGHT / ROW_HEIGHT + 2);
         result.setInteger("panelBuilds", panelBuilds);
         result.setInteger("listResizes", listResizes);
+        if (local) {
+            result.setBoolean("submitAvailable", localView.localSubmitAvailable());
+            result.setString("submitBlocker", localView.localSubmitBlocker());
+            result.setString("localStatus", localFrame == null ? "" : localFrame.status());
+        }
+        if (graph != null) {
+            result.setString("uiNotice", graph.session.notice());
+            int[] submit = graph.shell.nativeWidgetBounds(controlWidgets.get(55));
+            if (submit != null) result.setIntArray("submitBounds", submit);
+        }
         result.setInteger("listIdentity", System.identityHashCode(list));
         result.setInteger("canvasIdentity", System.identityHashCode(canvas));
         result.setInteger(
@@ -341,26 +359,38 @@ final class HologramMaterialConfirmationDialog {
             .background(HologramMuiTheme.CLOTH);
         HologramMuiTheme.header(
             panel,
-            () -> descriptive() ? "查看材料 · 本地记录"
-                : local ? "查看材料 · 本地估算" : lessonClose == null ? ui.review.lastConfirmationTitle() : "材料与改动 · 教学规划",
+            () -> descriptive() ? projectorOr("native.ui.view_materials_local_record", "查看材料 · 本地记录")
+                : local ? projectorOr("native.ui.view_materials_local_estimate", "查看材料 · 本地估算")
+                    : lessonClose == null ? ui.review.lastConfirmationTitle()
+                        : projectorOr("native.ui.materials_and_changes_tutorial_plan", "材料与改动 · 教学规划"),
             WIDTH);
         panel.child(HologramMuiTheme.label(this::scopeLabel, 14, 38, 604, 15, HologramMuiTheme.MUTED));
         panel.child(
             HologramMuiTheme.label(this::reviewHint, 14, 55, 604, 15, HologramMuiTheme.MUTED)
                 .tooltipBuilder(t -> {
                     if (descriptive()) {
-                        t.addLine("原图记录格数不是施工需求；背包同物品数量不代表可扣料。");
+                        t.addLine(
+                            projectorOr(
+                                "native.ui.recorded_blueprint_cells_are_not_construction_demand",
+                                "原图记录格数不是施工需求；背包同物品数量不代表可扣料。"));
                         return;
                     }
                     if (local && localView.localHatchDelta()) {
-                        t.addLine("只计算所选仓室的改动；服务端复核现场与归属。");
+                        t.addLine(
+                            projectorOr(
+                                "native.ui.calculates_changes_across_the_complete_structure_the",
+                                "核算完整结构的改动；服务端复核现场与归属。"));
                         return;
                     }
                     if (local) {
-                        t.addLine("需求按目标估算，未扣除现场已有方块；容器、AE、权限及抵扣待执行时核验。");
+                        t.addLine(
+                            projectorOr(
+                                "native.ui.estimated_target_demand_containers_ae_permissions_and",
+                                "需求按目标估算，未扣除现场已有方块；容器、AE、权限及抵扣待执行时核验。"));
                         return;
                     }
-                    t.addLine("控制器库存仅查看，不计入已有。");
+                    t.addLine(
+                        projectorOr("native.ui.controller_inventory_is_view_only_and_excluded", "控制器库存仅查看，不计入已有。"));
                     t.addLine(
                         state().getCompoundTag("materialQuote")
                             .getString("validation"));
@@ -368,18 +398,27 @@ final class HologramMaterialConfirmationDialog {
                 .tooltipAutoUpdate(true));
         panel.child(
             HologramMuiTheme.label(
-                () -> descriptive() ? "原图物品身份" : "材料 / 精确 NBT 条目",
+                () -> descriptive() ? projectorOr("native.ui.recorded_item_identity", "原图物品身份")
+                    : projectorOr("native.ui.materials_exact_nbt_entries", "材料 / 精确 NBT 条目"),
                 42 + ROW_INSET,
                 77,
                 220,
                 15,
                 HologramMuiTheme.TITLE));
         panel.child(
-            HologramMuiTheme
-                .label(() -> descriptive() ? "蓝图记录格数" : "需求", 270 + ROW_INSET, 77, 110, 15, HologramMuiTheme.TITLE));
+            HologramMuiTheme.label(
+                () -> descriptive() ? projectorOr("native.ui.recorded_blueprint_cells", "蓝图记录格数")
+                    : projectorOr("native.ui.required", "需求"),
+                270 + ROW_INSET,
+                77,
+                110,
+                15,
+                HologramMuiTheme.TITLE));
         panel.child(
             HologramMuiTheme.label(
-                () -> descriptive() ? "本机背包同物品" : local ? "背包已知" : "已有",
+                () -> descriptive() ? projectorOr("native.ui.matching_local_inventory_items", "本机背包同物品")
+                    : local ? projectorOr("native.ui.known_inventory", "背包已知")
+                        : projectorOr("native.ui.available", "已有"),
                 384 + ROW_INSET,
                 77,
                 110,
@@ -387,7 +426,9 @@ final class HologramMaterialConfirmationDialog {
                 HologramMuiTheme.TITLE));
         panel.child(
             HologramMuiTheme.label(
-                () -> descriptive() ? "" : local ? "背包差额" : "缺失",
+                () -> descriptive() ? ""
+                    : local ? projectorOr("native.ui.inventory_shortfall", "背包差额")
+                        : projectorOr("native.ui.missing_93", "缺失"),
                 498 + ROW_INSET,
                 77,
                 110,
@@ -406,7 +447,7 @@ final class HologramMaterialConfirmationDialog {
                     HologramMaterialRowPresentation.Sample sample = descriptionMaterial(row);
                     t.addLine(sample.name);
                     t.addLine(sample.identity);
-                    t.addLine("施工用量未核算");
+                    t.addLine(projectorOr("native.ui.construction_demand_not_calculated", "施工用量未核算"));
                 }
                 return;
             }
@@ -415,10 +456,12 @@ final class HologramMaterialConfirmationDialog {
             t.addLine(row.name);
             if (row.data.hasKey("hatchChange", 8)) t.addLine(row.data.getString("hatchChange"));
             t.addLine(
-                "需求 " + row.required
-                    + (local ? " / 背包已知 " : " / 已有 ")
+                (projectorOr("native.ui.required_95", "需求") + " ") + row.required
+                    + (local ? (" " + projectorOr("native.ui.known_inventory_96", "/ 背包已知") + " ")
+                        : (" " + projectorOr("native.ui.available_97", "/ 已有") + " "))
                     + row.available
-                    + (local ? " / 背包差额 " : " / 缺失 ")
+                    + (local ? (" " + projectorOr("native.ui.inventory_shortfall_98", "/ 背包差额") + " ")
+                        : (" " + projectorOr("native.ui.missing_99", "/ 缺失") + " "))
                     + row.missing
                     + " "
                     + row.unit);
@@ -426,10 +469,17 @@ final class HologramMaterialConfirmationDialog {
             if (!local && row.item != null)
                 for (Object line : row.item.getTooltip(Minecraft.getMinecraft().thePlayer, false))
                     t.addLine(String.valueOf(line));
-            t.addLine("清单条目 #" + (row.index + 1) + (row.tagged ? " · 精确 NBT，独立计费" : ""));
-            if (row.data.getBoolean("voucherEligible")) t.addLine("选用猫猫装饰抵用券后优先抵扣；已有库存不会为此消耗");
+            t.addLine(
+                projectorOr("native.ui.list_entry", "清单条目 #") + (row.index + 1)
+                    + (row.tagged ? (" " + projectorOr("native.ui.exact_nbt_billed_separately", "· 精确 NBT，独立计费"))
+                        : ""));
+            if (row.data.getBoolean("voucherEligible")) t.addLine(
+                projectorOr(
+                    "native.ui.selected_decorative_vouchers_apply_first_existing_stock",
+                    "选用猫猫装饰抵用券后优先抵扣；已有库存不会为此消耗"));
             if (!row.data.getString("nbtKey")
-                .isEmpty()) t.addLine("设备资源：" + row.data.getString("nbtKey"));
+                .isEmpty())
+                t.addLine((projectorOr("native.ui.device_resource", "设备资源：") + " ") + row.data.getString("nbtKey"));
         })
             .tooltipAutoUpdate(true);
         list.child(canvas);
@@ -438,8 +488,12 @@ final class HologramMaterialConfirmationDialog {
             panel.child(HologramMuiTheme.label(this::status, 14, 299, 604, 16, HologramMuiTheme.TEXT));
             panel.child(
                 HologramMuiTheme.label(
-                    () -> localView.localHatchDelta() ? "只处理已选仓室；现场与库存由服务器确认。"
-                        : descriptive() ? "仅供查看，未扣料。" : "本地估算，未扣料。",
+                    () -> localView.localHatchDelta()
+                        ? projectorOr(
+                            "native.ui.processes_the_complete_structure_the_server_verifies",
+                            "处理完整结构；现场与库存由服务器确认。")
+                        : descriptive() ? projectorOr("native.ui.view_only_no_materials_consumed", "仅供查看，未扣料。")
+                            : projectorOr("native.ui.local_estimate_no_materials_consumed", "本地估算，未扣料。"),
                     14,
                     316,
                     604,
@@ -478,30 +532,29 @@ final class HologramMaterialConfirmationDialog {
                     () -> { if (localView.localVoucherAvailable()) localView.localAction(LocalAction.VOUCHER); },
                     localView::localVoucherAvailable,
                     () -> localView.localVoucherSelected() ? HologramUiAccent.SUGGESTION : 0));
-            // The same panel can be reused for removal. Hide the whole action rather than painting an empty disabled
-            // button.
+            // Repair, replacement and demolition share the recovery destination. New construction hides this action.
             ParentWidget<?> recovery = new ParentWidget<>().name("material_recovery_destination")
                 .pos(165, 369)
                 .size(165, 23)
                 .child(
                     button(
                         252,
-                        localView::localDemolitionDestinationLabel,
+                        localView::localRecoveryDestinationLabel,
                         0,
                         0,
                         165,
                         () -> {
-                            if (localView.localDemolitionAvailable())
-                                localView.localAction(LocalAction.DEMOLITION_DESTINATION);
+                            if (localView.localRecoveryAvailable())
+                                localView.localAction(LocalAction.RECOVERY_DESTINATION);
                         },
-                        localView::localDemolitionAvailable,
+                        localView::localRecoveryAvailable,
                         () -> 0));
-            recovery.setEnabled(localView.localDemolitionAvailable());
-            panel.child(recovery.setEnabledIf(widget -> localView.localDemolitionAvailable()));
+            recovery.setEnabled(localView.localRecoveryAvailable());
+            panel.child(recovery.setEnabledIf(widget -> localView.localRecoveryAvailable()));
             panel.child(
                 button(
                     247,
-                    () -> "刷新本地背包",
+                    () -> projectorOr("native.ui.refresh_local_inventory", "刷新本地背包"),
                     338,
                     369,
                     132,
@@ -511,7 +564,7 @@ final class HologramMaterialConfirmationDialog {
             panel.child(
                 button(
                     54,
-                    () -> "返回预览",
+                    () -> projectorOr("native.ui.back_to_preview", "返回预览"),
                     14,
                     402,
                     160,
@@ -533,12 +586,13 @@ final class HologramMaterialConfirmationDialog {
                     for (int i = 0; i < rows.tagCount(); i++) {
                         NBTTagCompound row = rows.getCompoundTagAt(i);
                         t.addLine(
-                            row.getString("name") + "：需求 "
+                            row.getString("name") + (projectorOr("native.ui.required_109", "：需求") + " ")
                                 + row.getString("required")
-                                + " / 已有 "
+                                + (" " + projectorOr("native.ui.available_97", "/ 已有") + " ")
                                 + row.getString("available"));
                     }
-                    if (HologramPlacementConfirmation.emptyCacheFallback(state())) t.addLine("确认表示接受空缓存放置结果。");
+                    if (HologramPlacementConfirmation.emptyCacheFallback(state())) t.addLine(
+                        projectorOr("native.ui.confirming_accepts_placement_with_empty_caches", "确认表示接受空缓存放置结果。"));
                 })
                 .tooltipAutoUpdate(true));
         panel.child(
@@ -547,7 +601,7 @@ final class HologramMaterialConfirmationDialog {
         panel.child(
             button(
                 168,
-                () -> "本次 NBT",
+                () -> projectorOr("native.ui.placement_nbt", "本次 NBT"),
                 14,
                 340,
                 92,
@@ -557,7 +611,7 @@ final class HologramMaterialConfirmationDialog {
         panel.child(
             button(
                 196,
-                () -> "量子网络绑定",
+                () -> projectorOr("native.ui.quantum_network_bindings", "量子网络绑定"),
                 112,
                 340,
                 116,
@@ -568,7 +622,8 @@ final class HologramMaterialConfirmationDialog {
         panel.child(
             button(
                 162,
-                () -> orderActive() ? "取消本次 AE 订单" : "AE 补齐本次缺料",
+                () -> orderActive() ? projectorOr("native.ui.cancel_this_ae_order", "取消本次 AE 订单")
+                    : projectorOr("native.ui.ae_craft_missing_materials", "AE 补齐本次缺料"),
                 234,
                 340,
                 160,
@@ -582,10 +637,16 @@ final class HologramMaterialConfirmationDialog {
                         && state().getBoolean("materialOrderingAvailable")
                         && materials.hasItemShortage(),
                 () -> orderActive() ? HologramUiAccent.WARNING : recommendOrder() ? HologramUiAccent.SUGGESTION : 0)
-                    .tooltipBuilder(
-                        t -> {
-                            t.addLine(orderActive() ? "只取消本次订单；已提交的 AE 合成由服务器按能力撤销。" : "仅对本次清单中可合成的缺料下单；不可合成项会明确报告。");
-                        }));
+                    .tooltipBuilder(t -> {
+                        t.addLine(
+                            orderActive()
+                                ? projectorOr(
+                                    "native.ui.cancels_this_order_only_the_server_cancels",
+                                    "只取消本次订单；已提交的 AE 合成由服务器按能力撤销。")
+                                : projectorOr(
+                                    "native.ui.orders_craftable_shortages_in_this_list_only",
+                                    "仅对本次清单中可合成的缺料下单；不可合成项会明确报告。"));
+                    }));
         panel.child(
             button(
                 245,
@@ -600,16 +661,20 @@ final class HologramMaterialConfirmationDialog {
                     .tooltipBuilder(t -> {
                         if (voucherEnabled() && (hasVoucherDemand() || voucherSelected())) {
                             if (state().getCompoundTag("materialQuote")
-                                .getBoolean("creativePaymentsFree")) t.addLine("创造模式不消耗抵用券");
+                                .getBoolean("creativePaymentsFree"))
+                                t.addLine(
+                                    projectorOr("native.ui.creative_mode_does_not_consume_vouchers", "创造模式不消耗抵用券"));
                             else t.addLine(
-                                "主物品栏：" + state().getCompoundTag("decorativeVoucher")
-                                    .getLong("available") + " 张");
+                                (projectorOr("native.ui.main_inventory", "主物品栏：") + " ")
+                                    + state().getCompoundTag("decorativeVoucher")
+                                        .getLong("available")
+                                    + (" " + projectorOr("native.ui.vouchers", "张")));
                         }
                     }));
         panel.child(
             button(
                 211,
-                () -> "去标识设置",
+                () -> projectorOr("native.ui.identity_settings", "去标识设置"),
                 14,
                 369,
                 102,
@@ -619,22 +684,48 @@ final class HologramMaterialConfirmationDialog {
         panel.child(
             button(
                 215,
-                () -> "移除阻塞物",
+                () -> projectorOr("native.ui.remove_obstructions", "移除阻塞物"),
                 122,
                 369,
                 102,
                 () -> action(215),
                 () -> editable() && ui.review.materialBlockers() > 0,
                 () -> ui.review.materialBlockers() > 0 ? HologramUiAccent.WARNING : 0));
-        panel.child(button(184, () -> "数据校验详情", 230, 369, 102, () -> action(184), () -> !orderActive(), () -> 0));
         panel.child(
-            button(247, () -> "刷新材料", 338, 369, 132, ui.session::refreshMaterialReview, this::editable, () -> 0));
+            button(
+                184,
+                () -> projectorOr("native.ui.validation_details", "数据校验详情"),
+                230,
+                369,
+                102,
+                () -> action(184),
+                () -> !orderActive(),
+                () -> 0));
         panel.child(
-            button(246, () -> "返回世界 · 后台继续", 476, 369, 142, () -> ui.router.closeRoot(), this::orderActive, () -> 0));
+            button(
+                247,
+                () -> projectorOr("native.ui.refresh_materials", "刷新材料"),
+                338,
+                369,
+                132,
+                ui.session::refreshMaterialReview,
+                this::editable,
+                () -> 0));
+        panel.child(
+            button(
+                246,
+                () -> projectorOr("native.ui.return_to_world_continue_in_background", "返回世界 · 后台继续"),
+                476,
+                369,
+                142,
+                () -> ui.router.closeRoot(),
+                this::orderActive,
+                () -> 0));
         panel.child(
             button(
                 54,
-                () -> ui.review.placementReviewActive() ? "取消放置" : "返回预览",
+                () -> ui.review.placementReviewActive() ? projectorOr("native.ui.cancel_placement", "取消放置")
+                    : projectorOr("native.ui.back_to_preview", "返回预览"),
                 14,
                 402,
                 160,
@@ -644,7 +735,9 @@ final class HologramMaterialConfirmationDialog {
         panel.child(
             button(
                 55,
-                () -> lessonClose != null ? "最终确认 · 教学隔离" : ui.review.lastConfirmationAction(),
+                () -> lessonClose != null
+                    ? projectorOr("native.ui.final_confirmation_tutorial_isolation", "最终确认 · 教学隔离")
+                    : ui.review.lastConfirmationAction(),
                 184,
                 402,
                 434,
@@ -665,20 +758,35 @@ final class HologramMaterialConfirmationDialog {
         if (local) return localFrame == null ? "" : localFrame.status();
         if (!ui.session.notice()
             .isEmpty()) return ui.session.notice();
-        if (state().getBoolean("localPlanPending")) return "材料规划更新中；完成后再核对清单。";
-        if (ui.session.materialReviewPending()) return "正在更新本次材料报价…可继续切换抵用券。";
-        if (!materials.ready()) return "等待服务器的精确材料清单…";
-        if (!HologramPlacementConfirmation.voucherPaymentReady(state()))
-            return "已展示抵扣方案；生存施工前请在主背包补充 1 张猫猫装饰抵用券，或取消勾选。";
+        if (state().getBoolean("localPlanPending"))
+            return projectorOr("native.ui.updating_the_material_plan_review_the_list", "材料规划更新中；完成后再核对清单。");
+        if (ui.session.materialReviewPending()) return projectorOr(
+            "native.ui.updating_this_material_quote_voucher_selection_remains",
+            "正在更新本次材料报价…可继续切换抵用券。");
+        if (!materials.ready())
+            return projectorOr("native.ui.waiting_for_the_server_s_exact_material", "等待服务器的精确材料清单…");
+        if (!HologramPlacementConfirmation.voucherPaymentReady(state())) return projectorOr(
+            "native.ui.discount_shown_add_one_decorative_voucher_to",
+            "已展示抵扣方案；生存施工前请在主背包补充 1 张猫猫装饰抵用券，或取消勾选。");
         NBTTagCompound order = state().getCompoundTag("materialOrder");
-        if (orderActive()) return "AE 本次订单 " + order
-            .getLong("done") + " / " + order.getLong("total") + " · " + order.getString("status") + " · 可关闭界面，后台继续";
+        if (orderActive()) return (projectorOr("native.ui.this_ae_order", "AE 本次订单") + " ") + order.getLong("done")
+            + " / "
+            + order.getLong("total")
+            + " · "
+            + order.getString("status")
+            + (" " + projectorOr("native.ui.you_may_close_this_screen_work_continues", "· 可关闭界面，后台继续"));
         if (!order.getString("status")
             .isEmpty()) return order.getString("status");
         if (HologramPlacementConfirmation.forceReview(state(), ui.review.confirmedRevision()))
             return state().getString("status")
-                .contains("请重新核对") ? state().getString("status") : "确认后仅放置材料足够的格；缺料格跳过，权限与占位保护仍有效。";
-        return materials.size() + " 项精确材料 · 图标悬停查看完整数值与身份 · 普通滚轮 / 拖动右侧滚动条";
+                .contains("请重新核对")
+                    ? state().getString("status")
+                    : projectorOr(
+                        "native.ui.only_cells_with_sufficient_materials_will_be",
+                        "确认后仅放置材料足够的格；缺料格跳过，权限与占位保护仍有效。");
+        return materials.size() + (" " + projectorOr(
+            "native.ui.exact_materials_hover_icons_for_full_values",
+            "项精确材料 · 图标悬停查看完整数值与身份 · 普通滚轮 / 拖动右侧滚动条"));
     }
 
     private boolean descriptive() {
@@ -701,23 +809,36 @@ final class HologramMaterialConfirmationDialog {
 
     private String localEmptyLabel() {
         if (descriptive()) return localFrame.emptyLabel();
-        return localFrame == null || !localFrame.ready() ? "正在本地统计…" : localFrame.emptyLabel();
+        return localFrame == null || !localFrame.ready() ? projectorOr("native.ui.calculating_locally", "正在本地统计…")
+            : localFrame.emptyLabel();
     }
 
     private String reviewHint() {
-        if (descriptive()) return "查看原图记录和本机背包；施工用量、容器及 AE 均未核验。";
-        if (local && localView.localHatchDelta()) return "需求仅计入换入物品；转向、拆除不扣料。";
-        if (local) return "理论需求与本机背包；AE / 容器库存未知，不查询服务器。";
-        if (lessonClose != null) return "同一规划的精确材料需求 · 教学库存为 0 · 此处不查询玩家库存或执行施工";
+        if (descriptive()) return projectorOr(
+            "native.ui.shows_recorded_items_and_local_inventory_construction",
+            "查看原图记录和本机背包；施工用量、容器及 AE 均未核验。");
+        if (local && localView.localHatchDelta())
+            return projectorOr("native.ui.demand_includes_replacement_items_only_turning_and", "需求仅计入换入物品；转向、拆除不扣料。");
+        if (local) return projectorOr(
+            "native.ui.estimated_demand_and_local_inventory_ae_and",
+            "理论需求与本机背包；AE / 容器库存未知，不查询服务器。");
+        if (lessonClose != null) return projectorOr(
+            "native.ui.exact_demand_for_this_plan_tutorial_stock",
+            "同一规划的精确材料需求 · 教学库存为 0 · 此处不查询玩家库存或执行施工");
         boolean creative = state().getCompoundTag("materialQuote")
             .getBoolean("creativePaymentsFree");
         if (ui.review.placementReviewActive())
-            return "位置已固定：" + ui.review.placementPosition() + (creative ? " · 创造模式 · 完整材料需求" : " · 已有以最近检查为准");
-        return creative ? "创造模式仍展示完整需求，实际消耗按施工规则。" : "已有按最近检查；确认施工或提交 AE 时核对实际库存。";
+            return (projectorOr("native.ui.position_fixed", "位置已固定：") + " ") + ui.review.placementPosition()
+                + (creative ? (" " + projectorOr("native.ui.creative_mode_complete_material_demand", "· 创造模式 · 完整材料需求"))
+                    : (" " + projectorOr("native.ui.available_stock_from_the_latest_check", "· 已有以最近检查为准")));
+        return creative
+            ? projectorOr("native.ui.creative_mode_still_shows_complete_demand_actual", "创造模式仍展示完整需求，实际消耗按施工规则。")
+            : projectorOr("native.ui.available_stock_is_from_the_latest_check", "已有按最近检查；确认施工或提交 AE 时核对实际库存。");
     }
 
     private String voucherLabel() {
-        return voucherSelected() ? "✓ 装饰抵扣" : "装饰抵扣";
+        return voucherSelected() ? projectorOr("native.ui.decorative_discount_146", "✓ 装饰抵扣")
+            : projectorOr("native.ui.decorative_discount", "装饰抵扣");
     }
 
     private void voucher() {
@@ -736,19 +857,30 @@ final class HologramMaterialConfirmationDialog {
             if (id == 245 && !localView.localVoucherAvailable()) return localView.localVoucherBlocker();
             return "";
         }
-        if (id == 168 && !ui.nbt.hasPlacementNbtChoices()) return "本次蓝图没有可调整的 NBT 条目。";
+        if (id == 168 && !ui.nbt.hasPlacementNbtChoices())
+            return projectorOr("native.ui.this_blueprint_has_no_adjustable_nbt_entries", "本次蓝图没有可调整的 NBT 条目。");
         if (id == 196 && ui.bindings.networkGroups()
-            .tagCount() == 0) return "本图没有需要绑定的量子网络。";
-        if (id == 211 && !ui.identity.hasPlacementIdentityChoices()) return "本图没有可调整的身份与外部绑定数据。";
-        if (id == 215 && ui.review.materialBlockers() == 0) return "本次范围没有需要移除的阻塞物。";
+            .tagCount() == 0)
+            return projectorOr("native.ui.this_blueprint_has_no_quantum_networks_to", "本图没有需要绑定的量子网络。");
+        if (id == 211 && !ui.identity.hasPlacementIdentityChoices())
+            return projectorOr("native.ui.this_blueprint_has_no_adjustable_identity_or", "本图没有可调整的身份与外部绑定数据。");
+        if (id == 215 && ui.review.materialBlockers() == 0)
+            return projectorOr("native.ui.there_are_no_obstructions_to_remove_in", "本次范围没有需要移除的阻塞物。");
         if (id == 162 && !orderActive()) {
-            if (!materials.ready() || ui.session.materialReviewPending()) return "正在核对本次材料，请等待报价更新。";
-            if (!materials.hasItemShortage()) return "本次没有缺少的物品。";
-            if (!state().getBoolean("materialOrderingAvailable")) return "请启用 ME 材料来源，使用已连接且在范围内的无线终端，并确认有合成、提取和存入权限。";
+            if (!materials.ready() || ui.session.materialReviewPending())
+                return projectorOr("native.ui.checking_materials_wait_for_the_quote_update", "正在核对本次材料，请等待报价更新。");
+            if (!materials.hasItemShortage())
+                return projectorOr("native.ui.no_items_are_missing_for_this_request", "本次没有缺少的物品。");
+            if (!state().getBoolean("materialOrderingAvailable")) return projectorOr(
+                "native.ui.enable_me_materials_and_use_a_connected",
+                "请启用 ME 材料来源，使用已连接且在范围内的无线终端，并确认有合成、提取和存入权限。");
         }
         if (id == 245 && !voucherSelected()) {
-            if (!voucherEnabled()) return "服务器配置已禁用猫猫装饰抵用券。";
-            if (!hasVoucherDemand()) return "本次没有可抵扣的建筑材料需求。";
+            if (!voucherEnabled()) return projectorOr(
+                "native.ui.decorative_vouchers_are_disabled_by_server_configuration",
+                "服务器配置已禁用猫猫装饰抵用券。");
+            if (!hasVoucherDemand())
+                return projectorOr("native.ui.this_request_has_no_eligible_building_material", "本次没有可抵扣的建筑材料需求。");
         }
         return "";
     }
@@ -795,7 +927,7 @@ final class HologramMaterialConfirmationDialog {
         BooleanSupplier enabled, IntSupplier accent) {
         enabledControls.put(id, enabled);
         controlAccents.put(id, accent);
-        return HologramMuiTheme.button(text, x, y, width, 23, action)
+        ButtonWidget<?> result = HologramMuiTheme.button(text, x, y, width, 23, action)
             .background(HologramMuiTheme.guidanceBackground(false, accent, enabled))
             .hoverBackground(HologramMuiTheme.guidanceBackground(true, accent, enabled))
             .overlay(
@@ -809,6 +941,9 @@ final class HologramMaterialConfirmationDialog {
             .tooltipAutoUpdate(true)
             // Keep the grey local confirm target explainable on click; the guarded callback cannot dispatch.
             .setEnabledIf(widget -> local && id == 55 || enabled.getAsBoolean());
+        controlWidgets.put(id, result);
+        if (ui != null && lessonClose == null) ui.shell.registerTarget("materials.control." + id, result);
+        return result;
     }
 
     static int materialButtonInk(int accent, boolean enabled) {
@@ -891,7 +1026,7 @@ final class HologramMaterialConfirmationDialog {
                         number(font, Long.toString(row.blueprintCells()), 256, y + 16, HologramMuiTheme.TEXT);
                         number(
                             font,
-                            row.visibleBackpackCount() == null ? "未知"
+                            row.visibleBackpackCount() == null ? projectorOr("native.ui.unknown", "未知")
                                 : row.visibleBackpackCount()
                                     .toString(),
                             370,
@@ -911,10 +1046,12 @@ final class HologramMaterialConfirmationDialog {
                         HologramUiAccent.INFORMATION);
                     font.drawString(font.trimStringToWidth(row.name, 220), 31, y + 8, HologramMuiTheme.TEXT);
                     String note = row.data.hasKey("hatchChange", 8) ? row.data.getString("hatchChange")
-                        : "#" + (i + 1) + " · " + (row.tagged ? "精确 NBT" : row.unit);
+                        : "#" + (i + 1)
+                            + " · "
+                            + (row.tagged ? projectorOr("native.ui.exact_nbt", "精确 NBT") : row.unit);
                     font.drawString(font.trimStringToWidth(note, 220), 31, y + 24, HologramMuiTheme.MUTED);
                     if (row.data.getBoolean("voucherEligible")) {
-                        String badge = "可用抵用券";
+                        String badge = projectorOr("native.ui.voucher_eligible", "可用抵用券");
                         int badgeX = 151;
                         GuiDraw.drawRect(badgeX - 3, y + 21, font.getStringWidth(badge) + 6, 15, 0xff51432a);
                         font.drawString(badge, badgeX, y + 24, 0xffffd36b);
@@ -929,7 +1066,9 @@ final class HologramMaterialConfirmationDialog {
                         row.shortage ? HologramUiAccent.WARNING : HologramMuiTheme.MUTED);
                 }
                 if (rowCount() == 0) font.drawString(
-                    local ? localEmptyLabel() : materials.ready() ? "本次没有材料需求" : "等待精确材料清单…",
+                    local ? localEmptyLabel()
+                        : materials.ready() ? projectorOr("native.ui.no_material_demand_for_this_request", "本次没有材料需求")
+                            : projectorOr("native.ui.waiting_for_the_exact_material_list", "等待精确材料清单…"),
                     12,
                     16,
                     HologramMuiTheme.MUTED);

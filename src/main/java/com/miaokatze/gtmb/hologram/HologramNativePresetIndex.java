@@ -58,6 +58,12 @@ public final class HologramNativePresetIndex {
         }
     }
 
+    @FunctionalInterface
+    interface NativeResolver {
+
+        Outcome resolve(Map<Integer, Integer> stock, boolean creative);
+    }
+
     private static final class Category {
 
         final IStructureElement<?> declaration;
@@ -384,6 +390,7 @@ public final class HologramNativePresetIndex {
         private final List<ProfileUnit> profile;
         private final String unavailable;
         private java.util.function.Supplier<String> validity = () -> null;
+        private NativeResolver nativeResolver;
 
         private Prepared(int[] ids, List<Position> positions, int[] needed, List<ProfileUnit> profile,
             String unavailable) {
@@ -396,6 +403,12 @@ public final class HologramNativePresetIndex {
 
         static Prepared unavailable(String reason) {
             return new Prepared(new int[0], Collections.emptyList(), new int[0], null, reason);
+        }
+
+        static Prepared nativePlan(int[] ids, NativeResolver resolver) {
+            Prepared result = new Prepared(ids.clone(), Collections.emptyList(), new int[0], null, "");
+            result.nativeResolver = resolver;
+            return result;
         }
 
         public int[] stockIds() {
@@ -411,6 +424,7 @@ public final class HologramNativePresetIndex {
             if (!unavailable.isEmpty()) return failure(unavailable);
             String invalid = validity.get();
             if (invalid != null) return failure(invalid);
+            if (nativeResolver != null) return nativeResolver.resolve(Collections.emptyMap(), creative);
             if (!creative && (counts == null || counts.length != ids.length)) return failure("库存回执不完整。");
             Map<Integer, Integer> stock = new LinkedHashMap<>();
             for (int i = 0; i < ids.length; i++)

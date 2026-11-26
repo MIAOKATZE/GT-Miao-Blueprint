@@ -27,6 +27,9 @@ import org.objectweb.asm.Opcodes;
 import com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor;
 import com.miaokatze.gtmb.hologram.HologramLocalControllerCapture;
 import com.miaokatze.gtmb.hologram.HologramSnapshotAssembly;
+import com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation;
+import com.miaokatze.gtmb.hologram.HologramStockNativeWire.ServerObservation;
+import com.miaokatze.gtmb.hologram.HologramStockNativeWire.Stage;
 import com.miaokatze.gtmb.testutil.MinecraftTestBootstrap;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
@@ -161,24 +164,10 @@ public final class HologramClientP0Regression {
         SimpleAssert.that(
             !opening.getBoolean("presetAvailable"),
             "the tier catalogue alone does not prove authoritative declared quotas");
-        NBTTagCompound scope = new NBTTagCompound();
+        nativeControllerActionContract();
         SimpleAssert.that(
-            HologramScreen.ordinaryNativeSubmit(opening, scope, false),
-            "full ordinary mode can proceed to the supported short request only");
-        scope.setIntArray("selectedIndices", new int[] { 2, 4 });
-        SimpleAssert.that(
-            !HologramScreen.ordinaryNativeSubmit(opening, scope, false),
-            "an exact selected scope cannot accidentally become a whole native operation");
-        NBTTagCompound preset = (NBTTagCompound) opening.copy();
-        preset.setBoolean("presetActive", true);
-        scope.removeTag("selectedIndices");
-        SimpleAssert.that(
-            !HologramScreen.ordinaryNativeSubmit(preset, scope, false),
-            "a preset without native proof cannot be submitted");
-        preset.setBoolean("nativePresetExact", true);
-        SimpleAssert.that(
-            HologramScreen.ordinaryNativeSubmit(preset, scope, true),
-            "the native preset uses the supported short request");
+            !opening.hasKey("nativeStage") && !opening.hasKey("nativeObservationToken"),
+            "a client-only geometry header cannot invent server formation evidence");
         for (String serverField : new String[] { "controllerOpenId", "controllerOpening", "snapshotPending",
             "planRevision", "placementReviewNonce", "toolId" })
             SimpleAssert.that(!opening.hasKey(serverField), "local preview cannot invent " + serverField);
@@ -187,6 +176,68 @@ public final class HologramClientP0Regression {
         SimpleAssert.that(!unavailable.getBoolean("capturePending"), "unavailable result retires the local task");
         SimpleAssert
             .eq(opening.getString("session"), unavailable.getString("session"), "unavailable stays in workbench");
+    }
+
+    private static void nativeControllerActionContract() {
+        HologramNativeControllerState state = new HologramNativeControllerState();
+        state.targetReady();
+        for (Operation action : Operation.values()) SimpleAssert.that(
+            !state.blocker(action)
+                .isEmpty(),
+            "geometry alone never authorizes " + action);
+        long revision = state.targetRevision();
+        SimpleAssert.that(
+            state.observe(new ServerObservation(236, 0, 64, 0, Stage.CONTROLLER_ONLY, 1, revision, "")),
+            "an exact server observation binds the current target");
+        actions(state, Operation.BUILD);
+        SimpleAssert.eq("仅控制器", state.statusCaption(), "server observation replaces the opening progress caption");
+        state.observe(new ServerObservation(236, 0, 64, 0, Stage.UNFORMED, 2, revision, ""));
+        SimpleAssert.eq(Operation.REPAIR, state.action(), "unfinished structures default to repair");
+        actions(state, Operation.REPAIR, Operation.DEMOLISH);
+        state.observe(new ServerObservation(236, 0, 64, 0, Stage.FORMED, 3, revision, ""));
+        SimpleAssert.eq(Operation.REPLACE, state.action(), "formed structures default to replacement");
+        actions(state, Operation.REPLACE, Operation.DEMOLISH);
+        SimpleAssert.eq(
+            "结构已成型",
+            state.statusCaption(),
+            "formation status uses server evidence rather than client active/idle flags");
+        state.targetChanged();
+        SimpleAssert
+            .that(state.targetRevision() > revision, "changing configuration advances the complete target revision");
+        SimpleAssert.that(
+            !state.observe(new ServerObservation(236, 0, 64, 0, Stage.FORMED, 4, revision, "")),
+            "late server observations cannot authorize a newer target");
+        for (Operation action : Operation.values()) SimpleAssert.that(
+            !state.blocker(action)
+                .isEmpty(),
+            "invalidated world evidence cannot authorize " + action);
+        state.targetFailed("Fixture invalid optional preset");
+        state.observe(new ServerObservation(236, 0, 64, 0, Stage.FORMED, 5, state.targetRevision(), ""));
+        actions(state, Operation.DEMOLISH);
+        SimpleAssert
+            .that(state.select(Operation.DEMOLISH), "a bad desired preset does not block whole-machine demolition");
+        state.targetReady();
+        actions(state, Operation.REPLACE, Operation.DEMOLISH);
+        NBTTagCompound metadata = state.metadata();
+        SimpleAssert
+            .eq("FORMED", metadata.getString("nativeStage"), "published formation comes from the server observation");
+        SimpleAssert.eq(
+            Operation.DEMOLISH.ordinal(),
+            metadata.getInteger("nativeAction"),
+            "the selected action is independent of target configuration");
+        SimpleAssert.eq(
+            5L,
+            metadata.getLong("nativeObservationToken"),
+            "the published state retains its exact observation token");
+    }
+
+    private static void actions(HologramNativeControllerState state, Operation... allowed) {
+        var expected = java.util.Arrays.asList(allowed);
+        for (Operation action : Operation.values()) SimpleAssert.eq(
+            expected.contains(action),
+            state.blocker(action)
+                .isEmpty(),
+            "native action matrix for " + action);
     }
 
     private static void actualCaptureLifecycle() {

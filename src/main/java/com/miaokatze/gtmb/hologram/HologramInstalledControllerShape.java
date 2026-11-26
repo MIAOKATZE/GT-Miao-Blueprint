@@ -81,9 +81,9 @@ final class HologramInstalledControllerShape {
     }
 
     /** Only native solid slots, never the required air or padding coordinates. */
-    HologramDeclaredNativeSelection.Offset next(ExtendedFacing facing) {
+    HologramStructureCursor.Offset next(ExtendedFacing facing) {
         IStructureElement<?> element = declaration[cursor.done()];
-        HologramDeclaredNativeSelection.Offset offset = cursor.declarationOffset(facing);
+        HologramStructureCursor.Offset offset = cursor.declarationOffset(facing);
         return element == StructureUtility.isAir() ? null : offset;
     }
 }

@@ -56,6 +56,7 @@ public final class HologramTutorialIssue100Probe {
         .getBoolean(com.miaokatze.gtmb.hologram.HologramTurbineStockWorldProbe.FLAG);
     private volatile com.miaokatze.gtmb.hologram.HologramTurbineStockWorldProbe turbine;
     private volatile HologramOwnedLargeBlueprintProbe largeBlueprint;
+    private volatile HologramFourMachineRuntimeProbe fourMachine;
     private HologramTurbineBasicClientProbe turbineBasic;
     private HologramTurbineWireWitness turbineWire;
     private final Map<String, Object> preparedStockReceipt = new LinkedHashMap<>();
@@ -78,6 +79,16 @@ public final class HologramTutorialIssue100Probe {
     private String failure;
 
     static boolean install() {
+        require(
+            !TURBINE && !HologramHatchPresetRuntimeWitness.enabled(),
+            "UNSUPPORTED/RETIRED: ownedTurbineStockWorld and hatchPresetRuntime use the removed declared-native contract; use fourMachineRuntime");
+        if (HologramFourMachineRuntimeProbe.enabled()) require(
+            Boolean.getBoolean("gtmb.testlab.tutorialIssue100") && Boolean.getBoolean("miaotest.host.environment")
+                && !TURBINE
+                && !HologramOwnedLargeBlueprintProbe.ENABLED
+                && !HologramLocalPreviewStagesProbe.enabled()
+                && !Boolean.getBoolean(HologramEbfPreparedStock.FLAG),
+            "Four-machine action runtime requires an exclusive fresh host-owned integrated world");
         if (HologramEbfFixedControls.coilOnlyEnabled()) require(
             HologramEbfFixedControls.coilProfileAllowed(
                 Boolean.getBoolean("gtmb.testlab.tutorialIssue100"),
@@ -126,6 +137,16 @@ public final class HologramTutorialIssue100Probe {
             || event.phase != TickEvent.Phase.END) return;
         if (exactWorldOwned) {
             try {
+                if (HologramFourMachineRuntimeProbe.enabled()) {
+                    var probe = fourMachine;
+                    if (probe == null) fourMachine = probe = new HologramFourMachineRuntimeProbe(
+                        save,
+                        output,
+                        UUID.fromString(System.getProperty("miaotest.host.actorUuid")),
+                        receipt);
+                    probe.server(server.worldServerForDimension(0));
+                    return;
+                }
                 if (HologramOwnedLargeBlueprintProbe.ENABLED) {
                     var probe = largeBlueprint;
                     if (probe == null) largeBlueprint = probe = new HologramOwnedLargeBlueprintProbe(
@@ -183,7 +204,10 @@ public final class HologramTutorialIssue100Probe {
         Minecraft mc = Minecraft.getMinecraft();
         try {
             progress(mc);
-            if (stage < 6 && System.nanoTime() - started > 480_000_000_000L)
+            long allowedNanos = HologramFourMachineRuntimeProbe.enabled()
+                && "all".equals(System.getProperty("gtmb.testlab.fourMachineSlice")) ? 840_000_000_000L
+                    : 480_000_000_000L;
+            if (stage < 6 && System.nanoTime() - started > allowedNanos)
                 throw new IllegalStateException("Issue100 native regression timed out at stage " + stage);
             long stageSeconds = (System.nanoTime() - stageStarted) / 1_000_000_000L;
             if ((stage == 2 || stage == 4) && stageSeconds > 30 || stage == 3 && stageSeconds > 120)
@@ -238,16 +262,18 @@ public final class HologramTutorialIssue100Probe {
                 receipt.put("ownedSave", save.toString());
                 receipt.put(
                     "actorMode",
-                    HologramOwnedLargeBlueprintProbe.ENABLED ? "Owned creative preview and placement fixture"
-                        : TURBINE
-                            ? "Owned turbine fixture: creative initial construction; survival repair; fixture stock"
-                            : HologramControllerWorldProjectionProbe.enabled()
-                                && !HologramLocalPreviewStagesProbe.fixedNativeEbfEnabled()
-                                    ? "Owned survival projection fixture; one server-synced projector, restored on exit"
-                                    : HologramHatchPresetRuntimeWitness.enabled()
-                                        ? "SURVIVAL; no OP; 13 finite registered LV/MV hatch stacks; complete inventory/selected slot restored"
-                                        : preparedStock == null ? "SURVIVAL; no OP or inventory fixture changes"
-                                            : "SURVIVAL; no OP; explicit pre-login vanilla playerdata fixture, no live inventory injection");
+                    HologramFourMachineRuntimeProbe.enabled()
+                        ? "Real non-OP SURVIVAL; finite recorded inventory fixture; complete inventory/slot/position restoration"
+                        : HologramOwnedLargeBlueprintProbe.ENABLED ? "Owned creative preview and placement fixture"
+                            : TURBINE
+                                ? "Owned turbine fixture: creative initial construction; survival repair; fixture stock"
+                                : HologramControllerWorldProjectionProbe.enabled()
+                                    && !HologramLocalPreviewStagesProbe.fixedNativeEbfEnabled()
+                                        ? "Owned survival projection fixture; one server-synced projector, restored on exit"
+                                        : HologramHatchPresetRuntimeWitness.enabled()
+                                            ? "SURVIVAL; no OP; 13 finite registered LV/MV hatch stacks; complete inventory/selected slot restored"
+                                            : preparedStock == null ? "SURVIVAL; no OP or inventory fixture changes"
+                                                : "SURVIVAL; no OP; explicit pre-login vanilla playerdata fixture, no live inventory injection");
                 transition(1);
                 launchedWorld = true;
                 mc.launchIntegratedServer(
@@ -258,6 +284,11 @@ public final class HologramTutorialIssue100Probe {
             } else if (stage == 1) {
                 if (!exactWorldOwned || mc.theWorld == null || mc.thePlayer == null || mc.thePlayer.ticksExisted < 60)
                     return;
+                if (HologramFourMachineRuntimeProbe.enabled()) {
+                    var probe = fourMachine;
+                    if (probe != null && probe.client(mc)) transition(6);
+                    return;
+                }
                 if (HologramOwnedLargeBlueprintProbe.ENABLED) {
                     var probe = largeBlueprint;
                     if (probe != null && probe.client(mc, receipt)) transition(6);
@@ -417,6 +448,14 @@ public final class HologramTutorialIssue100Probe {
 
     @SubscribeEvent
     public void guiPost(GuiScreenEvent.DrawScreenEvent.Post event) {
+        if (!complete && stage == 1 && fourMachine != null) {
+            try {
+                fourMachine.guiPost(event.gui, frame);
+            } catch (Exception problem) {
+                if (failure == null) failure = problem.toString();
+                transition(6);
+            }
+        }
         if (!complete && stage == 1 && localPreviewStages != null) localPreviewStages.guiPost(event.gui, frame);
         if (!complete && stage == 3 && event.gui == screen) postFrame = frame;
     }
@@ -514,6 +553,10 @@ public final class HologramTutorialIssue100Probe {
 
     private void closeWorld(Minecraft mc) throws Exception {
         if (!unloadRequested) {
+            if (fourMachine != null) {
+                if (failure != null) fourMachine.fail(failure);
+                if (!fourMachine.finish(mc)) return;
+            }
             if (localPreviewStages != null && !localPreviewStages.finish(mc)) return;
             if (largeBlueprint != null) largeBlueprint.clientCleanup(mc);
             if (turbineBasic != null) turbineBasic.close(mc);
@@ -585,6 +628,11 @@ public final class HologramTutorialIssue100Probe {
         if (HologramHatchPresetRuntimeWitness.enabled()) receipt.put(
             "businessTransport",
             "Real nativePresetStock request/reply on owned integrated channel; native MUI; no physical construction or external TCP");
+        if (HologramFourMachineRuntimeProbe.enabled()) receipt.put(
+            "businessTransport",
+            "Real action PROBE/BEGIN, integrated client GUI, physical WorldServer writes and survival ledger; explicit "
+                + ("all".equals(System.getProperty("gtmb.testlab.fourMachineSlice")) ? "four-machine matrix"
+                    : "EBF vertical slice"));
         receipt.put(
             "artifact",
             ArtifactIdentity.capture(HologramTutorialIssue100Probe.class)

@@ -74,13 +74,21 @@ final class HologramUiBuildReview implements LocalView {
     private String localMaterialNotice = "";
     private HologramLocalMaterialReview localMaterials;
     private HologramClientStockNative.DeclarationSite localStockSite;
-    private int nativeDemolitionDestination;
+    private int nativeRecoveryDestination;
     private int localMaterialSelectionVersion;
     private NBTTagCompound presentedMaterialState;
     private long presentedMaterialRevision = -1;
 
     boolean nativeMaterialInspectionReady() {
         HologramState state = ui.session.state();
+        if (state.data.getBoolean("localStandardController")) return state.data.getBoolean("nativeTargetReady")
+            || state.data.getInteger("nativeAction") == 3 && ui.host != null
+                && ui.host.parent()
+                    .nativeActionBlocker(
+                        ui.host.parent()
+                            .nativeControllerState()
+                            .action())
+                    .isEmpty();
         int job = state.data.getInteger("job");
         if (state.nativeViewport != null) return ui.session.localDocument() && state.nativeViewport.currentProviders()
             && !HologramBackgroundTasks.busy();
@@ -113,8 +121,7 @@ final class HologramUiBuildReview implements LocalView {
                 .version();
             return true;
         }
-        if (!state.data.getBoolean("localStandardController") || !construction && state.data.getInteger("mode") != 0)
-            return false;
+        if (!state.data.getBoolean("localStandardController")) return false;
         if (root == null || !root.localMaterialOwnerCurrent(ui)) {
             closeLocalMaterials();
             ui.session.notice(projectorOr("stock.owner_changed", "控制器或手持投影仪已变化，请重新打开结构。"));
@@ -150,8 +157,10 @@ final class HologramUiBuildReview implements LocalView {
             && (ui.session.state().nativeViewport != null ? localMaterialPaneCurrent()
                 : root.localMaterialOwnerCurrent(ui))
             && localMaterials.current(ui.session.state(), ui.preview.layer())
-            && (localMaterialSelectionVersion == ui.preview.selection()
-                .version() || localMaterials.wholeLedgerStillSelected(ui.config.configuration()));
+            && (ui.session.state().data.getBoolean("localStandardController")
+                || localMaterialSelectionVersion == ui.preview.selection()
+                    .version()
+                || localMaterials.wholeLedgerStillSelected(ui.config.configuration()));
     }
 
     void closeLocalMaterials() {
@@ -210,12 +219,14 @@ final class HologramUiBuildReview implements LocalView {
         String status = !localMaterialNotice.isEmpty() ? localMaterialNotice : localMaterials.status();
         String scope = localStockSite == null ? localMaterials.scopeLabel()
             : localMaterials.scopeLabel() + " · " + localStockSite.description();
-        if (reviewedNativeMode(2)) {
-            scope = projectorOr("stock.remove_scope", "逐格拆除") + " · " + localDemolitionDestinationLabel();
-            status = projectorOr("stock.remove_note", "只拆所选且由原机登记、归你所有的仓室；由上至下，保留控制器和外壳。");
-        } else if (reviewedNativeMode(1)) {
-            scope = projectorOr("stock.replace_scope", "逐格换装 · 仅原机登记的自有仓室");
-            status = projectorOr("stock.replace_note", "只处理所选改动。仅转向不扣料；换料前检查当前库存，回收原设备。");
+        if (ui.session.state().data.getBoolean("localStandardController")) {
+            scope = (projectorOr("native.ui.complete_current_structure", "当前完整结构 ·") + " ")
+                + HologramNativeControllerState.label(
+                    ui.host.parent()
+                        .nativeControllerState()
+                        .action());
+            if (reviewedNativeRecovery()) scope += " · " + localRecoveryDestinationLabel();
+            status = localMaterials.status();
         } else if (localStockSite != null) status += " · " + projectorOr("stock.keep_done", "现场或库存变更时保留已完成方块");
         String blocker = localSubmitBlocker();
         if (!localMaterialNotice.isEmpty()) status = localMaterialNotice;
@@ -264,6 +275,11 @@ final class HologramUiBuildReview implements LocalView {
         HologramScreen root = ui.host == null ? null : ui.host.parent();
         if (localStockSite != null && root != null && root.stockNativePending())
             return projectorOr("stock.await_result", "正在等候本次施工结果。");
+        if (ui.session.state().data.getBoolean("localStandardController"))
+            return root == null ? projectorOr("native.ui.the_controller_session_expired", "控制器会话已失效。")
+                : root.nativeActionBlocker(
+                    root.nativeControllerState()
+                        .action());
         String blocker = HologramPlacementConfirmation
             .localStructureReviewBlocker(ui.session.state(), settings, root == null || root.hasLocalNativeChoices());
         if (!blocker.isEmpty()) return blocker;
@@ -285,6 +301,11 @@ final class HologramUiBuildReview implements LocalView {
         if (ui.session.state().nativeViewport != null)
             return ui.library.savedNativePlacementReady() ? projectorOr("stock.position_build", "定位并施工")
                 : projectorOr("stock.save_first", "请先保存蓝图");
+        if (ui.session.state().data.getBoolean("localStandardController"))
+            return HologramNativeControllerState.confirmationLabel(
+                ui.host.parent()
+                    .nativeControllerState()
+                    .action());
         if (reviewedNativeMode(2)) return projectorOr("stock.confirm_remove", "确认拆除");
         if (reviewedNativeMode(1)) return projectorOr("stock.confirm_replace", "确认换装");
         return buildLabel(ui.session.state().data);
@@ -304,14 +325,28 @@ final class HologramUiBuildReview implements LocalView {
     }
 
     @Override
-    public boolean localDemolitionAvailable() {
-        return reviewedNativeMode(2) && localMaterialsCurrent();
+    public boolean localRecoveryAvailable() {
+        return reviewedNativeRecovery() && localMaterialsCurrent()
+            && !ui.session.state().data.getBoolean("currentPlacementPending")
+            && (ui.host == null || !ui.host.parent()
+                .stockNativePending());
+    }
+
+    private boolean reviewedNativeRecovery() {
+        int action = ui.session.state().data.getInteger("nativeAction");
+        return localMaterials != null && ui.session.state().data.getBoolean("localStandardController")
+            && action >= 1
+            && action <= 3;
     }
 
     @Override
-    public String localDemolitionDestinationLabel() {
-        return nativeDemolitionDestination == 0 ? projectorOr("stock.recover_inventory", "回收至背包")
+    public String localRecoveryDestinationLabel() {
+        return nativeRecoveryDestination == 0 ? projectorOr("stock.recover_inventory", "回收至背包")
             : projectorOr("stock.recover_ae", "回收至AE");
+    }
+
+    int nativeRecoveryDestination() {
+        return nativeRecoveryDestination;
     }
 
     @Override
@@ -320,8 +355,8 @@ final class HologramUiBuildReview implements LocalView {
             case BACK -> closeLocalMaterials();
             case REFRESH -> refreshLocalMaterials();
             case SUBMIT -> submitLocalMaterials();
-            case DEMOLITION_DESTINATION -> {
-                if (localDemolitionAvailable()) nativeDemolitionDestination = 1 - nativeDemolitionDestination;
+            case RECOVERY_DESTINATION -> {
+                if (localRecoveryAvailable()) nativeRecoveryDestination = 1 - nativeRecoveryDestination;
             }
         }
     }
@@ -349,7 +384,7 @@ final class HologramUiBuildReview implements LocalView {
             ui.session.notice("");
             // True means only that this local action sent or scheduled the request, never server acceptance.
             NBTTagCompound settings = localMaterials.settings();
-            if (reviewedNativeMode(2)) settings.setInteger("demolitionDestination", nativeDemolitionDestination);
+            if (reviewedNativeRecovery()) settings.setInteger("demolitionDestination", nativeRecoveryDestination);
             if (dispatch.test(settings)) {
                 // A cold PROBE is not placement acceptance; leave its status or refusal in the existing dialog.
                 HologramScreen root = ui.host == null ? null : ui.host.parent();
@@ -391,6 +426,7 @@ final class HologramUiBuildReview implements LocalView {
             if (localMaterialDialog == null) localMaterialDialog = new HologramMaterialConfirmationDialog(
                 ui.host.parent()
                     .panel(),
+                ui,
                 this);
         }
         if (localMaterialDialog != null) localMaterialDialog.tick(local && player != null);
@@ -438,8 +474,12 @@ final class HologramUiBuildReview implements LocalView {
         lastEmptyCacheReview = HologramPlacementConfirmation.emptyCacheFallback(state);
         reviewedCacheQuote = HologramPlacementConfirmation.cacheReviewSnapshot(state);
         lastReviewedScope = constructionScopeLabel(true);
-        lastConfirmationTitle = HologramPlacementConfirmation.forceReview(state, confirmedRevision) ? "缺料 · 确认仅放已有"
-            : placementReviewActive() ? "蓝图放置预检 · " + state.getString("virtualPresetName") : "材料与改动";
+        lastConfirmationTitle = HologramPlacementConfirmation.forceReview(state, confirmedRevision)
+            ? projectorOr("native.ui.shortage_place_available_only", "缺料 · 确认仅放已有")
+            : placementReviewActive()
+                ? (projectorOr("native.ui.blueprint_placement_review", "蓝图放置预检 ·") + " ")
+                    + state.getString("virtualPresetName")
+                : projectorOr("native.ui.materials_and_changes", "材料与改动");
         lastConfirmationAction = HologramPlacementConfirmation
             .confirmationAction(state, confirmedRevision, placementReviewActive());
     }
@@ -448,7 +488,12 @@ final class HologramUiBuildReview implements LocalView {
         updateMaterialReviewPresentation();
         // The independent MUI child owns rendering, scroll clipping and all review input.
         // No material names are resolved from the legacy numeric-id material list.
-        if (!materialDialogOpen()) ui.canvas.text("正在打开材料确认…", 50, 68, 315, HologramUiAccent.SUGGESTION);
+        if (!materialDialogOpen()) ui.canvas.text(
+            projectorOr("native.ui.opening_material_confirmation", "正在打开材料确认…"),
+            50,
+            68,
+            315,
+            HologramUiAccent.SUGGESTION);
     }
 
     int operationCount() {
@@ -500,9 +545,13 @@ final class HologramUiBuildReview implements LocalView {
     }
 
     String constructionScopeLabel(boolean reviewed) {
+        if (ui.session.state().data.getBoolean("localStandardController"))
+            return projectorOr("native.ui.construction_scope_complete_current_structure", "施工范围：当前完整结构");
         if (ui.session.state().data.getBoolean("wholeBlueprintPlacement")
             || ui.session.state().data.getBoolean("virtualPlacement"))
-            return "施工范围：整份蓝图（" + ui.session.state().cells.size() + " 格）";
+            return projectorOr("native.ui.construction_scope_entire_blueprint", "施工范围：整份蓝图（")
+                + ui.session.state().cells.size()
+                + (" " + projectorOr("native.ui.cells", "格）"));
         int count = ui.preview.selection()
             .size();
         if (reviewed) {
@@ -510,30 +559,53 @@ final class HologramUiBuildReview implements LocalView {
             count = scope < 2 ? 0 : ui.session.state().data.getIntArray("selectedIndices").length;
             if (scope >= 2 && count == 0 && ui.session.state().data.getInteger("selected") >= 0) count = 1;
         }
-        if (count > 0) return "施工范围：已选 " + count + " 格";
-        return ui.session.state().data.getBoolean("virtual") ? "施工范围：整份蓝图" : "施工范围：全部结构";
+        if (count > 0) return (projectorOr("native.ui.construction_scope_selected", "施工范围：已选") + " ") + count
+            + (" " + projectorOr("native.ui.cells_61", "格"));
+        return ui.session.state().data.getBoolean("virtual")
+            ? projectorOr("native.ui.construction_scope_entire_blueprint_62", "施工范围：整份蓝图")
+            : projectorOr("native.ui.construction_scope_all_structures", "施工范围：全部结构");
     }
 
     String constructionScopeHint() {
+        if (ui.session.state().data.getBoolean("localStandardController")) return projectorOr(
+            "native.ui.configuration_and_presets_update_the_complete_target",
+            "配置和预设更新完整目标；施工不受预览选格限制");
         if (ui.session.state().data.getBoolean("wholeBlueprintPlacement")
-            || ui.session.state().data.getBoolean("virtualPlacement")) return "确认放置默认全蓝图";
+            || ui.session.state().data.getBoolean("virtualPlacement"))
+            return projectorOr("native.ui.placement_defaults_to_the_entire_blueprint", "确认放置默认全蓝图");
         return ui.preview.selection()
-            .size() > 0 ? "只施工所选 · Ctrl+A 全选 · 右键预览清选" : "选择方块可限定范围";
+            .size() > 0 ? projectorOr("native.ui.build_selected_only_ctrl_a_selects_all", "只施工所选 · Ctrl+A 全选 · 右键预览清选")
+                : projectorOr("native.ui.select_blocks_to_limit_the_scope", "选择方块可限定范围");
     }
 
     String completionSummary() {
+        if (ui.session.state().data.getBoolean("localStandardController")) {
+            HologramScreen root = ui.host == null ? null : ui.host.parent();
+            String stage = root == null ? projectorOr("native.ui.reading_server_structure_state", "正在读取服务器结构状态。")
+                : root.nativeStatusCaption();
+            return nativeCompletionCaption(
+                root != null && root.stockNativePending() ? stage : "",
+                ui.session.notice(),
+                stage);
+        }
         String summary = ui.session.state().data.getBoolean("jobPartialPlacement")
             && ui.session.state().data.getInteger("job") >= 3
-                ? "部分完成：放置 " + ui.session.state().data.getInteger("completed")
-                    + " · 缺料 "
+                ? (projectorOr("native.ui.partially_complete_placed", "部分完成：放置") + " ")
+                    + ui.session.state().data.getInteger("completed")
+                    + (" " + projectorOr("native.ui.missing", "· 缺料") + " ")
                     + ui.session.state().data.getInteger("jobMissingCells")
-                    + " · 保护 "
+                    + (" " + projectorOr("native.ui.protected", "· 保护") + " ")
                     + ui.session.state().data.getInteger("jobProtectedCells")
-                    + " · 不支持 "
+                    + (" " + projectorOr("native.ui.unsupported", "· 不支持") + " ")
                     + ui.session.state().data.getInteger("jobUnsupportedCells")
                 : HologramUiText.reason(ui.session.state().data.getString("status"));
         String energyNotice = ui.session.state().data.getString("blueprintEnergyNotice");
         return energyNotice.isEmpty() || summary.contains(energyNotice) ? summary : summary + " · " + energyNotice;
+    }
+
+    static String nativeCompletionCaption(String progress, String notice, String observedState) {
+        if (!progress.isEmpty()) return progress;
+        return notice.isEmpty() ? observedState : HologramNativeUiText.reason(notice);
     }
 
     boolean activateControl(int id) {
@@ -597,7 +669,10 @@ final class HologramUiBuildReview implements LocalView {
             case 55:
                 if (this.confirmation && !HologramPlacementConfirmation
                     .cacheReviewMatches(ui.session.state().data, this.reviewedCacheQuote)) {
-                    ui.session.notice("缓存报价已变化，请重新核对当前确认信息后再放置");
+                    ui.session.notice(
+                        projectorOr(
+                            "native.ui.the_cache_quote_changed_review_the_confirmation",
+                            "缓存报价已变化，请重新核对当前确认信息后再放置"));
                     return true;
                 }
                 if (ui.session.editable() && !ui.session.materialReviewPending()
