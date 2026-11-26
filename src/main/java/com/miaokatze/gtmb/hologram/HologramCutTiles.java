@@ -22,6 +22,11 @@ final class HologramCutTiles {
 
     static TileEntity create(WorldServer world, Block block, int metadata, NBTTagCompound tag) throws IOException {
         try {
+            if ("LittleTilesTileEntity".equals(tag.getString("id"))) HologramLittleTilesCapabilities.validateHost(tag);
+            if (block.getClass()
+                .getName()
+                .equals("crazypants.enderio.conduit.BlockConduitBundle"))
+                HologramEnderIoCapabilities.requireRepresentable(tag);
             Object selected = Registry.TYPES.get(tag.getString("id"));
             if (!(selected instanceof Class<?>) || !TileEntity.class.isAssignableFrom((Class<?>) selected))
                 throw new IOException("原方块实体类型未注册，完整剪切记录已保留");

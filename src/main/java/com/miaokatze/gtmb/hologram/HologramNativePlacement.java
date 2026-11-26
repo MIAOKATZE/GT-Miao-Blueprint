@@ -694,6 +694,10 @@ public final class HologramNativePlacement {
                 tile.readFromNBT((NBTTagCompound) tag.copy());
                 return tile;
             }
+            if (type.equals("com.creativemd.littletiles.common.blocks.BlockTile"))
+                HologramLittleTilesCapabilities.validateHost(tag);
+            if (type.equals("crazypants.enderio.conduit.BlockConduitBundle"))
+                HologramEnderIoCapabilities.requireRepresentable(tag);
             validateSavedAppearance(block, tag);
             if (type.equals("codechicken.multipart.BlockMultipart")) {
                 // MultipartSaveLoad uses savedMultipart -> TileNBTContainer at load time, then creates a dynamic tile.

@@ -7,7 +7,6 @@ import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.function.IntUnaryOperator;
-import java.util.function.ToIntFunction;
 
 import net.minecraft.block.Block;
 import net.minecraft.item.Item;
@@ -48,8 +47,7 @@ public final class HologramMaterialDescriptor {
 
     /** Actual readers belong only to built-in reviewed material types, never to the public planned projection. */
     static AutoCloseable registerExact(Class<? extends Block> blockType, Class<? extends Item> itemType,
-        Class<? extends Block> nativePickDeclaration, IntUnaryOperator plannedDamage,
-        ToIntFunction<TileEntity> actualDamage) {
+        Class<? extends Block> nativePickDeclaration, IntUnaryOperator plannedDamage, ActualDamage actualDamage) {
         if (blockType == null || itemType == null || nativePickDeclaration == null || plannedDamage == null)
             throw new IllegalArgumentException("Complete material identity and projection required");
         if (PICK_DECLARATIONS.get(blockType) != nativePickDeclaration)
@@ -122,7 +120,7 @@ public final class HologramMaterialDescriptor {
             exact = exactRule(block);
             nativeDamage = NATIVE_DAMAGE.get(PICK_DECLARATIONS.get(block.getClass()));
         }
-        if (exact != null) return exact.actualDamage == null ? null : exact.actualDamage.applyAsInt(tile);
+        if (exact != null) return exact.actualDamage == null ? null : exact.actualDamage.read(block, metadata, tile);
         return nativeDamage == null ? null : nativeDamage.applyAsInt(metadata);
     }
 
@@ -134,14 +132,19 @@ public final class HologramMaterialDescriptor {
         return rule != null && PICK_DECLARATIONS.get(block.getClass()) == rule.nativePickDeclaration ? rule : null;
     }
 
+    @FunctionalInterface
+    interface ActualDamage {
+
+        int read(Block block, int metadata, TileEntity tile);
+    }
+
     private static final class ExactRule {
 
         final Class<?> nativePickDeclaration;
         final IntUnaryOperator plannedDamage;
-        final ToIntFunction<TileEntity> actualDamage;
+        final ActualDamage actualDamage;
 
-        ExactRule(Class<?> nativePickDeclaration, IntUnaryOperator plannedDamage,
-            ToIntFunction<TileEntity> actualDamage) {
+        ExactRule(Class<?> nativePickDeclaration, IntUnaryOperator plannedDamage, ActualDamage actualDamage) {
             this.nativePickDeclaration = nativePickDeclaration;
             this.plannedDamage = plannedDamage;
             this.actualDamage = actualDamage;

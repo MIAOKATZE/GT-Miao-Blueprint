@@ -64,6 +64,10 @@ public final class HologramNativeCapture {
             EIO + "item.filter.ModItemFilter",
             EIO + "item.filter.PowerItemFilter"));
 
+    static {
+        registerConduit(HologramEnderIoCapabilities.modernLiquidAdapter());
+    }
+
     private HologramNativeCapture() {}
 
     public static void register(Adapter adapter) {
@@ -108,6 +112,7 @@ public final class HologramNativeCapture {
                 tag = new NBTTagCompound();
                 tile.writeToNBT(tag);
             }
+            if ("LittleTilesTileEntity".equals(tag.getString("id"))) HologramLittleTilesCapabilities.validateHost(tag);
             HologramDisplaySnapshot.enrichNativeTile(tile, tag);
             HologramNetworkBindings.capture(tile, tag);
             return checked(tag);
