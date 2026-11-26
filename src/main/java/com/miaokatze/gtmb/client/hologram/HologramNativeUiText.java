@@ -12,6 +12,19 @@ final class HologramNativeUiText {
 
     private HologramNativeUiText() {}
 
+    static String presetTierPolicy(boolean allowLower) {
+        return allowLower ? projectorOr("native.preset.allow_lower_tiers", "允许较低等级仓室 ✓")
+            : projectorOr("native.preset.selected_tier_only", "仅使用所选等级");
+    }
+
+    static String presetTierPolicyHint() {
+        return projectorOr("native.preset.tier_policy_hint", "若必需型号没有所选等级，可允许较低等级，或使用自定义精确混搭。实际施工始终按投影中的型号核对材料。");
+    }
+
+    static String presetTargetNote() {
+        return projectorOr("native.preset.complete_target_note", "更新完整结构中所有可替换外壳目标；未配置的可选位置使用机壳，声明必需仓室保留。");
+    }
+
     static String capabilityLabel(NBTTagCompound capability) {
         String raw = capability.getString("label"), id = capability.getString("id");
         if ("main".equals(id) && "主信号（未设子信道时回退）".equals(raw))
@@ -203,7 +216,7 @@ final class HologramNativeUiText {
             case "原生目标生成未收敛。" -> projectorOr("native.reason.native_target_generation_did_not_converge", "原生目标生成未收敛。");
             case "所选仓室配置未通过控制器的原生结构检查。" -> projectorOr(
                 "native.reason.the_selected_hatch_configuration_failed_the_controller_s",
-                "所选仓室配置未通过控制器的原生结构检查。");
+                "所选仓室配置未通过原生结构检查。请核对信道和必需仓室等级，可允许较低等级或使用自定义精确混搭。");
             case "原生流程未提供可构建的完整结构足迹。" -> projectorOr(
                 "native.reason.the_native_process_did_not_provide_a_complete",
                 "原生流程未提供可构建的完整结构足迹。");

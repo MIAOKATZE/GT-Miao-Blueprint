@@ -517,11 +517,17 @@ final class HologramUiCanvas {
             case 104:
                 return "预设仓室的独立电压等级，不修改线圈、玻璃或其它结构等级。";
             case 105:
-                return "严格等级：缺料时保留缺料目标；允许降级：按已启用来源选择较低等级。";
+                return ui.session.state().data.getBoolean("localStandardController")
+                    ? HologramNativeUiText.presetTierPolicyHint()
+                    : "严格等级：缺料时保留缺料目标；允许降级：按已启用来源选择较低等级。";
             case 106:
-                return "仅生成规划目标，保留手选及实体仓室；自定义搭配与它们冲突时整套不应用。施工仍需核对材料并确认。";
+                return ui.session.state().data.getBoolean("localStandardController")
+                    ? HologramNativeUiText.presetTargetNote()
+                    : "仅生成规划目标，保留手选及实体仓室；自定义搭配与它们冲突时整套不应用。施工仍需核对材料并确认。";
             case 107:
-                return "撤销整机预设目标；保留手选目标、已有仓室与实际施工结果。";
+                return ui.session.state().data.getBoolean("localStandardController") ? projectorOr(
+                    "native.ui.restore_default_casings_at_optional_positions_keep",
+                    "恢复可选位置的默认机壳；保留声明必需仓室和手选目标。") : "撤销整机预设目标；保留手选目标、已有仓室与实际施工结果。";
             default:
                 return null;
         }

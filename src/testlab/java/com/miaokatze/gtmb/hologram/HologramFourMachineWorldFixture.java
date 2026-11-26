@@ -53,6 +53,7 @@ public final class HologramFourMachineWorldFixture {
     private final List<int[]> sentinels = new ArrayList<>();
     private boolean closed;
     private int inventorySupply;
+    private NBTTagCompound lastDropOracle = new NBTTagCompound();
 
     public HologramFourMachineWorldFixture(WorldServer world, EntityPlayerMP actor, UUID expectedActor,
         Path recoveryFile) throws Exception {
@@ -303,6 +304,7 @@ public final class HologramFourMachineWorldFixture {
         result.setInteger("selectedSlot", actor.inventory.currentItem);
         result.setInteger("fixtureInventorySupplied", inventorySupply);
         result.setInteger("fixtureControllersSupplied", controllerStages);
+        result.setTag("lastDropOracle", lastDropOracle.copy());
         result.setString(
             "actor",
             actor.getUniqueID()
@@ -321,23 +323,32 @@ public final class HologramFourMachineWorldFixture {
         return result;
     }
 
-    /** Independent native drop oracle for these finite registered fixture blocks, before any demolition request. */
-    public NBTTagCompound expectedDrops(int[][] positions) {
+    /** Independent native callbacks run on isolated full NBT clones, before any real demolition request. */
+    public NBTTagCompound expectedDrops(int[][] positions) throws Exception {
         require(positions.length <= HologramFourMachineSpec.MAX_TARGET_CELLS + 1, "Drop oracle bound exceeded");
+        NBTTagCompound before = resources();
         java.util.Map<NBTTagCompound, Long> counts = new java.util.LinkedHashMap<>();
-        for (int[] p : positions) {
-            require(
-                p.length == 3 && Math.abs(p[0] - x) <= 16 && Math.abs(p[1] - y) <= 12 && Math.abs(p[2] - z) <= 16,
-                "Drop oracle escaped owned footprint");
-            var block = world.getBlock(p[0], p[1], p[2]);
-            for (ItemStack drop : block.getDrops(world, p[0], p[1], p[2], world.getBlockMetadata(p[0], p[1], p[2]), 0))
-                HologramFourMachineWorldAudit.add(counts, drop);
+        NBTTagList cells = new NBTTagList();
+        try {
+            for (int[] p : positions) {
+                require(
+                    p.length == 3 && Math.abs(p[0] - x) <= 16 && Math.abs(p[1] - y) <= 12 && Math.abs(p[2] - z) <= 16,
+                    "Drop oracle escaped owned footprint");
+                HologramFourMachineDropOracle.Quote quote = HologramFourMachineDropOracle.inspect(world, p);
+                for (ItemStack drop : quote.items) HologramFourMachineWorldAudit.add(counts, drop);
+                cells.appendTag(quote.evidence);
+            }
+        } finally {
+            require(before.equals(resources()), "Isolated drop oracle changed live inventory, AE or loose items");
         }
         NBTTagCompound result = new NBTTagCompound();
         result.setTag("items", HologramFourMachineWorldAudit.counts(counts));
+        result.setTag("cells", cells);
+        result.setBoolean("liveResourcesUnchanged", true);
         result.setString(
             "source",
-            "Exact live native Block.getDrops, fortune=0, reviewed owned footprint incl controller");
+            "Deep NBT isolated native getDrops + breakBlock EntityItems, fortune=0, incl controller");
+        lastDropOracle = (NBTTagCompound) result.copy();
         return result;
     }
 

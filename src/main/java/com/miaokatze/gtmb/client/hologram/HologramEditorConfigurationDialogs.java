@@ -768,20 +768,28 @@ final class HologramEditorConfigurationDialogs {
         basic.child(
             action(
                 105,
-                () -> ui.config.nativePresetDowngrade()
-                    ? projectorOr("native.ui.allow_downgrade_on_shortage", "缺料允许降级 ✓")
-                    : projectorOr("native.ui.keep_exact_tier_on_shortage", "缺料严格保持等级"),
+                () -> ui.session.state().data.getBoolean("localStandardController")
+                    ? HologramNativeUiText.presetTierPolicy(ui.config.nativePresetDowngrade())
+                    : ui.config.nativePresetDowngrade()
+                        ? projectorOr("native.ui.allow_downgrade_on_shortage", "缺料允许降级 ✓")
+                        : projectorOr("native.ui.keep_exact_tier_on_shortage", "缺料严格保持等级"),
                 () -> true,
-                () -> projectorOr(
-                    "native.ui.keep_structure_quotas_manual_targets_and_installed",
-                    "保留原结构配额、手选目标与现场仓室。")));
+                () -> ui.session.state().data.getBoolean("localStandardController")
+                    ? HologramNativeUiText.presetTierPolicyHint()
+                    : projectorOr(
+                        "native.ui.keep_structure_quotas_manual_targets_and_installed",
+                        "保留原结构配额、手选目标与现场仓室。")));
         basic.child(
             note(
-                () -> ui.config.basicPresetActionAvailable()
-                    ? projectorOr(
-                        "native.ui.optional_shortcut_construction_can_be_confirmed_without",
-                        "可选快捷搭配；不选择预设也可确认构建。")
-                    : projectorOr("native.ui.select_a_tier_before_generating_a_preset", "未选择预设时先选择等级；不选择预设也可确认构建。")));
+                () -> ui.session.state().data.getBoolean("localStandardController")
+                    ? HologramNativeUiText.presetTargetNote()
+                    : ui.config.basicPresetActionAvailable()
+                        ? projectorOr(
+                            "native.ui.optional_shortcut_construction_can_be_confirmed_without",
+                            "可选快捷搭配；不选择预设也可确认构建。")
+                        : projectorOr(
+                            "native.ui.select_a_tier_before_generating_a_preset",
+                            "未选择预设时先选择等级；不选择预设也可确认构建。")));
         Flow custom = Flow.col()
             .sizeRel(1f)
             .childPadding(4);
@@ -830,22 +838,28 @@ final class HologramEditorConfigurationDialogs {
                         || ui.session.state().data.getBoolean("supported"))
                     && (ui.config.nativeCustomPresets() ? ui.config.customPresetActionAvailable()
                         : ui.config.basicPresetActionAvailable()),
-                () -> ui.session.state().data.getBoolean("localStandardController") ? projectorOr(
-                    "native.ui.updates_the_target_using_the_structure_declared",
-                    "明确提交后由服务器核对并应用原结构声明配额；不扣料、不施工。") : reason()).expanded());
+                () -> ui.session.state().data.getBoolean("localStandardController")
+                    ? HologramNativeUiText.presetTargetNote()
+                    : reason()).expanded());
         apply.child(
             action(
                 107,
                 () -> projectorOr("native.ui.clear_preset", "撤销预设"),
                 () -> editable() && ui.session.state().data.getBoolean("presetActive"),
-                () -> projectorOr("native.ui.clear_the_automatic_preset_keep_installed_hatches", "撤自动预设，保留现场仓室与手选目标。"))
-                    .width(100));
+                () -> ui.session.state().data.getBoolean("localStandardController")
+                    ? projectorOr(
+                        "native.ui.restore_default_casings_at_optional_positions_keep",
+                        "恢复可选位置的默认机壳；保留声明必需仓室和手选目标。")
+                    : projectorOr("native.ui.clear_the_automatic_preset_keep_installed_hatches", "撤自动预设，保留现场仓室与手选目标。"))
+                        .width(100));
         content.child(apply);
         content.child(
             note(
                 () -> ui.session.isTutorial()
                     ? projectorOr("native.ui.tutorial_mode_does_not_read_or_write", "演示不读写本机搭配。")
-                    : ui.session.state().data.getString("presetReason")));
+                    : ui.session.state().data.getBoolean("localStandardController")
+                        ? HologramNativeUiText.reason(ui.session.state().data.getString("presetReason"))
+                        : ui.session.state().data.getString("presetReason")));
         return dialog(
             "presets",
             () -> projectorOr("native.ui.hatch_presets_optional_shortcuts", "仓室预设 · 可选快捷搭配"),
