@@ -1817,3 +1817,7 @@ gtmb.hologram.projector.native.preset.allow_lower_tiers=Allow lower tier hatches
 gtmb.hologram.projector.native.preset.complete_target_note=Updates all replaceable casing positions in the complete target. Unconfigured optional positions use casings; mandatory hatches remain.
 gtmb.hologram.projector.native.preset.selected_tier_only=Use selected tier only
 gtmb.hologram.projector.native.preset.tier_policy_hint=If a required model does not exist at the selected tier, allow lower tiers or use an exact custom mix. Construction always checks materials against the projected model.
+
+# Native projector interface
+gtmb.hologram.projector.native.lesson.projection_preset_target=Presets update every replaceable casing position in the complete target and retain mandatory hatches. Manual choices and exact custom mixes are explicit targets.
+gtmb.hologram.projector.native.lesson.structure_preset_target=Base and custom presets update every replaceable casing position in the complete target and retain mandatory hatches. Manual choices and mixes explicitly select devices and quantities.

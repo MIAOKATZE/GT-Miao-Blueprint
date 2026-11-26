@@ -251,7 +251,7 @@ final class HologramEditorGuide {
         if (ui.review.confirmation()) return projectorOr("native_common.guide.review", "核对精确材料与缺口，再作最终确认。");
         if (ui.processing.processingFlow() != null)
             return projectorOr("native_common.guide.processing", "选择自用或分享倾向，再逐步核对处理策略。");
-        if (ui.config.presetDrawer()) return projectorOr("native_common.guide.preset", "按声明配额或精确搭配生成目标，保留手选和现场设备。");
+        if (ui.config.presetDrawer()) return projectorOr("native_common.guide.preset", "按预设生成目标，再核对完整规划。");
         if (ui.config.hatchDrawer()) return projectorOr("native_common.guide.hatch", "从本格合法候选选择具体设备。");
         if (ui.config.drawer()) return projectorOr("native_common.guide.channels", "编辑当前来源结构的声明参数，再应用。");
         if (ui.preview.inventory()) return projectorOr("native_common.guide.inventory", "选择真实背包或已启用来源中的具体物品。");
