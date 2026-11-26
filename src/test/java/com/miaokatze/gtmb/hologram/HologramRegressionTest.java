@@ -404,6 +404,7 @@ public final class HologramRegressionTest {
             }
         });
         cases.put("native_full_target_action_protocol_and_observation", HologramNativeProjectionWireRegression::run);
+        cases.put("native_named_channel_capability_publication", HologramNativeChannelCapabilitiesRegression::run);
         cases.put("native_confirmation_anchor_cannot_be_replaced", HologramNativeAnchorIdentityRegression::run);
         cases.put(
             "native_controller_access_is_independent_of_control_permissions",

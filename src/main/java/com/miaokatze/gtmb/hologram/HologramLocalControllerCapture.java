@@ -983,12 +983,12 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
     }
 
     private NBTTagList capabilities(HologramChannelTrace.Report report) {
-        HologramCapabilities.Result capabilities = HologramCapabilities
-            .describe(nativeTarget == null ? detachedContext : null, trigger, report)
-            .withNativeDefinition(
-                nativeTarget != null ? nativeTarget.definition()
-                    : nativePreview != null ? nativePreview.definition() : capture == null ? null : capture.definition)
-            .withSavedChannels(settings.getCompoundTag("channels"));
+        HologramCapabilities.Result capabilities = (nativeTarget != null
+            ? HologramCapabilities.describeNative(detachedContext, trigger, report, nativeTarget.definition())
+            : HologramCapabilities.describe(detachedContext, trigger, report)
+                .withNativeDefinition(
+                    nativePreview != null ? nativePreview.definition() : capture == null ? null : capture.definition))
+                        .withSavedChannels(settings.getCompoundTag("channels"));
         if (nativePreview != null && controllerId >= 0) capabilities.withFixedSignal("gt_hatch", 1);
         if (nativeTarget == null && detachedContext != null
             && "com.miaokatze.gtsr.common.machine.orecenter.MTEMineralIntegrationCenter".equals(
