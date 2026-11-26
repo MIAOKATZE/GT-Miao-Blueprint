@@ -92,14 +92,19 @@ final class HologramLocalPreviewStagesProbe {
             "clientSnapshotFlow"));
     private final Map<String, Object> evidence = new LinkedHashMap<>();
     private final Map<String, Integer> outbound = new LinkedHashMap<>();
+    private final List<String> nativePresetStockRequests = new ArrayList<>();
     private final long started = System.nanoTime();
     private final Path output;
     private final boolean construction = Boolean.getBoolean(FLAG + "Construction");
-    private final boolean postFocus = construction || Boolean.getBoolean(FLAG + "PostFocus");
+    private final boolean postFocus = construction || HologramHatchPresetRuntimeWitness.enabled()
+        || Boolean.getBoolean(FLAG + "PostFocus");
     private final NativeParity parity = NativeParity.configured();
     private final boolean fixedNativeEbf = fixedNativeEbfEnabled();
     private final boolean worldProjectionOnly = HologramControllerWorldProjectionProbe.enabled() && !fixedNativeEbf;
     private HologramEbfFixedControls fixedEbf;
+    private HologramHatchPresetRuntimeWitness hatchPresetWitness;
+    private HologramHatchPresetRuntimeStock hatchPresetStock;
+    private HologramRuntimeCoilControls runtimeCoilControls;
     private HologramControllerWorldProjectionProbe controllerWorldProjection;
     private volatile NBTTagList ebfServerInventory, ebfInventoryBaseline;
     private volatile int ebfServerSlot = -1;
@@ -151,6 +156,7 @@ final class HologramLocalPreviewStagesProbe {
     private HologramClientLibrary originalStore, fixtureStore;
     private Channel channel;
     private boolean cancelling;
+    private boolean hatchPresetFinishing;
     private volatile boolean finished;
     private EntityPlayerMP serverActor;
     private ItemStack serverToolBefore, serverStoneBefore;
@@ -236,8 +242,10 @@ final class HologramLocalPreviewStagesProbe {
             WorldServer world = server.worldServerForDimension(0);
             if (restoreServerInventory) {
                 if (!serverInventoryRestored && serverActor != null) {
-                    serverActor.inventory.setInventorySlotContents(toolSlot, serverToolBefore);
-                    serverActor.inventory.setInventorySlotContents(stoneSlot, serverStoneBefore);
+                    if (hatchPresetStock != null) hatchPresetStock.restore(serverActor);
+                    else serverActor.inventory.setInventorySlotContents(toolSlot, serverToolBefore);
+                    if (hatchPresetStock == null)
+                        serverActor.inventory.setInventorySlotContents(stoneSlot, serverStoneBefore);
                     serverActor.inventoryContainer.detectAndSendChanges();
                 }
                 serverInventoryRestored = true;
@@ -288,7 +296,7 @@ final class HologramLocalPreviewStagesProbe {
             if (parity == NativeParity.SOLAR || parity == NativeParity.ENTANGLER)
                 ((BaseMetaTileEntity) world.getTileEntity(x, y, z)).disableWorking();
             world.markBlockForUpdate(x, y, z);
-            if (construction || worldProjectionOnly) {
+            if (construction || worldProjectionOnly || HologramHatchPresetRuntimeWitness.enabled()) {
                 require(
                     actor instanceof EntityPlayerMP && !(actor instanceof FakePlayer)
                         && !actor.capabilities.isCreativeMode
@@ -297,8 +305,11 @@ final class HologramLocalPreviewStagesProbe {
                                 .equals(UUID.fromString(System.getProperty("miaotest.host.actorUuid")))),
                     "Owned inventory fixture requires the exact real survival actor");
                 serverActor = (EntityPlayerMP) actor;
+                if (HologramHatchPresetRuntimeWitness.enabled())
+                    hatchPresetStock = new HologramHatchPresetRuntimeStock(serverActor, evidence);
                 serverToolBefore = actor.inventory.getStackInSlot(toolSlot);
                 serverStoneBefore = actor.inventory.getStackInSlot(stoneSlot);
+                if (hatchPresetStock != null) hatchPresetStock.seed(serverActor);
                 actor.inventory.setInventorySlotContents(toolSlot, new ItemStack(ProjectorRegistry.projector));
                 if (construction) actor.inventory.setInventorySlotContents(stoneSlot, new ItemStack(Blocks.stone));
                 actor.inventoryContainer.detectAndSendChanges();
@@ -370,6 +381,11 @@ final class HologramLocalPreviewStagesProbe {
                 + HologramClient.worldInputFocused()
                 + ", outbound="
                 + packets());
+        if (hatchPresetFinishing) {
+            if (!finish(mc)) return false;
+            evidence.put("passed", true);
+            return true;
+        }
         if (controllerWorldProjection != null) {
             if (!controllerWorldProjection.step(mc)) return false;
             zero("fixedEbfWorldProjection");
@@ -386,7 +402,7 @@ final class HologramLocalPreviewStagesProbe {
             ItemStack heldTool = mc.thePlayer.getHeldItem();
             if (construction && (!ItemNekoHologramProjector.isProjector(heldTool) || stones(mc.thePlayer) != 1))
                 return false;
-            if (worldProjectionOnly) {
+            if (worldProjectionOnly || HologramHatchPresetRuntimeWitness.enabled()) {
                 // Let the normal selected server item tick assign the identity and synchronize it before opening.
                 // Opening on a just-delivered unlinked stack races its valid replacement by inventory sync.
                 if (!nativeProjector(heldTool) || HologramClientStockNative.canonicalTool(
@@ -408,7 +424,9 @@ final class HologramLocalPreviewStagesProbe {
                 evidence.put("ownedControllerFixtureSetupCount", 1);
             }
             observeOutbound();
-            if (!construction && !fixedNativeEbf && !worldProjectionOnly)
+            if (!construction && !fixedNativeEbf
+                && !worldProjectionOnly
+                && !HologramHatchPresetRuntimeWitness.enabled())
                 mc.thePlayer.inventory.setInventorySlotContents(toolSlot, fixtureTool);
             look(mc, x + .5, y + .5, z + .5);
             require(hitAt(mc, x, y, z), "EntityRenderer crosshair missed the real controller");
@@ -615,6 +633,20 @@ final class HologramLocalPreviewStagesProbe {
 
     void guiPost(GuiScreen gui, long frame) {
         if (fixedEbf != null && !finished) fixedEbf.guiPost(gui, frame);
+        if (hatchPresetWitness != null && !finished) {
+            try {
+                hatchPresetWitness.guiPost(gui, frame);
+            } catch (Exception failure) {
+                throw new IllegalStateException("Hatch preset natural frame witness failed", failure);
+            }
+        }
+        if (runtimeCoilControls != null && !finished) {
+            try {
+                runtimeCoilControls.guiPost(gui, frame);
+            } catch (Exception failure) {
+                throw new IllegalStateException("Native coil form natural frame failed", failure);
+            }
+        }
         if (!timingMode.isEmpty()) {
             if (finished || stage != 1 || gui != timingScreen || timingFailure != null || timingFrameToCapture != null)
                 return;
@@ -877,6 +909,16 @@ final class HologramLocalPreviewStagesProbe {
     private boolean parityStep(Minecraft mc, HologramState state) throws Exception {
         if (workbench != null) workbench.observe(state);
         if (!state.data.getBoolean("projectionDataComplete") || state.data.getBoolean("capturePending")) return false;
+        if (HologramHatchPresetRuntimeWitness.enabled() && parityPass == 0) {
+            require(parity == NativeParity.EBF, "Hatch preset witness requires the native EBF fixture");
+            if (hatchPresetWitness == null) hatchPresetWitness = new HologramHatchPresetRuntimeWitness(
+                controller,
+                output,
+                evidence,
+                controllerItem);
+            if (!hatchPresetWitness.step()) return false;
+            state = controller.ui.session.state();
+        }
         NBTTagCompound channels = state.data.getCompoundTag("channels");
         int main = state.data.getInteger("main");
         int signal = "main".equals(parity.channel) ? main : channels.getInteger(parity.channel);
@@ -1015,6 +1057,14 @@ final class HologramLocalPreviewStagesProbe {
             require(
                 capability != null && capability.getBoolean("editable"),
                 "Native channel is unavailable: " + parity.channel);
+            if (HologramHatchPresetRuntimeWitness.enabled()) {
+                if (runtimeCoilControls == null)
+                    runtimeCoilControls = new HologramRuntimeCoilControls(controller, output, evidence);
+                if (!runtimeCoilControls.step()) return false;
+                beginParityEdit();
+                zero("nativeCoilNamedFormSubmitted");
+                return false;
+            }
             NBTTagList options = capability.getTagList("options", 10);
             if (parity == NativeParity.CHEMICAL)
                 require(options.tagCount() == 9, "Chemical Plant requires eight casing choices and reset");
@@ -1033,6 +1083,18 @@ final class HologramLocalPreviewStagesProbe {
         } else {
             boolean changed = !firstParityCells.equals(actual);
             proof.put("geometryChanged", changed);
+            if (HologramHatchPresetRuntimeWitness.enabled()) {
+                var changedCoordinates = new ArrayList<String>();
+                for (var before : firstParityCells.entrySet())
+                    if (!java.util.Objects.equals(before.getValue(), actual.get(before.getKey())))
+                        changedCoordinates.add(before.getKey());
+                require(
+                    actual.size() == 33 && firstParityCells.keySet()
+                        .equals(actual.keySet()) && changedCoordinates.size() == 16,
+                    "Native EBF coil channel did not change exactly its 16 coil rows");
+                proof.put("coilChangedCoordinates", changedCoordinates);
+                proof.put("coilChangedCount", changedCoordinates.size());
+            }
             // GTSR V2 registers the same Solar geometry for every tier piece. Both passes still compare with NEI.
             if (parity != NativeParity.CRITICAL) require(changed, "Native channel edit left the preview unchanged");
             if (parity == NativeParity.CENTER)
@@ -1044,7 +1106,10 @@ final class HologramLocalPreviewStagesProbe {
             zero("nativeChannelPresented");
             mc.displayGuiScreen(null);
             zero("nativeChannelEditorClosed");
-            require(finish(mc), "Native parity fixture cleanup must complete without awaiting server inventory");
+            if (HologramHatchPresetRuntimeWitness.enabled()) {
+                hatchPresetFinishing = true;
+                if (!finish(mc)) return false;
+            } else require(finish(mc), "Native parity fixture cleanup must complete without awaiting server inventory");
             evidence.put("passed", true);
             return true;
         }
@@ -1639,6 +1704,8 @@ final class HologramLocalPreviewStagesProbe {
     }
 
     private void observeOutbound() throws Exception {
+        if (HologramHatchPresetRuntimeWitness.enabled())
+            evidence.put("nativePresetStockRequests", nativePresetStockRequests);
         Object wrapper = field(HologramNetwork.class, "channel").get(null);
         channel = (Channel) ((Map<?, ?>) field(wrapper.getClass(), "channels").get(wrapper)).get(Side.CLIENT);
         require(
@@ -1655,20 +1722,33 @@ final class HologramLocalPreviewStagesProbe {
                     throws Exception {
                     String name;
                     NBTTagCompound placement = null;
+                    NBTTagCompound nativeStock = null;
                     if (message instanceof HologramNetwork.Action) {
                         NBTTagCompound payload = (NBTTagCompound) action.get(message);
                         String op = payload.getString("action");
                         name = "action:" + (op.isEmpty() ? payload.getString("op") : op);
+                        if (runtimeStockRequest(payload)) {
+                            name = "stock:nativePresetStock";
+                            nativeStock = payload;
+                        }
                         if ("projectedPlacement".equals(op)) placement = (NBTTagCompound) payload.copy();
                     } else if (message instanceof HologramNetwork.LibraryRequest) {
                         name = "library:" + ((NBTTagCompound) library.get(message)).getString("op");
                     } else name = message.getClass()
                         .getSimpleName();
                     synchronized (outbound) {
+                        if (nativeStock != null) {
+                            if (nativePresetStockRequests.size() < 8)
+                                nativePresetStockRequests.add(nativeStock.toString());
+                            else {
+                                nativeStock = null;
+                                name = "stock:budgetExceeded";
+                            }
+                        }
                         outbound.merge(name, 1, Integer::sum);
                         if (placement != null) projectedPlacement = placement;
                     }
-                    if (construction && submitInput) context.write(message, promise);
+                    if (nativeStock != null || construction && submitInput) context.write(message, promise);
                     else {
                         io.netty.util.ReferenceCountUtil.release(message);
                         promise.setSuccess();
@@ -1687,7 +1767,47 @@ final class HologramLocalPreviewStagesProbe {
         Map<String, Integer> sent = packets();
         evidence.put("lastZeroCheckpoint", phase);
         evidence.put("preSubmitOutbound", sent);
-        require(!submitInput && sent.isEmpty(), phase + " emitted a GTMB C2S packet: " + sent);
+        boolean onlyReadStock = HologramHatchPresetRuntimeWitness.enabled() && sent.size() == 1
+            && sent.containsKey("stock:nativePresetStock")
+            && sent.getOrDefault("stock:nativePresetStock", 0) <= 8;
+        require(!submitInput && (sent.isEmpty() || onlyReadStock), phase + " emitted a GTMB C2S packet: " + sent);
+    }
+
+    private boolean runtimeStockRequest(NBTTagCompound payload) {
+        if (!HologramHatchPresetRuntimeWitness.enabled() || !fixtureReady
+            || serverActor == null
+            || controllerItem == null
+            || !"serverRules".equals(payload.getString("action"))
+            || payload.getInteger("nativePresetStock") != 1
+            || payload.getLong("id") <= 0
+            || payload.getInteger("dimension") != serverActor.dimension
+            || payload.getInteger("x") != x
+            || payload.getInteger("y") != y
+            || payload.getInteger("z") != z
+            || payload.getInteger("controller") != controllerItem.getItemDamage()
+            || payload.getInteger("slot") != toolSlot
+            || payload.getInteger("sources") < 0
+            || payload.getInteger("sources") >= 64) return false;
+        var site = controller == null ? null : controller.stockNativeSite();
+        if (site == null || payload.getInteger("facing") != site.facing()) return false;
+        var mc = Minecraft.getMinecraft();
+        ItemStack held = mc.thePlayer == null ? null : mc.thePlayer.getHeldItem();
+        if (held == null || !held.hasTagCompound()
+            || !mc.thePlayer.getUniqueID()
+                .equals(serverActor.getUniqueID()))
+            return false;
+        UUID tool = HologramClientStockNative.canonicalTool(
+            held.getTagCompound()
+                .getString("gtitHologramToolId"));
+        if (tool == null || tool.getMostSignificantBits() != payload.getLong("toolMost")
+            || tool.getLeastSignificantBits() != payload.getLong("toolLeast")) return false;
+        int[] ids = payload.getIntArray("ids");
+        if (ids.length == 0 || ids.length > 256) return false;
+        var unique = new HashSet<Integer>();
+        for (int id : ids) if (id <= 0 || id >= GregTechAPI.METATILEENTITIES.length
+            || GregTechAPI.METATILEENTITIES[id] == null
+            || !unique.add(id)) return false;
+        return true;
     }
 
     private static boolean libraryWorkerIdle() throws Exception {
@@ -1699,7 +1819,8 @@ final class HologramLocalPreviewStagesProbe {
 
     boolean finish(Minecraft mc) throws Exception {
         if (finished) return true;
-        if (construction || worldProjectionOnly) {
+        if (hatchPresetWitness != null) hatchPresetWitness.restore();
+        if (construction || worldProjectionOnly || HologramHatchPresetRuntimeWitness.enabled()) {
             restoreServerInventory = true;
             if (mc.thePlayer != null && (!serverInventoryRestored
                 || !ItemStack.areItemStacksEqual(originalTool, mc.thePlayer.inventory.getStackInSlot(toolSlot))))

@@ -91,7 +91,9 @@ mapOf(
     "runNativeLibraryConversionTest" to "com.miaokatze.gtmb.client.hologram.HologramLibraryNativeConversionRegression",
     "runNativeRendererReleaseTest" to "com.miaokatze.gtmb.client.hologram.HologramNativeRendererReleaseRegression",
     "runProjectionDiscardUiRegression" to "com.miaokatze.gtmb.client.hologram.HologramLibraryAdminUiRegression",
-    "runPlacementReviewContextRegression" to "com.miaokatze.gtmb.client.hologram.HologramPlacementReviewContextRegression"
+    "runPlacementReviewContextRegression" to "com.miaokatze.gtmb.client.hologram.HologramPlacementReviewContextRegression",
+    "runNativePresetSourceRegression" to "com.miaokatze.gtmb.hologram.HologramNativePresetSourceRegression",
+    "runStockEbfProfileRegression" to "com.miaokatze.gtmb.hologram.HologramStockEbfProfileRegression"
 ).forEach { (taskName, entryPoint) ->
     tasks.register<JavaExec>(taskName) {
         group = "verification"

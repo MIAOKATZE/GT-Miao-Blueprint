@@ -244,8 +244,10 @@ public final class HologramTutorialIssue100Probe {
                             : HologramControllerWorldProjectionProbe.enabled()
                                 && !HologramLocalPreviewStagesProbe.fixedNativeEbfEnabled()
                                     ? "Owned survival projection fixture; one server-synced projector, restored on exit"
-                                    : preparedStock == null ? "SURVIVAL; no OP or inventory fixture changes"
-                                        : "SURVIVAL; no OP; explicit pre-login vanilla playerdata fixture, no live inventory injection");
+                                    : HologramHatchPresetRuntimeWitness.enabled()
+                                        ? "SURVIVAL; no OP; 13 finite registered LV/MV hatch stacks; complete inventory/selected slot restored"
+                                        : preparedStock == null ? "SURVIVAL; no OP or inventory fixture changes"
+                                            : "SURVIVAL; no OP; explicit pre-login vanilla playerdata fixture, no live inventory injection");
                 transition(1);
                 launchedWorld = true;
                 mc.launchIntegratedServer(
@@ -286,7 +288,8 @@ public final class HologramTutorialIssue100Probe {
                     }
                     if (!localPreviewStages.step(mc)) return;
                     if (HologramLocalPreviewStagesProbe.fixedNativeEbfEnabled()
-                        || HologramControllerWorldProjectionProbe.enabled()) {
+                        || HologramControllerWorldProjectionProbe.enabled()
+                        || HologramHatchPresetRuntimeWitness.enabled()) {
                         transition(6);
                         return; // Preview-only profiles end without the Issue100 tutorial playback.
                     }
@@ -579,6 +582,9 @@ public final class HologramTutorialIssue100Probe {
         receipt.put("preferencesAfter", preferences(mc));
         receipt.put("osInput", false);
         receipt.put("businessTransport", "NOT_RUN; incoming local preview fixture, native rendering and MUI events");
+        if (HologramHatchPresetRuntimeWitness.enabled()) receipt.put(
+            "businessTransport",
+            "Real nativePresetStock request/reply on owned integrated channel; native MUI; no physical construction or external TCP");
         receipt.put(
             "artifact",
             ArtifactIdentity.capture(HologramTutorialIssue100Probe.class)

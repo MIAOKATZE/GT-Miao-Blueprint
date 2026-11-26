@@ -43,6 +43,7 @@ import com.gtnewhorizon.structurelib.structure.IStructureElement;
 import com.gtnewhorizon.structurelib.structure.IStructureElementChain;
 import com.gtnewhorizon.structurelib.structure.ISurvivalBuildEnvironment;
 import com.gtnewhorizon.structurelib.structure.StructureUtility;
+import com.miaokatze.gtmb.api.Declarations;
 import com.mojang.authlib.GameProfile;
 
 import cpw.mods.fml.common.eventhandler.SubscribeEvent;
@@ -71,6 +72,7 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
     private final HologramNativePreviewItems items = new HologramNativePreviewItems();
     private final ColdCandidateCache coldCandidates = new ColdCandidateCache(items::catalog);
     private final HologramNativeHatchChooser nativeHatchChooser;
+    private final PresetCandidates presetCandidates = new PresetCandidates(items::catalog);
     private final ISurvivalBuildEnvironment survivalEnvironment;
     private final AutoPlaceEnvironment candidateEnvironment;
     private final IConstructable constructable;
@@ -414,21 +416,11 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
      */
     List<ItemStack> presetOffers(int x, int y, int z) {
         if (nativeHatchChooser == null) return Collections.emptyList();
-        IStructureElement<?> element = elementAt(x, y, z);
-        var single = HologramHatchPolicy.singleNativePresetRole(element);
-        if (single != null) {
-            var offers = new ArrayList<ItemStack>();
-            for (ItemStack stack : items.catalog()) {
-                if (stack != null && !stack.hasTagCompound()
-                    && HologramCellPolicy.hatchTier(stack) != Integer.MAX_VALUE
-                    && HologramHatchPolicy.singleNativePresetMatches(
-                        single,
-                        gregtech.common.blocks.ItemMachines.getMetaTileEntity(stack)))
-                    offers.add(stack);
-            }
-            return offers;
-        }
-        return nativeHatchChooser.offers(element, x, y, z, trigger);
+        return presetCandidates.offers(elementAt(x, y, z), trigger);
+    }
+
+    Object presetSharedKey(int x, int y, int z) {
+        return presetCandidates.sharedKey(elementAt(x, y, z), trigger);
     }
 
     /** Registry snapshots are capture-owned. Only the exact-version GTSR policy may filter this view. */
@@ -703,6 +695,169 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
         }
     }
 
+    /**
+     * Geometry-independent automatic candidates shared by native and declared-source captures. Only context-free
+     * pure leaves and the pinned stock cold builder rules are read; no native count/filter/adder is invoked.
+     */
+    static final class PresetCandidates {
+
+        private final Supplier<List<ItemStack>> catalog;
+        private final Map<PresetKey, List<ItemStack>> offers = new LinkedHashMap<>();
+        private long policyGeneration = HologramHatchPolicy.automaticGeneration();
+        private long adapterGeneration = HologramDeclarationAdapters.generation();
+
+        PresetCandidates(Supplier<List<ItemStack>> catalog) {
+            this.catalog = catalog;
+        }
+
+        private static final class PresetKey {
+
+            private final IStructureElement<?> element;
+            private final HologramBlueprintResources.ExactKey signal;
+            private final int count;
+
+            PresetKey(IStructureElement<?> element, HologramBlueprintResources.ExactKey signal, int count) {
+                this.element = element;
+                this.signal = signal;
+                this.count = count;
+            }
+
+            @Override
+            public boolean equals(Object other) {
+                if (!(other instanceof PresetKey key)) return false;
+                return element == key.element && count == key.count && java.util.Objects.equals(signal, key.signal);
+            }
+
+            @Override
+            public int hashCode() {
+                return 31 * (31 * System.identityHashCode(element) + java.util.Objects.hashCode(signal)) + count;
+            }
+        }
+
+        Object sharedKey(IStructureElement<?> element, ItemStack signal) {
+            if (signal == null || signal.getItem() == null) return null;
+            // All accepted primitives below are context-free. Include the full captured signal anyway: a caller
+            // must never infer sharing merely because two pieces happened to reuse an element object.
+            return new PresetKey(
+                element,
+                signal == null ? null : HologramValues.stackKey(signal),
+                signal == null ? 0 : signal.stackSize);
+        }
+
+        List<ItemStack> offers(IStructureElement<?> element, ItemStack signal) {
+            if (signal == null || signal.getItem() == null) return Collections.emptyList();
+            long policy = HologramHatchPolicy.automaticGeneration(),
+                adapters = HologramDeclarationAdapters.generation();
+            if (policyGeneration != policy || adapterGeneration != adapters) {
+                offers.clear();
+                policyGeneration = policy;
+                adapterGeneration = adapters;
+            }
+            PresetKey key = (PresetKey) sharedKey(element, signal);
+            List<ItemStack> memo = offers.get(key);
+            if (memo == null) {
+                Map<HologramBlueprintResources.ExactKey, ItemStack> result = new LinkedHashMap<>();
+                collect(element, signal, 0, new IdentityHashMap<>(), new int[] { 128 }, result, true);
+                memo = new ArrayList<>(result.values());
+                if (offers.size() < 128) offers.put(key, memo);
+            }
+            List<ItemStack> copy = new ArrayList<>(memo.size());
+            for (ItemStack stack : memo) copy.add(stack.copy());
+            return copy;
+        }
+
+        private void collect(IStructureElement<?> element, ItemStack signal, int depth,
+            IdentityHashMap<IStructureElement<?>, Boolean> path, int[] work,
+            Map<HologramBlueprintResources.ExactKey, ItemStack> result, boolean automatic) {
+            if (element == null || depth > 12
+                || work[0]-- <= 0
+                || result.size() >= MAX_CANDIDATES
+                || path.put(element, Boolean.TRUE) != null) return;
+            try {
+                if (element instanceof Declarations.PureElement<?>pure) {
+                    int rows = 0;
+                    for (ItemStack stack : pure.candidates()) {
+                        if (++rows > MAX_CANDIDATES || result.size() >= MAX_CANDIDATES) break;
+                        if (stack != null && stack.getItem() != null
+                            && (!automatic || eligible(stack))
+                            && pure.accepts(stack.copy())
+                            && (!automatic || pure.placementAllows(stack.copy()))) add(result, stack);
+                    }
+                    return;
+                }
+                var declaration = HologramDeclarationAdapters.declaration(element);
+                if (declaration != null) {
+                    if (declaration.backingAuthority) collect(
+                        declaration.backing(),
+                        declaration.trigger(signal),
+                        depth + 1,
+                        path,
+                        work,
+                        result,
+                        automatic);
+                    return;
+                }
+                Predicate<ItemStack> predicate = automatic ? HologramHatchPolicy.automaticAtLeastPredicate(element)
+                    : HologramHatchPolicy.structuralPredicate(element, null, signal);
+                var single = automatic ? HologramHatchPolicy.singleNativePresetRole(element) : null;
+                if (predicate != null || single != null) {
+                    int rows = 0;
+                    for (ItemStack stack : catalog.get()) {
+                        if (++rows > 65_536 || result.size() >= MAX_CANDIDATES) break;
+                        if (eligible(stack) && (predicate != null ? predicate.test(stack.copy())
+                            : HologramHatchPolicy
+                                .singleNativePresetMatches(single, ItemMachines.getMetaTileEntity(stack))))
+                            add(result, stack);
+                    }
+                } else if (element instanceof IStructureElementChain<?>chain) {
+                    var children = HologramDeclarationWrappers.nativeChainChildren(chain);
+                    if (children != null && children.length <= 64)
+                        for (var child : children) collect(child, signal, depth + 1, path, work, result, automatic);
+                } else {
+                    var factory = HologramDeclarationWrappers.factory(element.getClass());
+                    if (factory == null || factory.getDeclaringClass() != StructureUtility.class) return;
+                    switch (factory.getName()) {
+                        case "withChannel", "onElementPass", "onElementFail", "withDescription" -> collect(
+                            HologramDeclarationWrappers.nativeBacking(element),
+                            HologramDeclarationWrappers.trigger(element, signal),
+                            depth + 1,
+                            path,
+                            work,
+                            result,
+                            automatic);
+                        default -> {}
+                    }
+                }
+            } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
+                // Independent positive branches remain useful; opaque declarations grant no automatic candidates.
+            } finally {
+                path.remove(element);
+            }
+        }
+
+        private static boolean eligible(ItemStack stack) {
+            return stack != null && stack.getItem() != null
+                && !stack.hasTagCompound()
+                && HologramCellPolicy.hatchTier(stack) != Integer.MAX_VALUE;
+        }
+
+        List<ItemStack> manualOffers(IStructureElement<?> element, ItemStack signal) {
+            if (signal == null || signal.getItem() == null) return Collections.emptyList();
+            Map<HologramBlueprintResources.ExactKey, ItemStack> result = new LinkedHashMap<>();
+            collect(element, signal, 0, new IdentityHashMap<>(), new int[] { 128 }, result, false);
+            HologramCasingFallback.Target casing = HologramCasingFallback.resolve(element, signal);
+            if (casing != null && result.size() < MAX_CANDIDATES) {
+                ItemStack stack = HologramBlockIdentity.materialStack(casing.block, casing.meta);
+                if (stack != null) add(result, stack);
+            }
+            return new ArrayList<>(result.values());
+        }
+
+        void clear() {
+            offers.clear();
+        }
+    }
+
     private static void add(Map<HologramBlueprintResources.ExactKey, ItemStack> stacks, ItemStack stack) {
         ItemStack copy = stack.copy();
         copy.stackSize = 1;
@@ -719,6 +874,7 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
         observedMaterials.clear();
         sharedOptions.clear();
         coldCandidates.clear();
+        presetCandidates.clear();
         if (nativeHatchChooser != null) nativeHatchChooser.clear();
         placements = Collections.<HologramNativePreviewWorld.Placement>emptyList()
             .iterator();
