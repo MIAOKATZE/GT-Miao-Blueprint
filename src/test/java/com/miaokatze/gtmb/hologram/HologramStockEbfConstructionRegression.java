@@ -462,8 +462,8 @@ public final class HologramStockEbfConstructionRegression {
                 0,
                 java.util.Collections.emptyList(),
                 java.util.Collections.emptyList());
-            var create = (java.util.function.LongFunction<HologramStockNativeWire.Confirmation>) seq -> HologramStockNativeWire.Confirmation
-                .declared(
+            var scoped = (java.util.function.BiFunction<Long, HologramDeclaredNativeSelection, HologramStockNativeWire.Confirmation>) (
+                seq, scope) -> HologramStockNativeWire.Confirmation.declared(
                     new HologramStockNativeWire.Key(UUID.randomUUID(), seq, 0),
                     player.dimension,
                     UUID.fromString(id),
@@ -477,7 +477,9 @@ public final class HologramStockEbfConstructionRegression {
                     false,
                     false,
                     1,
-                    selection);
+                    scope);
+            var create = (java.util.function.LongFunction<HologramStockNativeWire.Confirmation>) seq -> scoped
+                .apply(seq, selection);
             long generation = endpoint.constructionScope.generation;
             inventory[1] = inventory[2] = null;
             player.capabilities.isCreativeMode = true;
@@ -499,18 +501,36 @@ public final class HologramStockEbfConstructionRegression {
                     && world.writes()
                         .isEmpty(),
                 "mode switch between PROBE and BEGIN invalidates its proof without touching the world");
+            inventory[1] = new ItemStack(GregTechAPI.sBlockCasings1, 32, 11);
+            inventory[2] = new ItemStack(GregTechAPI.sBlockCasings5, 16, 9);
             var missing = create.apply(3);
             proveDeclared(server, endpoint, replies, missing);
             var unfunded = finishDeclared(server, endpoint, replies, missing.forGeneration(generation));
             SimpleAssert.that(
-                unfunded.phase() == HologramStockNativeWire.Phase.STOPPED && unfunded.reason()
-                    .contains("材料来源不足")
+                unfunded.phase() == HologramStockNativeWire.Phase.STOPPED && unfunded.placed() == 0
+                    && unfunded.reason()
+                        .contains("必需仓室尚未指定")
+                    && unfunded.reason()
+                        .contains("未放置或扣料")
                     && world.writes()
-                        .isEmpty(),
-                "not Creative: empty stock remains blocked on the same declared confirmation");
-            inventory[1] = new ItemStack(GregTechAPI.sBlockCasings1, 32, 11);
-            inventory[2] = new ItemStack(GregTechAPI.sBlockCasings5, 16, 9);
-            var survivor = create.apply(4);
+                        .isEmpty()
+                    && inventory[1].stackSize == 32
+                    && inventory[2].stackSize == 16
+                    && world.getBlock(exhaust[0], exhaust[1], exhaust[2]) == Blocks.air,
+                "survival whole EBF with stock and a provably missing exhaust writes and debits nothing: " + unfunded);
+            var shellOffset = new HologramDeclaredNativeSelection.Offset(
+                shell[0] - controller.xCoord,
+                shell[1] - controller.yCoord,
+                shell[2] - controller.zCoord);
+            var survivor = scoped.apply(
+                4L,
+                new HologramDeclaredNativeSelection(
+                    1000,
+                    java.util.Collections.singletonMap("coil", 6),
+                    2,
+                    0,
+                    java.util.Collections.singletonList(shellOffset),
+                    java.util.Collections.emptyList()));
             var sourceContexts = new java.util.IdentityHashMap<HologramMaterials.Context, Integer>();
             world.observePlacement = () -> {
                 var execution = HologramWorkspace.find(endpoint.actor);
@@ -526,8 +546,8 @@ public final class HologramStockEbfConstructionRegression {
             proveDeclared(server, endpoint, replies, survivor);
             var built = finishDeclared(server, endpoint, replies, survivor.forGeneration(generation));
             SimpleAssert.that(
-                sourceContexts.size() == 1 && sourceContexts.containsValue(32),
-                "all 32 real survival setters reuse the source from funding");
+                sourceContexts.size() == 1 && sourceContexts.containsValue(1),
+                "the selected survival patch uses the formal source context");
             sourceContexts.clear();
             SimpleAssert.that(
                 HologramWorkspace.find(endpoint.actor) == prior && prior.blueprintDirty
@@ -540,18 +560,15 @@ public final class HologramStockEbfConstructionRegression {
                         HologramSnapshotCodec.compress(projectorTag.getCompoundTag(HologramSessionKeys.DRAFT))),
                 "real survival completion returns to the exact unsaved workspace and preserves held draft bytes");
             SimpleAssert.that(
-                built.phase() == HologramStockNativeWire.Phase.STOPPED && built.placed() == 32
-                    && built.reason()
-                        .contains("1 处必需仓室尚未指定")
+                built.phase() == HologramStockNativeWire.Phase.COMPLETE && built.placed() == 1
                     && world.writes()
-                        .size() == 32
-                    && inventory[1].stackSize == 16
-                    && inventory[2] == null
+                        .size() == 1
+                    && inventory[1].stackSize == 31
+                    && inventory[2].stackSize == 16
                     && world.getBlock(shell[0], shell[1], shell[2]) == GregTechAPI.sBlockCasings1
-                    && world.getBlockMetadata(coil[0], coil[1], coil[2]) == 9
+                    && world.getBlock(coil[0], coil[1], coil[2]) == Blocks.air
                     && world.getBlock(exhaust[0], exhaust[1], exhaust[2]) == Blocks.air,
-                "survival bare EBF commits exact shell/coils, charges 16 casing + 16 chosen coil, no guessed exhaust: "
-                    + built);
+                "an unrelated exact survival patch still writes and debits only the selected shell: " + built);
             for (var p : offsets) world
                 .seed(controller.xCoord + p.x(), controller.yCoord + p.y(), controller.zCoord + p.z(), Blocks.air, 0);
             world.writes()
@@ -576,23 +593,22 @@ public final class HologramStockEbfConstructionRegression {
             proveDeclared(server, endpoint, replies, creative);
             var free = finishDeclared(server, endpoint, replies, creative.forGeneration(generation));
             SimpleAssert.that(
-                sourceContexts.size() == 1 && sourceContexts.containsValue(32)
-                    && !HologramMaterials.read(projector).main
+                sourceContexts.isEmpty() && !HologramMaterials.read(projector).main
                     && !HologramMaterials.read(projector).me
                     && !HologramMaterials.read(projector).containers,
-                "all 32 actual Creative setters reuse one free context without changing held provider settings");
+                "the creative precondition reaches no setter and leaves all source settings disabled");
             SimpleAssert.that(
-                free.phase() == HologramStockNativeWire.Phase.STOPPED && free.placed() == 32
+                free.phase() == HologramStockNativeWire.Phase.STOPPED && free.placed() == 0
                     && free.reason()
-                        .contains("1 处必需仓室尚未指定")
+                        .contains("必需仓室尚未指定")
                     && world.writes()
-                        .size() == 32
+                        .isEmpty()
                     && inventory[1] == null
                     && inventory[2] == null
                     && !HologramConstructionJournal.pending(player)
                     && world.getTileEntity(controller.xCoord, controller.yCoord, controller.zCoord) == controller
-                    && world.getBlockMetadata(coil[0], coil[1], coil[2]) == 9,
-                "creative bare EBF commits real shell and selected coil with an empty inventory: " + free);
+                    && world.getBlock(coil[0], coil[1], coil[2]) == Blocks.air,
+                "creative whole EBF cannot leave a shell while its required exhaust is unassigned: " + free);
             SimpleAssert.that(
                 HologramWorkspace.find(endpoint.actor) == prior && prior.blueprintDirty
                     && prior.open
@@ -786,7 +802,35 @@ public final class HologramStockEbfConstructionRegression {
                 var batch = create.apply(23)
                     .withSources(HologramProjectedMainPolicy.structurePlacementKey(noStock, true));
                 proveDeclared(server, endpoint, replies, batch);
-                var result = finishDeclared(server, endpoint, replies, batch.forGeneration(generation));
+                var confirmed = batch.forGeneration(generation);
+                SimpleAssert.that(
+                    server.enqueue(
+                        endpoint,
+                        HologramStockNativeWire.readRequest(HologramStockNativeWire.confirmAfterProbe(confirmed))),
+                    "enqueue formal placement before forcing a declaration boundary");
+                server.tick(Long.MAX_VALUE, new HologramDeclaredNativeConstruction.PlacementWindow() {
+
+                    @Override
+                    public int endExclusive(int next, int total) {
+                        return Math.min(next + 1, total);
+                    }
+
+                    @Override
+                    public int groupEndExclusive(int group, int nextPosition, int totalPositions) {
+                        return Math.min(nextPosition + 1, totalPositions);
+                    }
+                });
+                var paused = replies.get(replies.size() - 1);
+                SimpleAssert
+                    .eq(HologramStockNativeWire.Phase.ACTIVE, paused.phase(), "yield stays active inside a group");
+                SimpleAssert.eq(1, paused.placed(), "only the first A writes before yielding inside the group");
+                server.tick(Long.MAX_VALUE, (next, total) -> Math.min(next + 1, total));
+                var groupDone = replies.get(replies.size() - 1);
+                SimpleAssert
+                    .eq(HologramStockNativeWire.Phase.ACTIVE, groupDone.phase(), "yield stays active at boundary");
+                SimpleAssert.eq(2, groupDone.placed(), "the second A writes without replay; B is not attempted yet");
+                server.tick(Long.MAX_VALUE);
+                var result = replies.get(replies.size() - 1);
                 SimpleAssert.that(
                     result.phase() == HologramStockNativeWire.Phase.STOPPED && result.placed() == 2
                         && world.writes()
@@ -828,6 +872,38 @@ public final class HologramStockEbfConstructionRegression {
                         && inventory[2] == null,
                     "survival uses the same A/A batch; a later missing B must not pre-reject earlier paid writes: "
                         + needsBrick);
+                // StructureLib publicly returns its backing array: a replace-in-place must invalidate a repeat.
+                var backing = alternateDefinition[0].getStructureFor("main");
+                var firstA = new HologramStructureCursor(backing, 0, 0, 0);
+                for (int n = 0; n < backing.length; n++) {
+                    var point = firstA.declarationOffset(facing);
+                    if (!groupedPositions.get(0)
+                        .equals(point)) continue;
+                    @SuppressWarnings("unchecked")
+                    var writable = (com.gtnewhorizon.structurelib.structure.IStructureElement<Object>[]) backing;
+                    var originalA = writable[n];
+                    try {
+                        writable[n] = com.gtnewhorizon.structurelib.structure.StructureUtility.ofBlock(Blocks.glass, 0);
+                        world.writes()
+                            .clear();
+                        inventory[1] = new ItemStack(Blocks.glass, 1);
+                        var changed = create.apply(25);
+                        proveDeclared(server, endpoint, replies, changed);
+                        var changedReply = finishDeclared(server, endpoint, replies, changed.forGeneration(generation));
+                        SimpleAssert.that(
+                            changedReply.phase() == HologramStockNativeWire.Phase.STOPPED && changedReply.placed() == 0
+                                && changedReply.reason()
+                                    .contains("已有不匹配")
+                                && world.writes()
+                                    .isEmpty()
+                                && inventory[1].stackSize == 1,
+                            "reused native topology cannot retain a stale array slot and miss the changed target: "
+                                + changedReply);
+                    } finally {
+                        writable[n] = originalA;
+                    }
+                    break;
+                }
             } finally {
                 world.observePlacement = null;
                 for (int j = 0; j < groupedPositions.size(); j++) {
@@ -839,7 +915,7 @@ public final class HologramStockEbfConstructionRegression {
                 }
             }
             System.out.println(
-                "GTMB_DECLARED_EBF_PROOF_AND_PLACEMENT survival=32 (+32 debit), creative=32 (0 debit), draft retained; mode drift and missing stock denied");
+                "GTMB_DECLARED_EBF_PROOF_AND_PLACEMENT missing required hatch writes/debits=0, exact survival patch=1, draft retained; explicit/installed hatches and paid prefix tested");
         } finally {
             for (int i = 0; i < offsets.size(); i++) {
                 var p = offsets.get(i);

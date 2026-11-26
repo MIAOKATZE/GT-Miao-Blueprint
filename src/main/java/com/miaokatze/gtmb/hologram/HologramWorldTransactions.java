@@ -86,6 +86,7 @@ final class HologramWorldTransactions {
         scope.allowVoucher = s.jobVoucherRequested;
         scope.savedNative = true;
         scope.stateful = stateful;
+        if (c.savedPlacementTarget == null) return scopedRejected(s, c);
         return operate(s, c, index, scope);
     }
 
@@ -1012,9 +1013,11 @@ final class HologramWorldTransactions {
                     if (!HologramRecovery.restorePlaced(w, c.x, c.y, c.z, pin)
                         || (HologramRecovery.hasSeal(pin) && !HologramRecovery.matchesPlaced(w, c.x, c.y, c.z, pin)))
                         throw new IllegalStateException("stored device restore rejected");
-                    Integer direction = scope != null && scope.declared && scope.declaredFacing >= 0
-                        ? Integer.valueOf(scope.declaredFacing)
-                        : s.planFacings.get(index);
+                    Integer direction = c.savedPlacementTarget != null
+                        ? (c.savedPlacementFacing < 0 ? null : Integer.valueOf(c.savedPlacementFacing))
+                        : scope != null && scope.declared && scope.declaredFacing >= 0
+                            ? Integer.valueOf(scope.declaredFacing)
+                            : s.planFacings.get(index);
                     TileEntity placedTile = w.getTileEntity(c.x, c.y, c.z);
                     if (s.virtual && placedTile instanceof IGregTechTileEntity) {
                         IGregTechTileEntity ownerHost = (IGregTechTileEntity) placedTile;

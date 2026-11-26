@@ -332,9 +332,12 @@ final class HologramPrivateNativeServer implements AutoCloseable {
                 continue;
             }
             var r = a.attempt.result();
-            if (r.sequence <= a.resultSequence) continue;
+            long now = System.nanoTime();
+            if (r.sequence <= a.resultSequence && now - a.last < TimeUnit.SECONDS.toNanos(5)) continue;
             a.resultSequence = r.sequence;
+            a.last = now;
             switch (r.phase) {
+                case PREPARING -> emit(a, PROGRESS, 0, 0, r.total, HologramPrivateNativeWire.PREPARING_PROGRESS);
                 case EXECUTING -> emit(a, PROGRESS, r.placed, r.satisfied, r.total, r.detail);
                 case COMPLETE -> end(a, COMPLETE, r.placed, r.satisfied, r.total, r.detail);
                 case CANCELLED -> end(a, CANCELLED, r.placed, r.satisfied, r.total, r.detail);

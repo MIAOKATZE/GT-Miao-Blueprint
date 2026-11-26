@@ -254,8 +254,13 @@ final class HologramUiBuildReview implements LocalView {
         if (!localMaterialsCurrent()) return projectorOr("stock.site_changed", "施工范围或现场已变化，请重新打开材料页。");
         NBTTagCompound settings = localMaterials.settings();
         if (!ui.session.nativeConstructionEditable(settings)) return localMaterialEditingReason();
-        if (ui.session.state().nativeViewport != null)
+        if (ui.session.state().nativeViewport != null) {
+            // Saved file placement does not carry replacement/demolition authority. Never convert a different
+            // requested operation into a build just because the material panel displays a native viewport.
+            if (settings.getInteger("mode") != 0 || ui.session.state().data.getInteger("mode") != 0)
+                return projectorOr("stock.saved_mode_unsupported", "已保存蓝图的施工入口暂不支持换装或拆除。");
             return ui.library.savedNativePlacementReady() ? "" : projectorOr("stock.save_first_reason", "请先保存蓝图。");
+        }
         HologramScreen root = ui.host == null ? null : ui.host.parent();
         if (localStockSite != null && root != null && root.stockNativePending())
             return projectorOr("stock.await_result", "正在等候本次施工结果。");
@@ -334,26 +339,29 @@ final class HologramUiBuildReview implements LocalView {
     }
 
     void submitLocalMaterials(java.util.function.Predicate<NBTTagCompound> dispatch) {
-        retireStaleLocalMaterials();
-        if (!localSubmitAvailable()) {
-            if (localMaterials != null || !localMaterialNotice.isEmpty()) localSubmitDenied();
-            return;
-        }
-        com.miaokatze.gtmb.hologram.HologramStockActionTrace.event("client.click", null, "confirm");
-        ui.session.notice("");
-        // True means only that this local action sent or scheduled the request, never server acceptance.
-        NBTTagCompound settings = localMaterials.settings();
-        if (reviewedNativeMode(2)) settings.setInteger("demolitionDestination", nativeDemolitionDestination);
-        if (dispatch.test(settings)) {
-            // A cold PROBE is not placement acceptance; leave its status or refusal in the existing dialog.
-            HologramScreen root = ui.host == null ? null : ui.host.parent();
-            if (localStockSite == null || root == null || !root.stockNativePending()) closeLocalMaterials();
-        } else {
-            localMaterialNotice = ui.session.notice();
-            if (localMaterialNotice.isEmpty())
-                localMaterialNotice = projectorOr("stock.submit_failed", "未提交施工，请检查当前状态后重试。");
-            // A dispatch error might originate in external content; do not log its arbitrary message.
-            com.miaokatze.gtmb.hologram.HologramStockActionTrace.event("client.not_sent", null, "dispatch_declined");
+        try (var ignored = com.miaokatze.gtmb.hologram.HologramPlacementTiming.clientClick()) {
+            retireStaleLocalMaterials();
+            if (!localSubmitAvailable()) {
+                if (localMaterials != null || !localMaterialNotice.isEmpty()) localSubmitDenied();
+                return;
+            }
+            com.miaokatze.gtmb.hologram.HologramStockActionTrace.event("client.click", null, "confirm");
+            ui.session.notice("");
+            // True means only that this local action sent or scheduled the request, never server acceptance.
+            NBTTagCompound settings = localMaterials.settings();
+            if (reviewedNativeMode(2)) settings.setInteger("demolitionDestination", nativeDemolitionDestination);
+            if (dispatch.test(settings)) {
+                // A cold PROBE is not placement acceptance; leave its status or refusal in the existing dialog.
+                HologramScreen root = ui.host == null ? null : ui.host.parent();
+                if (localStockSite == null || root == null || !root.stockNativePending()) closeLocalMaterials();
+            } else {
+                localMaterialNotice = ui.session.notice();
+                if (localMaterialNotice.isEmpty())
+                    localMaterialNotice = projectorOr("stock.submit_failed", "未提交施工，请检查当前状态后重试。");
+                // A dispatch error might originate in external content; do not log its arbitrary message.
+                com.miaokatze.gtmb.hologram.HologramStockActionTrace
+                    .event("client.not_sent", null, "dispatch_declined");
+            }
         }
     }
 

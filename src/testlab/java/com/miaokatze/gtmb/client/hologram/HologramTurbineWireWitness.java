@@ -34,6 +34,12 @@ final class HologramTurbineWireWitness {
         var next = fixture.outbound();
         if (next == null || sent == next) return;
         if (next.afterProbe()) fixture.beginSent(next);
+        com.miaokatze.gtmb.hologram.HologramPlacementTiming.clientPhase(
+            "structure",
+            next.confirmation()
+                .key()
+                .request(),
+            next.afterProbe() ? "testlab_begin" : "testlab_probe");
         boolean ok = next.afterProbe() ? HologramNetwork.sendStockNativeAfterProbe(next.confirmation())
             : HologramNetwork.sendStockNativeProbe(next.confirmation());
         if (!ok) throw new IllegalStateException("Production native request send refused");

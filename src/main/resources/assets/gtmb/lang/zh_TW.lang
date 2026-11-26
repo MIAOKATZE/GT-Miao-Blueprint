@@ -385,6 +385,7 @@ gtmb.hologram.projector.stock.pending_other=另一個工作正在進行，請稍
 gtmb.hologram.projector.stock.reopen=請重新開啟材料頁。
 gtmb.hologram.projector.stock.site_changed=施工範圍或現場已變更，請重新開啟材料頁。
 gtmb.hologram.projector.stock.save_first_reason=請先儲存藍圖。
+gtmb.hologram.projector.stock.saved_mode_unsupported=已儲存藍圖的施工入口暫不支援換裝或拆除。
 gtmb.hologram.projector.stock.await_result=正在等候本次施工結果。
 gtmb.hologram.projector.stock.position_build=定位並施工
 gtmb.hologram.projector.stock.save_first=請先儲存藍圖

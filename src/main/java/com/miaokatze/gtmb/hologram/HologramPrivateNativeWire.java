@@ -26,6 +26,8 @@ public final class HologramPrivateNativeWire {
     public static final int BEGIN = 1, DATA = 2, CANCEL = 3, NEED = 1, PROGRESS = 2, COMPLETE = 3, FAILED = 4,
         CANCELLED = 5;
     public static final int FRAME = HologramPrivateNativeCache.FRAME;
+    /** Internal phase marker in the existing PROGRESS text slot; not an additional wire opcode. */
+    public static final String PREPARING_PROGRESS = "native.preparing";
     private static final int VERSION = 1;
     private static volatile SimpleNetworkWrapper channel;
     private static final HologramRequestGate pending = new HologramRequestGate(3, 64);

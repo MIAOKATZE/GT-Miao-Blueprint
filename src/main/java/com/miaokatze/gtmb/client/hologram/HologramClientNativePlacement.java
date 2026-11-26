@@ -12,6 +12,7 @@ import com.miaokatze.gtmb.client.hologram.HologramOwnedPlacementProgress.Ticket;
 import com.miaokatze.gtmb.hologram.HologramNativeLocalConstruction;
 import com.miaokatze.gtmb.hologram.HologramNativeLocalConstruction.Attempt;
 import com.miaokatze.gtmb.hologram.HologramNetwork;
+import com.miaokatze.gtmb.hologram.HologramPlacementTiming;
 
 /** Owns the in-process request/result on the client's confirmed placement route. No packet handler is installed. */
 final class HologramClientNativePlacement {
@@ -35,6 +36,7 @@ final class HologramClientNativePlacement {
         Attempt attempt = new Attempt(intent);
         Ticket ticket = HologramBackgroundTasks.beginOwnedPlacement(attempt.id, "原生蓝图施工", attempt::stop);
         if (ticket == null) return false;
+        HologramPlacementTiming.clientRequest("blueprint", attempt.id);
         var job = new Active(attempt, ticket, client.theWorld, connection);
         job.pin = source.source()
             .pinNative();
@@ -55,6 +57,7 @@ final class HologramClientNativePlacement {
                     job.fail("原生施工上下文已变化");
                     return;
                 }
+                HologramPlacementTiming.clientPhase("blueprint", attempt.id, "integrated_submit");
                 HologramNativeLocalConstruction.submit(attempt, ready, () -> {
                     var config = server.getConfigurationManager();
                     if (!server.isServerRunning() || config == null) return null;
@@ -97,6 +100,12 @@ final class HologramClientNativePlacement {
         if (result.sequence <= job.seen) return;
         job.seen = result.sequence;
         switch (result.phase) {
+            case PREPARING -> HologramBackgroundTasks.observeOwnedPlacement(
+                job.ticket,
+                HologramOwnedPlacementProgress.Phase.ADMISSION,
+                result.sequence,
+                0,
+                result.total);
             case EXECUTING -> HologramBackgroundTasks.observeOwnedPlacement(
                 job.ticket,
                 HologramOwnedPlacementProgress.Phase.EXECUTING,
@@ -104,6 +113,7 @@ final class HologramClientNativePlacement {
                 result.placed + result.satisfied,
                 result.total);
             case COMPLETE -> {
+                HologramPlacementTiming.clientPhase("blueprint", job.attempt.id, "complete_seen");
                 Outcome outcome = result.placed == 0 ? Outcome.NO_WORK : Outcome.SUCCESS;
                 boolean accepted = HologramBackgroundTasks.acceptOwnedPlacementCommit(
                     job.ticket,

@@ -68,6 +68,10 @@ public final class HologramProjectedMainPolicy {
                 && value.recoveryDestination == recoveryDestination;
         }
 
+        boolean configuredToolMatches(net.minecraft.item.ItemStack tool) {
+            return HologramMaterials.matchesSettings(tool, main, containers, me, priority, recoveryDestination);
+        }
+
         /** Never write the execution view back to the tool. Preserve every explicitly selected provider. */
         HologramMaterials.Settings selectedScope() {
             var settings = new HologramMaterials.Settings();

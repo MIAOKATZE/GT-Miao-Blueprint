@@ -702,6 +702,7 @@ gtmb.hologram.projector.stock.pending_other=Another task is in progress.
 gtmb.hologram.projector.stock.reopen=Reopen the material list.
 gtmb.hologram.projector.stock.site_changed=The scope or site changed. Reopen the material list.
 gtmb.hologram.projector.stock.save_first_reason=Save the blueprint first.
+gtmb.hologram.projector.stock.saved_mode_unsupported=The saved blueprint construction action does not support replacement or dismantling.
 gtmb.hologram.projector.stock.await_result=Waiting for the construction result.
 gtmb.hologram.projector.stock.position_build=Position and Build
 gtmb.hologram.projector.stock.save_first=Save Blueprint First

@@ -132,14 +132,28 @@ public final class HologramMaterials {
         public int recoveryDestination;
     }
 
+    private static NBTTagCompound settingsTag(ItemStack tool) {
+        if (tool == null || !tool.hasTagCompound()) return null;
+        NBTTagCompound root = tool.getTagCompound();
+        return root.hasKey(SETTINGS, 10) ? root.getCompoundTag(SETTINGS) : null;
+    }
+
+    /** Compare the live tool at a placement fence without creating an intermediate Settings. */
+    static boolean matchesSettings(ItemStack tool, boolean main, boolean containers, boolean me, int priority,
+        int recoveryDestination) {
+        NBTTagCompound tag = settingsTag(tool);
+        if (tag == null) return main && containers && me && priority == 0 && recoveryDestination == 0;
+        return main == (!tag.hasKey("main") || tag.getBoolean("main"))
+            && containers == (!tag.hasKey("containers") || tag.getBoolean("containers"))
+            && me == (!tag.hasKey("me") || tag.getBoolean("me"))
+            && priority == Math.max(0, Math.min(2, tag.getInteger("priority")))
+            && recoveryDestination == Math.max(0, Math.min(1, tag.getInteger("recoveryDestination")));
+    }
+
     public static Settings read(ItemStack tool) {
         Settings result = new Settings();
-        if (tool == null || !tool.hasTagCompound()
-            || !tool.getTagCompound()
-                .hasKey(SETTINGS, 10))
-            return result;
-        NBTTagCompound tag = tool.getTagCompound()
-            .getCompoundTag(SETTINGS);
+        NBTTagCompound tag = settingsTag(tool);
+        if (tag == null) return result;
         result.main = !tag.hasKey("main") || tag.getBoolean("main");
         result.containers = !tag.hasKey("containers") || tag.getBoolean("containers");
         result.me = !tag.hasKey("me") || tag.getBoolean("me");
