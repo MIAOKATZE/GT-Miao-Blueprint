@@ -104,6 +104,7 @@ final class HologramLocalPreviewStagesProbe {
     private HologramEbfFixedControls fixedEbf;
     private HologramHatchPresetRuntimeWitness hatchPresetWitness;
     private HologramHatchPresetRuntimeStock hatchPresetStock;
+    private HologramRuntimeCoilControls runtimeCoilControls;
     private HologramControllerWorldProjectionProbe controllerWorldProjection;
     private volatile NBTTagList ebfServerInventory, ebfInventoryBaseline;
     private volatile int ebfServerSlot = -1;
@@ -639,6 +640,13 @@ final class HologramLocalPreviewStagesProbe {
                 throw new IllegalStateException("Hatch preset natural frame witness failed", failure);
             }
         }
+        if (runtimeCoilControls != null && !finished) {
+            try {
+                runtimeCoilControls.guiPost(gui, frame);
+            } catch (Exception failure) {
+                throw new IllegalStateException("Native coil form natural frame failed", failure);
+            }
+        }
         if (!timingMode.isEmpty()) {
             if (finished || stage != 1 || gui != timingScreen || timingFailure != null || timingFrameToCapture != null)
                 return;
@@ -1049,6 +1057,14 @@ final class HologramLocalPreviewStagesProbe {
             require(
                 capability != null && capability.getBoolean("editable"),
                 "Native channel is unavailable: " + parity.channel);
+            if (HologramHatchPresetRuntimeWitness.enabled()) {
+                if (runtimeCoilControls == null)
+                    runtimeCoilControls = new HologramRuntimeCoilControls(controller, output, evidence);
+                if (!runtimeCoilControls.step()) return false;
+                beginParityEdit();
+                zero("nativeCoilNamedFormSubmitted");
+                return false;
+            }
             NBTTagList options = capability.getTagList("options", 10);
             if (parity == NativeParity.CHEMICAL)
                 require(options.tagCount() == 9, "Chemical Plant requires eight casing choices and reset");
@@ -1067,6 +1083,18 @@ final class HologramLocalPreviewStagesProbe {
         } else {
             boolean changed = !firstParityCells.equals(actual);
             proof.put("geometryChanged", changed);
+            if (HologramHatchPresetRuntimeWitness.enabled()) {
+                var changedCoordinates = new ArrayList<String>();
+                for (var before : firstParityCells.entrySet())
+                    if (!java.util.Objects.equals(before.getValue(), actual.get(before.getKey())))
+                        changedCoordinates.add(before.getKey());
+                require(
+                    actual.size() == 33 && firstParityCells.keySet()
+                        .equals(actual.keySet()) && changedCoordinates.size() == 16,
+                    "Native EBF coil channel did not change exactly its 16 coil rows");
+                proof.put("coilChangedCoordinates", changedCoordinates);
+                proof.put("coilChangedCount", changedCoordinates.size());
+            }
             // GTSR V2 registers the same Solar geometry for every tier piece. Both passes still compare with NEI.
             if (parity != NativeParity.CRITICAL) require(changed, "Native channel edit left the preview unchanged");
             if (parity == NativeParity.CENTER)
