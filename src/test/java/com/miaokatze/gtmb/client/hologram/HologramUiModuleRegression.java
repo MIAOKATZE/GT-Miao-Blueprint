@@ -644,40 +644,65 @@ public final class HologramUiModuleRegression {
             data.setBoolean("supported", true);
             data.setBoolean("localStandardController", true);
             data.setBoolean("structureProjection", true);
-            data.setBoolean("capturePending", true);
+            data.setBoolean("capturePending", false);
+            data.setBoolean("projectionDataComplete", true);
+            data.setLong("nativeTargetRevision", 1);
+            data.setInteger("main", 3);
+            NBTTagCompound channels = new NBTTagCompound();
+            channels.setInteger("height", 7);
+            data.setTag("channels", channels);
             NBTTagList rows = new NBTTagList();
             NBTTagCompound row = new NBTTagCompound();
             row.setString("wantId", "minecraft:stone");
             rows.appendTag(row);
             data.setTag("cells", rows);
-            HologramState state = new HologramState(data);
-            setUiField(ui.session, "state", state);
-            HologramEditorPropertiesPane pane = new HologramEditorPropertiesPane(ui);
-            var canReview = HologramEditorPropertiesPane.class.getDeclaredMethod("canReviewConstruction");
-            var reason = HologramEditorPropertiesPane.class.getDeclaredMethod("constructionReason");
-            canReview.setAccessible(true);
-            reason.setAccessible(true);
-            var config = ui.config.configuration();
+            HologramState source = new HologramState(data);
+            setUiField(ui.session, "state", source);
             SimpleAssert.that(
-                !HologramPlacementConfirmation.localStructureReviewBlocker(state, config, false)
+                !HologramPlacementConfirmation.localStructureReviewBlocker(source)
                     .isEmpty(),
-                "unsettled capture without the published native target cannot submit construction");
-            state.data.setBoolean("capturePending", false);
+                "visible cells and candidate completion cannot substitute for a published native target");
+            var nativeState = new HologramNativeControllerState();
+            nativeState.targetReady();
+            nativeState.observe(
+                new com.miaokatze.gtmb.hologram.HologramStockNativeWire.ServerObservation(
+                    236,
+                    0,
+                    64,
+                    0,
+                    com.miaokatze.gtmb.hologram.HologramStockNativeWire.Stage.CONTROLLER_ONLY,
+                    1,
+                    nativeState.targetRevision(),
+                    ""));
+            HologramState published = source.withMetadata(nativeState.metadata());
             SimpleAssert.that(
-                !HologramPlacementConfirmation.localStructureReviewBlocker(state, config, false)
+                HologramPlacementConfirmation.localStructureReviewBlocker(published)
                     .isEmpty(),
-                "visible geometry alone cannot submit construction");
-            state.data.setBoolean("projectionDataComplete", true);
-            state.data.setBoolean("localPlanPending", true);
-            SimpleAssert.that(!(Boolean) canReview.invoke(pane), "an in-flight plan cannot review construction");
-            SimpleAssert.eq("正在更新计划", reason.invoke(pane), "pending plan has actionable status");
-            state.data.setBoolean("localPlanPending", false);
-            SimpleAssert.that((Boolean) canReview.invoke(pane), "settled target enables only the review entry");
+                "an explicit complete target enables the material-review data path");
+            for (var action : com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.values()) {
+                NBTTagCompound selected = new NBTTagCompound();
+                selected.setInteger("nativeAction", action.ordinal());
+                selected.setInteger("mode", HologramNativeControllerState.legacyMode(action));
+                setUiField(ui.session, "state", published.withMetadata(selected));
+                var config = ui.config.configuration();
+                SimpleAssert.that(
+                    config.getInteger("scope") == 0 && config.getInteger("main") == 3
+                        && config.getCompoundTag("channels")
+                            .getInteger("height") == 7,
+                    "each action retains the full target and independent main/auxiliary channels: " + action);
+            }
             SimpleAssert.that(
-                !HologramPlacementConfirmation.canBuild(state.data, 0),
-                "settled local preview is not authoritative material confirmation");
+                !HologramPlacementConfirmation.canBuild(published.data, 0),
+                "a published local target still cannot invent authoritative server material confirmation");
+            nativeState.targetChanged();
+            HologramState updating = published.withMetadata(nativeState.metadata());
+            SimpleAssert.that(
+                !HologramPlacementConfirmation.localStructureReviewBlocker(updating)
+                    .isEmpty()
+                    && updating.data.getLong("nativeTargetRevision") > published.data.getLong("nativeTargetRevision"),
+                "a configuration change invalidates the previous target before replacement geometry arrives");
         } catch (ReflectiveOperationException failure) {
-            throw new AssertionError("local controller construction entry", failure);
+            throw new AssertionError("native controller target-review entry", failure);
         }
     }
 
@@ -1383,7 +1408,10 @@ public final class HologramUiModuleRegression {
             SimpleAssert.that(
                 ui.shortcuts.idleHintLines()
                     .get(1)
-                    .contains("当前关"),
+                    .contains(
+                        HologramUiText.projectorOr("native.ui.currently", "（当前") + " "
+                            + HologramUiText.projectorOr("native.ui.off", "关")
+                            + HologramUiText.projectorOr("native.ui.text", "）")),
                 "idle guidance exposes the actual hidden-axis state");
             SimpleAssert.that(
                 ui.tools.commands()

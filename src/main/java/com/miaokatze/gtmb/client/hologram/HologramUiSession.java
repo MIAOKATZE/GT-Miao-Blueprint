@@ -4,6 +4,7 @@
 package com.miaokatze.gtmb.client.hologram;
 
 import static com.miaokatze.gtmb.client.hologram.HologramUiCanvas.*;
+import static com.miaokatze.gtmb.client.hologram.HologramUiText.projectorOr;
 import static net.minecraft.client.gui.Gui.*;
 
 import net.minecraft.item.ItemStack;
@@ -312,11 +313,24 @@ final class HologramUiSession {
     }
 
     boolean editable() {
+        if (state.data.getBoolean("localStandardController")) {
+            HologramScreen root = ui.host == null ? null : ui.host.parent();
+            return editOwnerReady() && root != null
+                && root.localConfigurationCurrent(ui)
+                && state.data.getBoolean("nativeTargetReady");
+        }
         return editOwnerReady() && !this.state.data.getBoolean("capturePending");
     }
 
     /** Whole native construction may use the sealed target before alternative choices are populated. */
     boolean nativeConstructionEditable(NBTTagCompound settings) {
+        if (state.data.getBoolean("localStandardController")) {
+            HologramScreen root = ui.host == null ? null : ui.host.parent();
+            return editOwnerReady() && root != null
+                && root.localConfigurationCurrent(ui)
+                && (state.data.getBoolean("nativeTargetReady") || root.nativeControllerState()
+                    .action() == com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.DEMOLISH);
+        }
         if (editable()) return true;
         HologramScreen root = ui.host == null ? null : ui.host.parent();
         return editOwnerReady() && root != null
@@ -326,6 +340,10 @@ final class HologramUiSession {
 
     /** Local preferences/declared parameters are not a full-geometry or server-admission operation. */
     boolean configurationEditable() {
+        if (state.data.getBoolean("localStandardController")) {
+            HologramScreen root = ui.host == null ? null : ui.host.parent();
+            return editOwnerReady() && root != null && root.localConfigurationCurrent(ui);
+        }
         if (editable()) return true;
         HologramScreen root = ui.host == null ? null : ui.host.parent();
         return editOwnerReady() && !controllerOpening()
@@ -393,20 +411,26 @@ final class HologramUiSession {
     }
 
     String editingReason() {
-        if (state.data.getBoolean("attachmentPending")) return "正在生成和校验文字或图片；可按 Esc 取消后再编辑。";
-        if (this.state.data.getBoolean("targetClosed")) return "控制器已拆除；保留最终统计，重新右键新控制器开启任务。";
-        if (pendingTicket.sequence() >= 0) return "等待服务端回执后可操作。";
-        if (this.state.data.getBoolean("capturePending")) return "正在采集结构，请稍候。";
+        if (state.data.getBoolean("attachmentPending")) return projectorOr(
+            "native.ui.generating_and_validating_text_or_image_press",
+            "正在生成和校验文字或图片；可按 Esc 取消后再编辑。");
+        if (this.state.data.getBoolean("targetClosed")) return projectorOr(
+            "native.ui.controller_demolished_final_results_are_kept_right",
+            "控制器已拆除；保留最终统计，重新右键新控制器开启任务。");
+        if (pendingTicket.sequence() >= 0)
+            return projectorOr("native.ui.wait_for_the_server_response_before_continuing", "等待服务端回执后可操作。");
+        if (this.state.data.getBoolean("capturePending"))
+            return projectorOr("native.ui.capturing_the_structure_please_wait", "正在采集结构，请稍候。");
         if (this.state.data.getInteger("job") == 1 || this.state.data.getInteger("job") == 2)
-            return "施工任务中；取消任务后可修改蓝图。";
-        return "当前目标不支持此操作。";
+            return projectorOr("native.ui.construction_is_running_cancel_it_before_editing", "施工任务中；取消任务后可修改蓝图。");
+        return projectorOr("native.ui.the_current_target_does_not_support_this", "当前目标不支持此操作。");
     }
 
     String phaseName() {
         String phase = this.state.data.getString("phase");
-        if (phase.equals("PREPARE")) return "等待服务端执行";
-        if (phase.equals("ACK")) return "已收到施工结果";
-        if (phase.equals("GAP")) return "等待服务端执行";
+        if (phase.equals("PREPARE")) return projectorOr("native.ui.waiting_for_server_execution", "等待服务端执行");
+        if (phase.equals("ACK")) return projectorOr("native.ui.construction_result_received", "已收到施工结果");
+        if (phase.equals("GAP")) return projectorOr("native.ui.waiting_for_server_execution", "等待服务端执行");
         return phase;
     }
 
@@ -477,7 +501,10 @@ final class HologramUiSession {
             if (localRoot != null && "configure".equals(op) && request != null) {
                 if (request.getBoolean("applyHatchPreset")) {
                     if (editable() && localRoot.localMaterialOwnerCurrent(ui)) localRoot.applyNativePreset(request);
-                    else notice("控制器或手持投影仪已变化，请重新打开结构。");
+                    else notice(
+                        projectorOr(
+                            "native.ui.the_controller_or_held_projector_changed_reopen",
+                            "控制器或手持投影仪已变化，请重新打开结构。"));
                 } else if (configurationEditable()) localRoot.refreshLocalController(request);
             }
             return;
@@ -524,7 +551,8 @@ final class HologramUiSession {
         n.setLong("editorWorkspaceEpoch", state.data.getLong("editorWorkspaceEpoch"));
         ui.preview.recordSelectionCommand(op, sequence);
         if (localDocument()) {
-            if (!ui.library.editLocalDocument(op, n) && !"close".equals(op)) notice("当前操作尚未接入本地蓝图工作台");
+            if (!ui.library.editLocalDocument(op, n) && !"close".equals(op))
+                notice(projectorOr("native.ui.this_action_is_not_connected_to_the", "当前操作尚未接入本地蓝图工作台"));
             return;
         }
         if (pending) {

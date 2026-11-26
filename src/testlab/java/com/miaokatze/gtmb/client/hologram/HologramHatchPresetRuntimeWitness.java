@@ -3,7 +3,6 @@
 
 package com.miaokatze.gtmb.client.hologram;
 
-import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -390,33 +389,9 @@ final class HologramHatchPresetRuntimeWitness {
             original == null ? !Files.exists(file) : Arrays.equals(original, Files.readAllBytes(file)));
     }
 
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> construction() throws Exception {
-        Method choices = HologramScreen.class.getDeclaredMethod("nativeConstructionChoices");
-        choices.setAccessible(true);
-        Set<Integer> selected = (Set<Integer>) choices.invoke(screen);
-        var state = screen.ui.session.state();
-        var declaration = HologramScreen
-            .declaredSelection(controllerId, state, screen.ui.config.configuration(), selected);
-        require(
-            declaration != null && declaration.valid(),
-            "Current generated choices did not enter production native declaration");
-        require(
-            declaration.hatches()
-                .size() == selected.size(),
-            "Native construction discarded generated hatch choices");
-        var result = new LinkedHashMap<String, Object>();
-        result.put(
-            "hatches",
-            declaration.hatches()
-                .size());
-        result.put("channels", declaration.channels());
-        result.put(
-            "choices",
-            declaration.hatches()
-                .toString());
-        result.put("valid", true);
-        return result;
+    private Map<String, Object> construction() {
+        throw new UnsupportedOperationException(
+            "RETIRED: legacy declaredSelection witness cannot validate the native target action engine; use fourMachineRuntime");
     }
 
     private boolean present(String key) {

@@ -3,6 +3,8 @@
 
 package com.miaokatze.gtmb.client.hologram;
 
+import static com.miaokatze.gtmb.client.hologram.HologramUiText.projectorOr;
+
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.LinkedHashSet;
@@ -51,12 +53,12 @@ final class HologramLocalControllerEdits {
     static HologramState apply(HologramState base, HologramState initial, String operation, NBTTagCompound request,
         DeclarationDetails details, java.util.function.Consumer<HologramState.Cell> onEdit) throws IOException {
         if (initial == null || base.cells.size() != initial.cells.size() || base.data.getBoolean("capturePending"))
-            throw new IOException("请先等待本地结构采集完成");
-        if (base.data.getInteger("mode") == 2) throw new IOException("拆除模式不接受建造目标");
+            throw new IOException(projectorOr("native.ui.wait_for_local_structure_capture_to_finish", "请先等待本地结构采集完成"));
         int primary = request.hasKey("selected", 3) ? request.getInteger("selected") : -1;
         boolean restore = "restoreCell".equals(operation) || "clearPin".equals(operation);
         Set<Integer> indices = new LinkedHashSet<>();
-        if (primary < 0 || primary >= base.cells.size()) throw new IOException("请先选中结构格");
+        if (primary < 0 || primary >= base.cells.size())
+            throw new IOException(projectorOr("native.ui.select_a_structure_cell_first", "请先选中结构格"));
         indices.add(primary);
         if (!"hatchFacing".equals(operation) && !"pin".equals(operation)) {
             for (int index : request.getIntArray("selectedIndices"))
@@ -78,12 +80,15 @@ final class HologramLocalControllerEdits {
                     || facing > 5
                     || current.targetStack == null
                     || !(current.targetStack.getItem() instanceof ItemMachines)
-                    || facing >= 0 && !allowsFacing(row, facing)) throw new IOException("该结构格不支持所选方向");
+                    || facing >= 0 && !allowsFacing(row, facing))
+                    throw new IOException(
+                        projectorOr("native.ui.this_structure_cell_does_not_support_the", "该结构格不支持所选方向"));
                 setFacing(row, original, current.targetStack, facing);
             } else if ("pin".equals(operation)) {
                 int choice = request.hasKey("choiceindex", 3) ? request.getInteger("choiceindex")
                     : request.getInteger("choice");
-                if (choice < 0 || choice >= current.candidates.size()) throw new IOException("方块候选已变化");
+                if (choice < 0 || choice >= current.candidates.size())
+                    throw new IOException(projectorOr("native.ui.block_candidates_changed", "方块候选已变化"));
                 pin(row, original, current.candidates.get(choice), choice, "manual");
             } else {
                 pin(row, original, picked, -1, "manual");
@@ -100,7 +105,7 @@ final class HologramLocalControllerEdits {
         patch.setLong("planRevision", base.data.getLong("planRevision") + 1);
         patch.setTag("cells", rows);
         patch.setBoolean("nativeBuildSatisfied", false);
-        patch.setString("status", "已更新本地结构规划");
+        patch.setString("status", projectorOr("native.ui.local_structure_plan_updated", "已更新本地结构规划"));
         HologramState result = HologramState.apply(base, patch);
         if (onEdit != null) for (int i = 0; i < rows.tagCount(); i++) onEdit.accept(
             result.cells.get(
@@ -119,13 +124,16 @@ final class HologramLocalControllerEdits {
         if (!selectedOnly(operation) || current.anchor
             || initial.index != current.index
             || !request.hasKey("selected", 3)
-            || request.getInteger("selected") != current.index) throw new IOException("所选结构格已变化");
+            || request.getInteger("selected") != current.index)
+            throw new IOException(projectorOr("native.ui.the_selected_structure_cell_changed", "所选结构格已变化"));
         NBTTagCompound row = current.tag(), original = initial.tag();
         if ("pin".equals(operation)) {
-            if (!request.hasKey("choiceindex", 3) && !request.hasKey("choice", 3)) throw new IOException("方块候选已变化");
+            if (!request.hasKey("choiceindex", 3) && !request.hasKey("choice", 3))
+                throw new IOException(projectorOr("native.ui.block_candidates_changed", "方块候选已变化"));
             int choice = request.hasKey("choiceindex", 3) ? request.getInteger("choiceindex")
                 : request.getInteger("choice");
-            if (choice < 0 || choice >= current.candidates.size()) throw new IOException("方块候选已变化");
+            if (choice < 0 || choice >= current.candidates.size())
+                throw new IOException(projectorOr("native.ui.block_candidates_changed", "方块候选已变化"));
             pin(row, original, current.candidates.get(choice), choice, "manual");
         } else {
             int facing = request.getInteger("facing");
@@ -133,7 +141,8 @@ final class HologramLocalControllerEdits {
                 || facing > 5
                 || current.targetStack == null
                 || !(current.targetStack.getItem() instanceof ItemMachines)
-                || facing >= 0 && !allowsFacing(row, facing)) throw new IOException("该结构格不支持所选方向");
+                || facing >= 0 && !allowsFacing(row, facing))
+                throw new IOException(projectorOr("native.ui.this_structure_cell_does_not_support_the", "该结构格不支持所选方向"));
             setFacing(row, original, current.targetStack, facing);
         }
         row.setInteger("index", current.index);
@@ -156,7 +165,7 @@ final class HologramLocalControllerEdits {
     static HologramState replaceNativePreset(HologramState base, HologramState initial, Set<Integer> previous,
         java.util.List<HologramNativePresetIndex.Choice> choices, int tier, boolean enabled) throws IOException {
         if (initial == null || !initial.session.equals(base.session) || initial.cells.size() != base.cells.size())
-            throw new IOException("结构目标已变化");
+            throw new IOException(projectorOr("native.ui.the_structure_target_changed", "结构目标已变化"));
         java.util.Map<Integer, NBTTagCompound> changed = new java.util.LinkedHashMap<>();
         for (int index : previous) {
             HologramState.Cell current = base.cells.get(index);
@@ -173,15 +182,18 @@ final class HologramLocalControllerEdits {
                 || id >= GregTechAPI.METATILEENTITIES.length
                 || direction < -1
                 || direction > 5
-                || GregTechAPI.METATILEENTITIES[id] == null) throw new IOException("仓室目标无效");
+                || GregTechAPI.METATILEENTITIES[id] == null)
+                throw new IOException(projectorOr("native.ui.invalid_hatch_target", "仓室目标无效"));
             var current = base.cells.get(i);
-            if (current.anchor || "manual".equals(current.pinScope)) throw new IOException("仓室目标与手选位置冲突");
+            if (current.anchor || "manual".equals(current.pinScope)) throw new IOException(
+                projectorOr("native.ui.hatch_target_conflicts_with_a_manual_position", "仓室目标与手选位置冲突"));
             NBTTagCompound original = initial.cells.get(i)
                 .tag(), row = (NBTTagCompound) original.copy();
             ItemStack stack = GregTechAPI.METATILEENTITIES[id].getStackForm(1);
             if (stack == null || !(stack.getItem() instanceof ItemMachines)
                 || stack.hasTagCompound()
-                || stack.getItemDamage() != id) throw new IOException("仓室身份已变化");
+                || stack.getItemDamage() != id)
+                throw new IOException(projectorOr("native.ui.hatch_identity_changed", "仓室身份已变化"));
             pin(row, original, stack, -1, "preset");
             if (direction >= 0) row.setIntArray("hatchFacings", new int[] { direction });
             setFacing(row, original, stack, direction);
@@ -201,10 +213,12 @@ final class HologramLocalControllerEdits {
 
     private static void pin(NBTTagCompound row, NBTTagCompound original, ItemStack sample, int choice, String scope)
         throws IOException {
-        if (sample == null || sample.getItem() == null) throw new IOException("样本已不可用");
+        if (sample == null || sample.getItem() == null)
+            throw new IOException(projectorOr("native.ui.the_sample_is_no_longer_available", "样本已不可用"));
         Block block = sample.getItem() instanceof ItemMachines ? GregTechAPI.sBlockMachines
             : Block.getBlockFromItem(sample.getItem());
-        if (block == null || block == Blocks.air) throw new IOException("库存样本不是可放置方块");
+        if (block == null || block == Blocks.air)
+            throw new IOException(projectorOr("native.ui.the_inventory_sample_is_not_a_placeable", "库存样本不是可放置方块"));
         boolean unchanged = sameTarget(row, sample);
         ItemStack target = sample.copy();
         target.stackSize = 1;

@@ -3,6 +3,8 @@
 
 package com.miaokatze.gtmb.client.hologram;
 
+import static com.miaokatze.gtmb.client.hologram.HologramUiText.projectorOr;
+
 import com.cleanroommc.modularui.api.IPanelHandler;
 import com.cleanroommc.modularui.api.drawable.IDrawable;
 import com.cleanroommc.modularui.api.widget.IWidget;
@@ -63,12 +65,22 @@ final class HologramEditorGuide {
                         .name("guide.keys")));
         bar.child(
             HologramEditorNativeTheme
-                .iconButton("collapse-up", () -> "收纳智能指引", this::toggleCollapsed, () -> true, () -> false)
+                .iconButton(
+                    "collapse-up",
+                    () -> projectorOr("native_common.guide.collapse", "收纳智能指引"),
+                    this::toggleCollapsed,
+                    () -> true,
+                    () -> false)
                 .size(HologramEditorNativeTheme.ICON_BUTTON)
                 .name("guide.collapse"));
         bar.child(
             HologramEditorNativeTheme
-                .iconButton("help-circle", () -> "完整说明与独立教程", this::toggleReference, () -> true, () -> false)
+                .iconButton(
+                    "help-circle",
+                    () -> projectorOr("native_common.guide.help", "完整说明与独立教程"),
+                    this::toggleReference,
+                    () -> true,
+                    () -> false)
                 .size(HologramEditorNativeTheme.ICON_BUTTON)
                 .name("guide.help"));
         refreshCollapsed();
@@ -96,12 +108,18 @@ final class HologramEditorGuide {
             return chip;
         }
         chip.child(
-            HologramEditorNativeTheme.button(() -> "指引", "collapse-down", this::toggleCollapsed)
+            HologramEditorNativeTheme
+                .button(() -> projectorOr("native_common.guide.title", "指引"), "collapse-down", this::toggleCollapsed)
                 .size(56, 20)
                 .name("guide.expand"));
         chip.child(
             HologramEditorNativeTheme
-                .iconButton("help-circle", () -> "完整说明", this::toggleReference, () -> true, () -> false)
+                .iconButton(
+                    "help-circle",
+                    () -> projectorOr("native_common.guide.full_help", "完整说明"),
+                    this::toggleReference,
+                    () -> true,
+                    () -> false)
                 .size(HologramEditorNativeTheme.ICON_BUTTON)
                 .name("guide.collapsed.help"));
         refreshCollapsed();
@@ -152,7 +170,10 @@ final class HologramEditorGuide {
             .childPadding(7)
             .name("guide.reference.content");
         column.child(
-            HologramEditorNativeTheme.label(() -> "现场教程与操作说明", HologramEditorNativeTheme.TITLE)
+            HologramEditorNativeTheme
+                .label(
+                    () -> projectorOr("native_common.guide.reference_title", "现场教程与操作说明"),
+                    HologramEditorNativeTheme.TITLE)
                 .widthRel(1f)
                 .height(17));
         ListWidget<IWidget, ?> details = new ListWidget<>().sizeRel(1f)
@@ -161,8 +182,12 @@ final class HologramEditorGuide {
             .background(IDrawable.NONE)
             .disableThemeBackground(true);
         String[] commands = { "sameType", "moveHandles", "channels", "candidates", "hatchPreset", "library" };
-        String[] explanations = { "点一格选择，Ctrl 增减；点结构轮廓整选。", "轴线改单轴，平面同时改两轴；Ctrl 起拖复制。", "每个来源结构独立保存声明参数与具名信道。",
-            "筛选后仍须选择具体设备，保留合法候选、朝向和 NBT。", "整机仓室配额用于实体结构，作者蓝图不支持 virtual 套用。", "点库行更新中央草稿，未保存时沿用原提示；世界 ghost 先定位并锁定。" };
+        String[] explanations = { projectorOr("native_common.guide.select_help", "点一格选择，Ctrl 增减；点结构轮廓整选。"),
+            projectorOr("native_common.guide.move_help", "轴线改单轴，平面同时改两轴；Ctrl 起拖复制。"),
+            projectorOr("native_common.guide.channel_help", "每个来源结构独立保存声明参数与具名信道。"),
+            projectorOr("native_common.guide.candidate_help", "筛选后仍须选择具体设备，保留合法候选、朝向和 NBT。"),
+            projectorOr("native_common.guide.preset_help", "整机仓室配额用于实体结构，作者蓝图不支持 virtual 套用。"),
+            projectorOr("native_common.guide.library_help", "点库行更新中央草稿，未保存时沿用原提示；世界 ghost 先定位并锁定。") };
         for (int i = 0; i < commands.length; i++) {
             final int index = i;
             details.child(
@@ -172,12 +197,18 @@ final class HologramEditorGuide {
                     .name("guide.reference." + commands[i]));
         }
         details.child(
-            HologramEditorNativeTheme.label(() -> "材料核验只有一次最终确认；Esc 按面板层级返回。")
+            HologramEditorNativeTheme
+                .label(() -> projectorOr("native_common.guide.review_help", "材料核验只有一次最终确认；Esc 按面板层级返回。"))
                 .widthRel(1f)
                 .height(26));
         String[] topics = { "blueprint", "text", "picture", "projection", "cut", "structure", "box-fps", "box-iso",
             "cut-fps", "cut-iso" };
-        String[] labels = { "蓝图教程", "文字附加教程", "图片附加教程", "投影教程", "剪切教程", "结构操作", "普通框选", "等距框选", "普通剪切", "等距剪切" };
+        String[] labels = { projectorOr("native_common.lesson.blueprint", "蓝图教程"),
+            projectorOr("native_common.lesson.text", "文字附加教程"), projectorOr("native_common.lesson.picture", "图片附加教程"),
+            projectorOr("native_common.lesson.projection", "投影教程"), projectorOr("native_common.lesson.cut", "剪切教程"),
+            projectorOr("native_common.lesson.structure", "结构操作"), projectorOr("native_common.lesson.box_fps", "普通框选"),
+            projectorOr("native_common.lesson.box_iso", "等距框选"), projectorOr("native_common.lesson.cut_fps", "普通剪切"),
+            projectorOr("native_common.lesson.cut_iso", "等距剪切") };
         for (int row = 0; row < (topics.length + 2) / 3; row++) {
             Flow entries = Flow.row()
                 .widthRel(1f)
@@ -208,35 +239,44 @@ final class HologramEditorGuide {
                 .height(20)
                 .mainAxisAlignment(Alignment.MainAxis.END)
                 .child(
-                    HologramEditorNativeTheme.button(() -> "关闭说明", this::toggleReference)
+                    HologramEditorNativeTheme
+                        .button(() -> projectorOr("native_common.guide.close", "关闭说明"), this::toggleReference)
                         .size(78, 20)));
         return panel.child(column);
     }
 
     String instruction() {
-        if (ui.session.progress() != null) return "任务正在进行；完成后继续编辑。";
-        if (!ui.session.editable()) return "等待当前操作完成，后台业务继续。";
-        if (ui.review.confirmation()) return "核对精确材料与缺口，再作最终确认。";
-        if (ui.processing.processingFlow() != null) return "选择自用或分享倾向，再逐步核对处理策略。";
-        if (ui.config.presetDrawer()) return "按声明配额或精确搭配生成目标，保留手选和现场设备。";
-        if (ui.config.hatchDrawer()) return "从本格合法候选选择具体设备。";
-        if (ui.config.drawer()) return "编辑当前来源结构的声明参数，再应用。";
-        if (ui.preview.inventory()) return "选择真实背包或已启用来源中的具体物品。";
+        if (ui.session.progress() != null) return projectorOr("native_common.guide.task", "任务正在进行；完成后继续编辑。");
+        if (!ui.session.editable()) return projectorOr("native_common.guide.wait", "等待当前操作完成，后台业务继续。");
+        if (ui.review.confirmation()) return projectorOr("native_common.guide.review", "核对精确材料与缺口，再作最终确认。");
+        if (ui.processing.processingFlow() != null)
+            return projectorOr("native_common.guide.processing", "选择自用或分享倾向，再逐步核对处理策略。");
+        if (ui.config.presetDrawer()) return projectorOr("native_common.guide.preset", "按声明配额或精确搭配生成目标，保留手选和现场设备。");
+        if (ui.config.hatchDrawer()) return projectorOr("native_common.guide.hatch", "从本格合法候选选择具体设备。");
+        if (ui.config.drawer()) return projectorOr("native_common.guide.channels", "编辑当前来源结构的声明参数，再应用。");
+        if (ui.preview.inventory()) return projectorOr("native_common.guide.inventory", "选择真实背包或已启用来源中的具体物品。");
         if (ui.shell.built() ? ui.shell.libraryPageSelected() && ui.shell.dockExpanded() : ui.library.libraryDrawer())
-            return "单击库行更新中央草稿；放置与保存使用库内入口。";
+            return projectorOr("native_common.guide.library", "单击库行更新中央草稿；放置与保存使用库内入口。");
         if (ui.preview.selected() >= 0)
             return ui.preview.moveHandles() && ui.preview.canMoveSelection() && ui.preview.previewInteractive()
-                ? "拖轴改单轴，拖平面同时改两轴。"
-                : "查看所选格目标、设备候选与仓室设置。";
-        return ui.session.state().data.getBoolean("virtual") ? "点击对象选择，从蓝图库载入或开始空白稿。" : "控制器锚定结构，先调目标再核对材料。";
+                ? projectorOr("native_common.guide.move", "拖轴改单轴，拖平面同时改两轴。")
+                : projectorOr("native_common.guide.selected", "查看所选格目标、设备候选与仓室设置。");
+        return ui.session.state().data.getBoolean("virtual")
+            ? projectorOr("native_common.guide.blueprint", "点击对象选择，从蓝图库载入或开始空白稿。")
+            : projectorOr("native_common.guide.controller", "控制器锚定结构，先调目标再核对材料。");
     }
 
     String keys() {
-        if (ui.review.confirmation()) return "Esc 返回编辑 · 确认沿用材料窗口按钮";
-        if (ui.config.drawer() || ui.config.hatchDrawer() || ui.config.presetDrawer()) return "Esc 关窗 · ? 完整说明";
-        return "Ctrl 增减 · " + key("sameType")
-            + " 同类"
-            + (ui.preview.canMoveSelection() ? " · " + key("moveHandles") + " 手柄" : "");
+        if (ui.review.confirmation()) return projectorOr("native_common.guide.review_keys", "Esc 返回编辑 · 确认沿用材料窗口按钮");
+        if (ui.config.drawer() || ui.config.hatchDrawer() || ui.config.presetDrawer())
+            return projectorOr("native_common.guide.dialog_keys", "Esc 关窗 · ? 完整说明");
+        return projectorOr(
+            "native_common.guide.selection_keys",
+            "Ctrl 增减 · %s",
+            projectorOr("native_common.guide.same_type", "%s 同类", key("sameType")))
+            + (ui.preview.canMoveSelection()
+                ? " · " + projectorOr("native_common.guide.handles", "%s 手柄", key("moveHandles"))
+                : "");
     }
 
     private String key(String command) {

@@ -3,6 +3,8 @@
 
 package com.miaokatze.gtmb.client.hologram;
 
+import static com.miaokatze.gtmb.client.hologram.HologramUiText.projectorOr;
+
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.util.ArrayList;
@@ -1738,9 +1740,10 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     }
 
     static String roleLabel(HologramState.Cell cell) {
-        if (cell.anchor || "controller".equals(cell.role)) return "\u63a7\u5236\u5668";
-        if (hatchStack(cell.actualStack) || hatchStack(cell.targetStack)) return "\u4ed3\u5ba4";
-        if (cell.role.contains("interface")) return "\u63a5\u53e3";
+        if (cell.anchor || "controller".equals(cell.role)) return projectorOr("native_common.role.controller", "控制器");
+        if (hatchStack(cell.actualStack) || hatchStack(cell.targetStack))
+            return projectorOr("native_common.role.hatch", "仓室");
+        if (cell.role.contains("interface")) return projectorOr("native_common.role.interface", "接口");
         return "";
     }
 

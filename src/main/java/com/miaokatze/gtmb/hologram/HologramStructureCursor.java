@@ -5,6 +5,7 @@ package com.miaokatze.gtmb.hologram;
 
 import net.minecraft.world.World;
 
+import com.github.bsideup.jabel.Desugar;
 import com.gtnewhorizon.structurelib.StructureEvent.StructureElementVisitedEvent;
 import com.gtnewhorizon.structurelib.StructureLibAPI;
 import com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing;
@@ -14,6 +15,13 @@ import com.gtnewhorizon.structurelib.structure.IStructureWalker;
 
 /** Persistent StructureLib V2 array/navigation cursor. A continuation never replays the completed prefix. */
 final class HologramStructureCursor {
+
+    @Desugar
+    record Offset(int x, int y, int z) {}
+
+    private static boolean coordinate(int value) {
+        return value >= -4096 && value <= 4096;
+    }
 
     private static final ClassValue<Boolean> NATIVE_ITERATION = new ClassValue<Boolean>() {
 
@@ -88,7 +96,7 @@ final class HologramStructureCursor {
     }
 
     /** Declaration-only cursor. It does not read or load any world cell or call the structure walker. */
-    HologramDeclaredNativeSelection.Offset declarationOffset(ExtendedFacing facing) {
+    Offset declarationOffset(ExtendedFacing facing) {
         IStructureElement<?> element = elements[index++];
         if (element.isNavigating()) {
             abc[0] = Math.addExact(element.resetA() ? base[0] : abc[0], element.getStepA());
@@ -96,12 +104,11 @@ final class HologramStructureCursor {
             abc[2] = Math.addExact(element.resetC() ? base[2] : abc[2], element.getStepC());
             return null;
         }
-        if (!HologramDeclaredNativeSelection.coordinate(abc[0]) || !HologramDeclaredNativeSelection.coordinate(abc[1])
-            || !HologramDeclaredNativeSelection.coordinate(abc[2]))
+        if (!coordinate(abc[0]) || !coordinate(abc[1]) || !coordinate(abc[2]))
             throw new IllegalArgumentException("Out-of-range StructureLib declaration");
         facing.getWorldOffset(abc, xyz);
         abc[0] = Math.incrementExact(abc[0]);
-        return new HologramDeclaredNativeSelection.Offset(xyz[0], xyz[1], xyz[2]);
+        return new Offset(xyz[0], xyz[1], xyz[2]);
     }
 
     @SuppressWarnings("unchecked")

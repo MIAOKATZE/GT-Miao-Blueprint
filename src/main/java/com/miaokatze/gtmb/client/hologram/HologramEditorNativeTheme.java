@@ -20,6 +20,7 @@ import com.cleanroommc.modularui.drawable.DrawableStack;
 import com.cleanroommc.modularui.drawable.GuiDraw;
 import com.cleanroommc.modularui.drawable.Rectangle;
 import com.cleanroommc.modularui.drawable.UITexture;
+import com.cleanroommc.modularui.drawable.text.TextRenderer;
 import com.cleanroommc.modularui.screen.ModularScreen;
 import com.cleanroommc.modularui.theme.ReloadThemeEvent;
 import com.cleanroommc.modularui.theme.SelectableTheme;
@@ -349,10 +350,25 @@ public final class HologramEditorNativeTheme {
                 else drawPaperControl(x, y, width, height, available(), selected.getAsBoolean(), true, surface);
             });
             boolean dark = surface == Surface.BUTTON;
-            IDrawable lettering = IKey.dynamic(text)
-                .color(() -> !available() ? dark ? DISABLED_TEXT : MUTED : dark ? DARK_TEXT : TEXT)
-                .shadow(dark)
-                .alignment(surface == Surface.ROW ? Alignment.CenterLeft : Alignment.Center);
+            // Button captions stay on one line. Fit only the lettering, preserving the authored icon and layout.
+            TextRenderer captionRenderer = new TextRenderer();
+            IDrawable lettering = (context, x, y, width, height, theme) -> {
+                if (width <= 0 || height <= 0) return;
+                String caption = text.get()
+                    .replace('\n', ' ')
+                    .replace('\r', ' ');
+                int textWidth = TextRenderer.getFontRenderer()
+                    .getStringWidth(caption);
+                float fit = Math.min(1f, Math.max(1, width - 2) / (float) Math.max(1, textWidth + (dark ? 1 : 0)));
+                fit = Math.min(fit, height / (float) TextRenderer.getFontRenderer().FONT_HEIGHT);
+                captionRenderer
+                    .setAlignment(surface == Surface.ROW ? Alignment.CenterLeft : Alignment.Center, width, height);
+                captionRenderer.setColor(!available() ? dark ? DISABLED_TEXT : MUTED : dark ? DARK_TEXT : TEXT);
+                captionRenderer.setShadow(dark);
+                captionRenderer.setScale(fit);
+                captionRenderer.setPos(x, y);
+                captionRenderer.drawSimple(caption);
+            };
             overlay((context, x, y, width, height, theme) -> {
                 boolean hasIcon = HologramEditorIcons.contains(icon);
                 // The atlas is authored on a 12 GUI pixel grid. Keep ordinary glyphs at their native size,

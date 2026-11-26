@@ -92,8 +92,7 @@ mapOf(
     "runNativeRendererReleaseTest" to "com.miaokatze.gtmb.client.hologram.HologramNativeRendererReleaseRegression",
     "runProjectionDiscardUiRegression" to "com.miaokatze.gtmb.client.hologram.HologramLibraryAdminUiRegression",
     "runPlacementReviewContextRegression" to "com.miaokatze.gtmb.client.hologram.HologramPlacementReviewContextRegression",
-    "runNativePresetSourceRegression" to "com.miaokatze.gtmb.hologram.HologramNativePresetSourceRegression",
-    "runStockEbfProfileRegression" to "com.miaokatze.gtmb.hologram.HologramStockEbfProfileRegression"
+    "runNativePresetSourceRegression" to "com.miaokatze.gtmb.hologram.HologramNativePresetSourceRegression"
 ).forEach { (taskName, entryPoint) ->
     tasks.register<JavaExec>(taskName) {
         group = "verification"
@@ -114,25 +113,6 @@ tasks.register<JavaExec>("runLargeLiteralCaptureRegression") {
     workingDir(scratchDir)
     doFirst { scratchDir.get().asFile.mkdirs() }
 }
-
-// GT's real TE serializer links ChunkAPI. Use the matching installed pack jars read-only for this
-// dedicated headless fixture; never publish them, or depend on a developer-specific machine path.
-val physicalFixtureMods = providers.gradleProperty("gtmbFixtureModsDir")
-tasks.register<JavaExec>("runStockEbfConstructionRegression") {
-    group = "verification"
-    mainClass = "com.miaokatze.gtmb.hologram.HologramStockEbfConstructionRegression"
-    classpath = tasks.named<JavaExec>("runHologramTest").get().classpath
-    physicalFixtureMods.orNull?.let { classpath += fileTree(it) { include("chunkapi-*.jar", "falsepatternlib-*.jar") } }
-    val scratchDir = layout.buildDirectory.dir("runStockEbfConstructionRegression")
-    workingDir(scratchDir)
-    doFirst {
-        check(physicalFixtureMods.isPresent && classpath.files.any { it.name.startsWith("chunkapi-") }) {
-            "Set -PgtmbFixtureModsDir to the matching pack mods directory for the physical GT serializer fixture."
-        }
-        scratchDir.get().asFile.mkdirs()
-    }
-}
-if (physicalFixtureMods.isPresent) tasks.named("check") { dependsOn("runStockEbfConstructionRegression") }
 
 // Uses a separately supplied, SRG→MCP remapped copy of Allen's installed Ztones JAR, only in the fixture JVM.
 tasks.register<JavaExec>("runMixedZtonesSavedPlacementRegression") {

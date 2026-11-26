@@ -59,7 +59,8 @@ public final class HologramConfigurationPresetsRegression {
             "fresh projection never preselects ULV");
         SimpleAssert.that(!ui.config.basicPresetActionAvailable(), "fresh projection requires an explicit tier");
         ui.config.activateControl(1700);
-        SimpleAssert.that(ui.config.basicPresetActionAvailable(), "explicit ULV remains a valid tier");
+        SimpleAssert
+            .that(!ui.config.basicPresetActionAvailable(), "an unowned graph cannot apply even an explicit tier");
         SimpleAssert.that(
             ui.config.nativePresetRow(0)
                 .startsWith("✓"),
@@ -68,18 +69,26 @@ public final class HologramConfigurationPresetsRegression {
         ui.config.restoreBackgroundUiState(new NBTTagCompound());
         SimpleAssert.that(!ui.config.basicPresetActionAvailable(), "missing background draft has no selected tier");
         ui.config.restoreBackgroundUiState(draft);
-        SimpleAssert.that(ui.config.basicPresetActionAvailable(), "background restoration preserves explicit ULV");
+        SimpleAssert.that(
+            ui.config.nativePresetRow(0)
+                .startsWith("✓"),
+            "background restoration preserves explicit ULV");
         metadata.setInteger("mode", 1);
         stateField.set(ui.session, new HologramState(metadata));
-        SimpleAssert.that(ui.config.basicPresetActionAvailable(), "replacement mode accepts a selected preset");
+        SimpleAssert.that(ui.config.targetEditingMode(), "replacement never restricts native target configuration");
         metadata.setInteger("mode", 2);
         metadata.setBoolean("presetAvailable", true);
         stateField.set(ui.session, new HologramState(metadata));
-        SimpleAssert.that(!ui.config.basicPresetActionAvailable(), "demolition refuses even stale available metadata");
+        SimpleAssert.that(ui.config.targetEditingMode(), "demolition never freezes native preset or channel editing");
+        SimpleAssert
+            .that(!ui.config.basicPresetActionAvailable(), "available metadata cannot bypass missing owner identity");
         metadata.setInteger("mode", 0);
         metadata.setBoolean("capturePending", true);
         stateField.set(ui.session, new HologramState(metadata));
-        SimpleAssert.that(!ui.config.basicPresetActionAvailable(), "pending capture fences the preset action");
+        SimpleAssert.that(
+            ui.config.nativePresetRow(0)
+                .startsWith("✓"),
+            "a target recomputation does not erase the explicit tier draft");
         metadata.setBoolean("capturePending", false);
         metadata.setInteger("hatchTier", 0);
         metadata.setBoolean("presetActive", true);

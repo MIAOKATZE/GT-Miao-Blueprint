@@ -12,7 +12,6 @@ import java.util.UUID;
 import net.minecraft.nbt.NBTTagCompound;
 
 import com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing;
-import com.miaokatze.gtmb.hologram.HologramDeclaredNativeSelection;
 import com.miaokatze.gtmb.hologram.HologramNetwork;
 import com.miaokatze.gtmb.hologram.HologramStockNativeWire;
 import com.miaokatze.gtmb.hologram.HologramStockNativeWire.Command;
@@ -34,8 +33,26 @@ public final class HologramStockFacingDispatchRegression {
 
     private HologramStockFacingDispatchRegression() {}
 
-    public static void main(String[] args) throws Exception {
-        if (!MinecraftTestBootstrap.enter(HologramStockFacingDispatchRegression.class, args)) return;
+    public static void main(String[] args) {
+        int status = 0;
+        try {
+            if (MinecraftTestBootstrap.enter(HologramStockFacingDispatchRegression.class, args)) {
+                com.miaokatze.gtmb.hologram.HologramNativeSavedWorldRegression.withOfflineRegistries(() -> {
+                    try {
+                        runDispatch();
+                    } catch (Exception failure) {
+                        throw new IllegalStateException(failure);
+                    }
+                });
+            }
+        } catch (Throwable failure) {
+            failure.printStackTrace(System.err);
+            status = 1;
+        }
+        System.exit(status);
+    }
+
+    private static void runDispatch() throws Exception {
         HologramStockNativeClientRegression.run(); // real MUI ID55 -> local confirmation -> Forge request/receipt
         Field channel = field(HologramNetwork.class, "channel");
         Object saved = channel.get(null);
@@ -91,14 +108,14 @@ public final class HologramStockFacingDispatchRegression {
     }
 
     private static Confirmation confirmation(int facing) {
-        var d = new HologramDeclaredNativeSelection(
+        var target = new HologramStockNativeWire.Projection(
             1000,
+            HologramStockNativeWire.Operation.BUILD,
             Collections.singletonMap("coil", 2),
-            0,
-            0,
             Collections.emptyList(),
-            Collections.emptyList());
-        return Confirmation.declared(
+            0,
+            1).withNativeTargetDigest(String.join("", Collections.nCopies(64, "a")));
+        return Confirmation.projection(
             new Key(UUID.randomUUID(), HologramNetwork.nextConstructionIntentSequence(), 0),
             0,
             UUID.randomUUID(),
@@ -112,7 +129,7 @@ public final class HologramStockFacingDispatchRegression {
             true,
             false,
             1 | 4 | (2 << 3),
-            d);
+            target);
     }
 
     private static void verify(Capture capture, Command cmd, Confirmation c, long gen) {
@@ -127,7 +144,7 @@ public final class HologramStockFacingDispatchRegression {
             || tag.getInteger("sources") != c.sources()
             || tag.getInteger("side") != c.side()
             || tag.getInteger("slot") != c.slot()
-            || tag.getCompoundTag("channels")
+            || tag.getCompoundTag("projectionChannels")
                 .getInteger("coil") != 2)
             throw new AssertionError("incorrect dispatch " + cmd + " facing=" + c.facing());
     }

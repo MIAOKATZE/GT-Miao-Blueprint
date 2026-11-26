@@ -4,6 +4,7 @@
 package com.miaokatze.gtmb.client.hologram;
 
 import static com.miaokatze.gtmb.client.hologram.HologramUiCanvas.*;
+import static com.miaokatze.gtmb.client.hologram.HologramUiText.projectorOr;
 import static net.minecraft.client.gui.Gui.*;
 
 import java.util.ArrayList;
@@ -320,27 +321,37 @@ final class HologramUiCanvas {
             && !ui.session.state().data.getBoolean("virtualPlacement")) return "仅编辑模板；请关闭编辑后 Alt + 右击启动投影，再锁定位置施工。";
         if (id == 50 && ui.session.state().data.getBoolean("virtual")
             && !ui.session.state().data.getBoolean("virtualLocked")) return "请先锁定虚拟模板，再执行放置。";
-        if (id == 66) return ui.session.selectedCell() == null ? "先选择预览格。" : "控制器锚点不能恢复为外壳。";
-        if (id == 69) return "当前没有选中预览格。";
-        if (id == 95) return "先选择有仓室候选或可调整朝向的预览格；拆除模式无需配置目标。";
-        if (id == 99) return "本格没有可安全修改的仓室朝向。";
-        if (id == 102) return "本格没有单独指定的朝向，无需恢复。";
-        if (id == 106) return HologramUiText.reason(ui.session.state().data.getString("presetReason"));
-        if (id == 107) return "当前没有启用整机仓室预设，无需撤销。";
-        if (id == 103 || id == 104) return "已到达合法仓室等级边界。";
+        if (id == 66)
+            return ui.session.selectedCell() == null ? projectorOr("native_common.disabled.pick_cell", "先选择预览格。")
+                : projectorOr("native_common.disabled.controller_shell", "控制器锚点不能恢复为外壳。");
+        if (id == 69) return projectorOr("native_common.disabled.no_selection", "当前没有选中预览格。");
+        if (id == 95) return projectorOr("native_common.disabled.hatch_cell", "先选择有仓室候选或可调整朝向的预览格；拆除模式无需配置目标。");
+        if (id == 99) return projectorOr("native_common.disabled.no_facing", "本格没有可安全修改的仓室朝向。");
+        if (id == 102) return projectorOr("native_common.disabled.no_facing_pin", "本格没有单独指定的朝向，无需恢复。");
+        if (id == 106) return ui.session.state().data.getBoolean("localStandardController")
+            ? HologramNativeUiText.reason(ui.session.state().data.getString("presetReason"))
+            : HologramUiText.reason(ui.session.state().data.getString("presetReason"));
+        if (id == 107) return projectorOr("native_common.disabled.no_preset", "当前没有启用整机仓室预设，无需撤销。");
+        if (id == 103 || id == 104) return projectorOr("native_common.disabled.hatch_tier_boundary", "已到达合法仓室等级边界。");
         if (id == 93 && ui.session.selectedCell() != null && ui.session.selectedCell().family.isEmpty())
-            return "本格没有可安全识别的同类部件，请使用单格范围。";
-        if (id == 61 && ui.session.state().data.getInteger("mode") == 2) return "拆除模式无需指定新方块；切换补建或替换后可选材。";
+            return projectorOr("native_common.disabled.no_family", "本格没有可安全识别的同类部件，请使用单格范围。");
+        if (id == 61 && ui.session.state().data.getInteger("mode") == 2)
+            return projectorOr("native_common.disabled.demolish_target", "拆除模式无需指定新方块；切换补建或替换后可选材。");
         if (id == 50 && ui.session.state().data.getInteger("scope") >= 2 && ui.session.selectedCell() == null)
-            return "选中格或同类部件范围需要先选择预览格。";
-        if (id == 92 || id == 93 || id == 65)
-            return ui.session.selectedCell() == null ? "先点击左侧预览选位，或添加坐标。" : "先从背包选择目标物品。";
-        if (id == 83) return "此结构没有已验证的仓室自动选材能力。";
-        if (id == 55) return ui.session.state().data.getInteger("missing") > 0 ? "材料不足：请补充背包后重新采集。" : "材料与改动已更新，请重新查看。";
-        if (id == 51 || id == 52) return ui.session.pendingSequence() >= 0 ? "等待服务端回执。" : "没有可暂停或取消的施工任务。";
-        if (id == 12 || id == 13) return "已到达结构图层边界。";
-        if (id == 80 || id == 82) return "已到达当前已验证目标列表边界。";
-        return "此操作不支持当前目标或状态。";
+            return projectorOr("native_common.disabled.scope_selection", "选中格或同类部件范围需要先选择预览格。");
+        if (id == 92 || id == 93 || id == 65) return ui.session.selectedCell() == null
+            ? projectorOr("native_common.disabled.pick_position", "先点击左侧预览选位，或添加坐标。")
+            : projectorOr("native_common.disabled.pick_item", "先从背包选择目标物品。");
+        if (id == 83) return projectorOr("native_common.disabled.no_auto", "此结构没有已验证的仓室自动选材能力。");
+        if (id == 55) return ui.session.state().data.getInteger("missing") > 0
+            ? projectorOr("native_common.disabled.shortage", "材料不足：请补充背包后重新采集。")
+            : projectorOr("native_common.disabled.updated", "材料与改动已更新，请重新查看。");
+        if (id == 51 || id == 52)
+            return ui.session.pendingSequence() >= 0 ? projectorOr("native_common.disabled.wait_server", "等待服务端回执。")
+                : projectorOr("native_common.disabled.no_job", "没有可暂停或取消的施工任务。");
+        if (id == 12 || id == 13) return projectorOr("native_common.disabled.layer_boundary", "已到达结构图层边界。");
+        if (id == 80 || id == 82) return projectorOr("native_common.disabled.target_boundary", "已到达当前已验证目标列表边界。");
+        return projectorOr("native_common.disabled.unsupported", "此操作不支持当前目标或状态。");
     }
 
     String controlHelp(int id) {
@@ -415,24 +426,24 @@ final class HologramUiCanvas {
                 return "选择补建、替换或拆除；主界面数字键 1 / 2 / 3 也可切换。切换模式不会直接施工。";
             case 108:
             case 109:
-                return "撤销 / 重做仅改变规划，不回滚已施工的世界方块。";
+                return projectorOr("native_common.help.undo", "撤销 / 重做仅改变规划，不回滚已施工的世界方块。");
             case 112:
-                return "复制本格目标；仅复制规划，不复制设备库存或消耗材料。";
+                return projectorOr("native_common.help.copy", "复制本格目标；仅复制规划，不复制设备库存或消耗材料。");
             case 113:
-                return "在服务端允许的方向中旋转目标，应用替换后生效。";
+                return projectorOr("native_common.help.rotate", "在服务端允许的方向中旋转目标，应用替换后生效。");
             case 10:
-                return "切换目标结构、真实现场和施工差分。";
+                return projectorOr("native_common.help.view", "切换目标结构、真实现场和施工差分。");
             case 11:
-                return "切换所有图层与当前单层预览；点击方块、T 同种、Ctrl 多选或 Shift 框选编辑范围。";
+                return projectorOr("native_common.help.layers", "切换所有图层与当前单层预览；点击方块、T 同种、Ctrl 多选或 Shift 框选编辑范围。");
             case 12:
             case 13:
-                return "查看相邻图层。";
+                return projectorOr("native_common.help.adjacent_layer", "查看相邻图层。");
             case 15:
-                return "显示或隐藏世界中的材质预览。";
+                return projectorOr("native_common.help.world_preview", "显示或隐藏世界中的材质预览。");
             case 26:
-                return "可选：重新核对材料与改动，不执行施工。";
+                return projectorOr("native_common.help.rescan", "可选：重新核对材料与改动，不执行施工。");
             case 30:
-                return "高级主原始信号；未显式指定的子信道继承它。修改后更新预览。";
+                return projectorOr("native_common.help.raw_main", "高级主原始信号；未显式指定的子信道继承它。修改后更新预览。");
             case 33:
                 return "只放外壳：可回退位置使用外壳，固定接口仍需手动补齐。允许仓室：服务端可验证仓室候选；不保证机器成型。";
             case 50:
@@ -452,7 +463,7 @@ final class HologramUiCanvas {
                         && ui.session.state().data.getInteger("missing") > 0 ? "首次确认将请求服务端复核缺口；缺料时需再次明确确认仅放已有。"
                             : "按当前确认的规划施工；完成统计来自服务端回执。";
             case 60:
-                return "查看具名目标与原始值，可手填任意合法信道；滚轮查看完整列表。";
+                return projectorOr("native_common.help.channels", "查看具名目标与原始值，可手填任意合法信道；滚轮查看完整列表。");
             case 61:
                 return "打开真实36格背包；点击或拖动复制目标，物品不会被移动或消耗。";
             case 75:
@@ -462,9 +473,11 @@ final class HologramUiCanvas {
             case 65:
                 return "将选中的背包物品指定给当前预览格；可指定任意可放置方块或仓室，服务端验证替换安全性。";
             case 66:
-                return "恢复结构默认壳；Delete 同效。只改变规划，已建仓室需点击应用替换。取消格选择单独保留目标。";
+                return projectorOr(
+                    "native_common.help.restore_shell",
+                    "恢复结构默认壳；Delete 同效。只改变规划，已建仓室需点击应用替换。取消格选择单独保留目标。");
             case 69:
-                return "仅取消预览格选择，保留已指定目标；也可右键预览或按 Esc。";
+                return projectorOr("native_common.help.clear_selection", "仅取消预览格选择，保留已指定目标；也可右键预览或按 Esc。");
             case 80:
             case 81:
             case 82:

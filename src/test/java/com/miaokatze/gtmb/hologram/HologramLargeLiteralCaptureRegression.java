@@ -20,7 +20,7 @@ public final class HologramLargeLiteralCaptureRegression {
         var field = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
         field.setAccessible(true);
         var unsafe = (sun.misc.Unsafe) field.get(null);
-        var world = HologramStockEbfConstructionRegression.RawWorld.create(unsafe, 0, 0);
+        var world = HologramLoadedFixtureWorld.create(unsafe, 0, 0);
         world.isRemote = true;
         for (int cx = 0; cx < 8; cx++) for (int cz = 0; cz < 8; cz++) {
             long key = ChunkCoordIntPair.chunkXZ2Int(cx, cz);

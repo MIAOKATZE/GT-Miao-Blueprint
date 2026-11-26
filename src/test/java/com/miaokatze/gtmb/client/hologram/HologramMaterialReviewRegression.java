@@ -211,24 +211,29 @@ public final class HologramMaterialReviewRegression {
     private static void detachedNativeScope() {
         NBTTagCompound source = new NBTTagCompound();
         source.setLong("planRevision", 4);
+        source.setLong("nativeTargetRevision", 4);
+        source.setBoolean("nativeTargetReady", true);
+        source.setInteger("nativeAction", 1);
         source.setBoolean("localStandardController", true);
         NBTTagList cells = new NBTTagList();
-        cells.appendTag(estimateCell(0, false, true)); // Uncharged machine anchor.
-        cells.appendTag(estimateCell(1, false, true)); // Outside selection.
+        NBTTagCompound anchor = estimateCell(0, false, true);
+        anchor.setBoolean("anchor", true);
+        cells.appendTag(anchor);
+        cells.appendTag(estimateCell(1, false, true)); // Outside the visual selection, still in the full target.
         cells.appendTag(estimateCell(2, false, true)); // Known selected target.
         cells.appendTag(estimateCell(3, false, false)); // Selected, target unresolved.
         cells.appendTag(estimateCell(4, true, true)); // Excluded, even when selected.
         source.setTag("cells", cells);
         HologramState displayed = new HologramState(source);
         NBTTagCompound config = new NBTTagCompound();
-        config.setInteger("scope", 2);
+        config.setInteger("scope", 0);
         config.setInteger("layer", 7);
-        config.setInteger("selected", 2);
-        config.setIntArray("selectedIndices", new int[] { 0, 2, 3, 4 });
+        config.setInteger("selected", -1);
+        config.setIntArray("selectedIndices", new int[0]);
         config.setBoolean("materialMain", true);
         HologramSelection selection = new HologramSelection();
         selection.bindMaterials(displayed);
-        selection.load(config.getIntArray("selectedIndices"), 2, displayed.cells.size());
+        selection.load(new int[] { 0, 2, 3, 4 }, 2, displayed.cells.size());
         HologramLocalMaterialReview review = new HologramLocalMaterialReview(displayed, config, selection);
         ItemStack[] backpack = { new ItemStack(net.minecraft.init.Blocks.stone, 2, 0) };
         review.tick(backpack, -1);
@@ -237,20 +242,28 @@ public final class HologramMaterialReviewRegression {
         model.updateLocal(review.visible());
         SimpleAssert.that(
             review.ready() && review.status()
-                .contains("1 格未核算")
+                .contains("1 格尚未核算")
                 && model.size() == 1
-                && "1".equals(model.row(0).required)
+                && "2".equals(model.row(0).required)
                 && "2".equals(model.row(0).available),
-            "native estimate includes only the selected scope, reports missing identity, and excludes the anchor");
-        SimpleAssert.that(review.current(displayed, 7) && !review.current(displayed, 8), "local review is layer-bound");
+            "native review includes the full target, reports unresolved identities, and excludes protected anchors");
+        SimpleAssert.that(
+            review.current(displayed, 7) && review.current(displayed, 8),
+            "native execution is independent of the preview layer and visual selection");
         NBTTagCompound newer = new NBTTagCompound();
         newer.setLong("planRevision", 5);
-        SimpleAssert.that(!review.current(displayed.withMetadata(newer), 7), "local review is revision-bound");
+        SimpleAssert.that(
+            review.current(displayed.withMetadata(newer), 7),
+            "unrelated HUD metadata does not replace the native target");
+        newer.setLong("nativeTargetRevision", 5);
+        SimpleAssert.that(
+            !review.current(displayed.withMetadata(newer), 7),
+            "native review is bound to its complete target revision");
         config.setIntArray("selectedIndices", new int[] { 1 });
         SimpleAssert.that(
             review.settings()
-                .getIntArray("selectedIndices").length == 4,
-            "scope is frozen for submission");
+                .getIntArray("selectedIndices").length == 0,
+            "the complete reviewed scope stays detached from later local selection changes");
     }
 
     private static NBTTagCompound estimateCell(int x, boolean excluded, boolean known) {
@@ -258,6 +271,7 @@ public final class HologramMaterialReviewRegression {
         cell.setInteger("x", x);
         cell.setInteger("dx", x);
         cell.setString("wantId", "minecraft:stone");
+        cell.setString("id", "minecraft:air");
         cell.setBoolean("inScope", true);
         cell.setBoolean("excluded", excluded);
         if (known)
@@ -298,8 +312,6 @@ public final class HologramMaterialReviewRegression {
         tile.setWorldObj(world);
         world.tile = tile;
         HologramScreen screen = (HologramScreen) unsafe.allocateInstance(HologramScreen.class);
-        field(HologramScreen.class, "localNativeChoices").set(screen, new java.util.LinkedHashSet<>());
-        field(HologramScreen.class, "localPresetChoices").set(screen, new java.util.LinkedHashSet<>());
         field(GuiScreen.class, "mc").set(screen, client);
         client.currentScreen = screen;
         HologramUiModules ui = new HologramUiModules(screen);
@@ -316,7 +328,26 @@ public final class HologramMaterialReviewRegression {
         NBTTagList cells = new NBTTagList();
         cells.appendTag(estimateCell(1, false, true));
         metadata.setTag("cells", cells);
+        var nativeState = screen.nativeControllerState();
+        nativeState.targetReady();
+        nativeState.observe(
+            new com.miaokatze.gtmb.hologram.HologramStockNativeWire.ServerObservation(
+                236,
+                tile.xCoord,
+                tile.yCoord,
+                tile.zCoord,
+                com.miaokatze.gtmb.hologram.HologramStockNativeWire.Stage.CONTROLLER_ONLY,
+                1,
+                nativeState.targetRevision(),
+                ""));
+        NBTTagCompound flags = nativeState.metadata();
+        for (Object key : flags.func_150296_c()) metadata.setTag(
+            (String) key,
+            flags.getTag((String) key)
+                .copy());
         field(HologramUiSession.class, "state").set(ui.session, new HologramState(metadata));
+
+        field(HologramScreen.class, "nativeTargetSettings").set(screen, ui.config.configuration());
 
         LocalView view = ui.review;
         SimpleAssert.that(
@@ -352,6 +383,10 @@ public final class HologramMaterialReviewRegression {
         readyMetadata.setBoolean("target", true);
         readyMetadata.setBoolean("capturePending", false);
         readyMetadata.setBoolean("projectionDataComplete", true);
+        for (Object key : flags.func_150296_c()) readyMetadata.setTag(
+            (String) key,
+            flags.getTag((String) key)
+                .copy());
         HologramState ready = HologramLocalMaterialPlannerRegression.state(6, 2, true)
             .withMetadata(readyMetadata);
         ui.preview.retainSelection(ready);
@@ -373,11 +408,42 @@ public final class HologramMaterialReviewRegression {
             ui.review.localMaterials() == detailed && client.currentScreen == screen,
             "reading the material data does not reopen the pane");
         view.localAction(LocalAction.BACK);
-        for (int mode : new int[] { 1, 2 }) {
-            NBTTagCompound otherMode = (NBTTagCompound) metadata.copy();
-            otherMode.setInteger("mode", mode);
-            assertLocalMaterialViewUnknown(ui, wire, otherMode);
+        for (var action : new com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation[] {
+            com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.REPAIR,
+            com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.REPLACE,
+            com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.DEMOLISH }) {
+            var stage = action == com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.REPLACE
+                ? com.miaokatze.gtmb.hologram.HologramStockNativeWire.Stage.FORMED
+                : com.miaokatze.gtmb.hologram.HologramStockNativeWire.Stage.UNFORMED;
+            nativeState.observe(
+                new com.miaokatze.gtmb.hologram.HologramStockNativeWire.ServerObservation(
+                    236,
+                    tile.xCoord,
+                    tile.yCoord,
+                    tile.zCoord,
+                    stage,
+                    2 + action.ordinal(),
+                    nativeState.targetRevision(),
+                    ""));
+            SimpleAssert.that(nativeState.select(action), "matching server state offers " + action);
+            HologramState configured = new HologramState(metadata).withMetadata(nativeState.metadata());
+            field(HologramUiSession.class, "state").set(ui.session, configured);
+            int sent = wire.sends;
+            SimpleAssert.that(
+                ui.preview.activateControl(26) && view.localFrame() != null && wire.sends == sent,
+                "every native action can inspect the full target without sending a construction request");
+            view.localAction(LocalAction.BACK);
         }
+        nativeState.observe(
+            new com.miaokatze.gtmb.hologram.HologramStockNativeWire.ServerObservation(
+                236,
+                tile.xCoord,
+                tile.yCoord,
+                tile.zCoord,
+                com.miaokatze.gtmb.hologram.HologramStockNativeWire.Stage.CONTROLLER_ONLY,
+                9,
+                nativeState.targetRevision(),
+                ""));
         NBTTagCompound localWorkspace = (NBTTagCompound) metadata.copy();
         localWorkspace.removeTag("localStandardController");
         localWorkspace.setBoolean("localWorkspace", true);
@@ -473,12 +539,12 @@ public final class HologramMaterialReviewRegression {
             LocalView view = new LocalView() {
 
                 @Override
-                public boolean localDemolitionAvailable() {
+                public boolean localRecoveryAvailable() {
                     return removing[0];
                 }
 
                 @Override
-                public String localDemolitionDestinationLabel() {
+                public String localRecoveryDestinationLabel() {
                     return removing[0] ? "回收至背包" : "";
                 }
 
