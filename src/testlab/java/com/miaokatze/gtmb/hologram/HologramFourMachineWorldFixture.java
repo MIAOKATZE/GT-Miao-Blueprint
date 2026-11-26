@@ -54,6 +54,7 @@ public final class HologramFourMachineWorldFixture {
     private boolean closed;
     private int inventorySupply;
     private NBTTagCompound lastDropOracle = new NBTTagCompound();
+    private HologramFourMachineRewardPreparation rewardPreparation;
 
     public HologramFourMachineWorldFixture(WorldServer world, EntityPlayerMP actor, UUID expectedActor,
         Path recoveryFile) throws Exception {
@@ -181,6 +182,15 @@ public final class HologramFourMachineWorldFixture {
         return prepareBlocked;
     }
 
+    public boolean settleControllerReward() throws Exception {
+        if (rewardPreparation == null) rewardPreparation = new HologramFourMachineRewardPreparation(world, actor);
+        return rewardPreparation.tick(this);
+    }
+
+    public NBTTagCompound rewardPreparationReceipt() {
+        return rewardPreparation == null ? new NBTTagCompound() : rewardPreparation.receipt();
+    }
+
     public <T> CompletableFuture<T> request(Callable<T> action) {
         require(!closed && commands.size() < 8, "Fixture command queue unavailable");
         CompletableFuture<T> result = new CompletableFuture<>();
@@ -305,6 +315,7 @@ public final class HologramFourMachineWorldFixture {
         result.setInteger("fixtureInventorySupplied", inventorySupply);
         result.setInteger("fixtureControllersSupplied", controllerStages);
         result.setTag("lastDropOracle", lastDropOracle.copy());
+        result.setTag("rewardPreparation", rewardPreparationReceipt());
         result.setString(
             "actor",
             actor.getUniqueID()
