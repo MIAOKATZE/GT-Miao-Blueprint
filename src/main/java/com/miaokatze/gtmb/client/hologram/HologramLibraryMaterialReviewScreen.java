@@ -109,7 +109,11 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
             return;
         }
         if (!ticket.current(client)) returnToWorld(client);
-        else if (dialog != null) dialog.tick(true);
+        else {
+            if (description.nativeReview != null)
+                description.nativeReview.tick(client.thePlayer.inventory.mainInventory, ticket.slot);
+            if (dialog != null) dialog.tick(true);
+        }
     }
 
     @Override
@@ -130,13 +134,26 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
     }
 
     @Override
+    public boolean localOrderAvailable() {
+        return !submitted && ticket.current(Minecraft.getMinecraft())
+            && description.nativeReview != null
+            && description.nativeReview.orderAvailable();
+    }
+
+    @Override
+    public String localOrderLabel() {
+        return description.nativeReview == null ? "AE" : description.nativeReview.orderLabel();
+    }
+
+    @Override
     public String localSubmitLabel() {
-        return "确认施工";
+        return submitted ? HologramUiText.projectorOr("stock.cancel_construction", "取消施工") : "确认施工";
     }
 
     @Override
     public boolean localSubmitAvailable() {
-        return availability == PlainAvailability.READY && ticket.current(Minecraft.getMinecraft());
+        return submitted ? HologramBackgroundTasks.canCancel()
+            : availability == PlainAvailability.READY && ticket.current(Minecraft.getMinecraft());
     }
 
     @Override
@@ -205,6 +222,10 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
         long clicked = action == LocalAction.SUBMIT ? HologramPlacementTiming.clickNanos() : 0;
         deferAction(() -> {
             Minecraft client = Minecraft.getMinecraft();
+            if (submitted && action == LocalAction.SUBMIT) {
+                HologramBackgroundTasks.cancel();
+                return;
+            }
             if (action == LocalAction.BACK) returnToWorld(client);
             else if (action == LocalAction.BIND_GROUP && hasBindingChoices() && ticket.current(client))
                 groupCursor = (groupCursor + 1) % (bindGroups.size() + 1);
@@ -212,9 +233,12 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
                 nextTerminal(client.thePlayer.inventory.mainInventory);
             else if (action == LocalAction.VOUCHER) {
                 if (localVoucherAvailable()) voucherSelected = !voucherSelected;
+            } else if (action == LocalAction.ORDER) {
+                if (ticket.current(client) && description.nativeReview != null) description.nativeReview.order();
             } else if (action == LocalAction.REFRESH) {
                 if (ticket.current(client))
                     description.refresh(() -> client.thePlayer.inventory.mainInventory, ticket.slot);
+                if (description.nativeReview != null) description.nativeReview.refreshSources();
             } else if (action == LocalAction.SUBMIT && ticket.current(client)) {
                 try (var ignored = HologramPlacementTiming.clientClick(clicked)) {
                     availability = HologramLibraryClient.INSTANCE.plainPlacementAvailability(ticket.frozen, client);
@@ -269,12 +293,14 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
     public void onGuiClosed() {
         ticket.retire();
         placement.reviewClosed(ticket.frozen);
+        if (description.nativeReview != null) description.nativeReview.close();
     }
 
     @Override
     protected void onMuiClose() {
         ticket.retire();
         placement.reviewClosed(ticket.frozen);
+        if (description.nativeReview != null) description.nativeReview.close();
     }
 
     /** The frozen source projection survives local stock refresh; only an owned sample reads slots. */
@@ -296,12 +322,25 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
             this.forecast = null;
             NBTTagCompound settings = new NBTTagCompound();
             nativeMain = HologramMaterials.read(tool).main;
-            settings.setBoolean("materialMain", nativeMain);
+            var selected = HologramMaterials.read(tool);
+            settings.setBoolean("materialMain", selected.main);
+            settings.setBoolean("materialContainers", selected.containers);
+            settings.setBoolean("materialMe", selected.me);
+            settings.setInteger("materialPriority", selected.priority);
+            settings.setInteger("demolitionDestination", selected.recoveryDestination);
             nativeReview = new HologramLocalMaterialReview(state, settings);
         }
 
         LocalFrame frame(Supplier<ItemStack[]> mainInventory, int toolSlot) {
             if (cached == null) refresh(mainInventory, toolSlot);
+            if (nativeReview != null) return new LocalFrame(
+                nativeReview.visible(),
+                cached.scope(),
+                nativeReview.sourceNotice()
+                    .isEmpty() ? cached.status() : nativeReview.sourceNotice(),
+                cached.emptyLabel(),
+                nativeReview.ready(),
+                null);
             return cached;
         }
 

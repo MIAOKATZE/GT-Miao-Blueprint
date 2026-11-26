@@ -323,6 +323,16 @@ public final class HologramRegressionTest {
             "isolated_owned_placement_progress",
             com.miaokatze.gtmb.client.hologram.HologramOwnedPlacementProgressRegression::run);
         cases.put("isolated_scoped_world_transactions", HologramWorldTransactionsScopedRegression::run);
+        cases.put(
+            "accepted_construction_exits_gui_once_and_keeps_cancel_owner",
+            com.miaokatze.gtmb.client.hologram.HologramStockNativeClientRegression::acceptedConstructionClosesOnceAndStillCancels);
+        cases.put("carried_material_stock_registered_wire_and_crafting_intent_fences", () -> {
+            try {
+                HologramMaterialStockRegression.run();
+            } catch (Exception failure) {
+                throw new RuntimeException(failure);
+            }
+        });
         cases.put("native_saved_submission_to_world_stock_hud", () -> {
             try {
                 com.miaokatze.gtmb.client.hologram.HologramClientSavedPlacementRegression.runNativeConnected();

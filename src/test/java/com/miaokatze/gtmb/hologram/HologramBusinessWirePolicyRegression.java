@@ -64,14 +64,25 @@ public final class HologramBusinessWirePolicyRegression {
         transport.setIntArray("placementOperations", new int[] { 0, 1, 2 });
         expect(Intent.BLOCK, HologramBusinessWirePolicy.action(transport, Owner.NONE), "no control smuggling");
 
-        NBTTagCompound control = op("pause");
+        NBTTagCompound control = op("cancel");
         control.setString("session", ID);
         control.setLong("uiSequence", 2);
-        expect(Intent.BLOCK, HologramBusinessWirePolicy.action(control, Owner.NONE), "unowned pause");
+        expect(Intent.BLOCK, HologramBusinessWirePolicy.action(control, Owner.NONE), "unowned cancel");
         expect(
             Intent.CONSTRUCTION_CONTROL,
             HologramBusinessWirePolicy.action(control, Owner.ORDINARY_CONSTRUCTION),
-            "admitted ordinary execution can pause");
+            "admitted ordinary execution can cancel");
+
+        control.setString("op", "pause");
+        expect(
+            Intent.BLOCK,
+            HologramBusinessWirePolicy.action(control, Owner.ORDINARY_CONSTRUCTION),
+            "manual pause is retired");
+        control.setString("op", "resume");
+        expect(
+            Intent.BLOCK,
+            HologramBusinessWirePolicy.action(control, Owner.ORDINARY_CONSTRUCTION),
+            "manual resume is retired");
 
         NBTTagCompound order = op("orderMissingMaterials");
         order.setString("session", ID);

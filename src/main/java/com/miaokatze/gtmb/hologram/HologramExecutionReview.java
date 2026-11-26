@@ -40,7 +40,7 @@ final class HologramExecutionReview {
                 case "confirmBlueprintPlacement" -> PLACE;
                 case "cancelBlueprintPlacement" -> CANCEL_REVIEW;
                 case "close" -> CLOSE;
-                case "pause", "resume", "cancel" -> JOB_CONTROL;
+                case "cancel" -> JOB_CONTROL;
                 default -> null;
             };
         }

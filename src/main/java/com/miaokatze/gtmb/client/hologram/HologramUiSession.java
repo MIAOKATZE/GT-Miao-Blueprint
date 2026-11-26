@@ -510,9 +510,15 @@ final class HologramUiSession {
             return;
         }
         if (state.data.getBoolean("localWorkspace")) {
-            if ("configure".equals(op) && request != null) updateState(state.withMetadata(request));
+            if ("configure".equals(op) && request != null) {
+                if (!HologramClientMaterialStock.changePreferences(request)) updateState(state.withMetadata(request));
+            }
             return;
         }
+        if (localDocument() && "configure".equals(op)
+            && request != null
+            && configurationEditable()
+            && HologramClientMaterialStock.changePreferences(request)) return;
         if (localDocument() && ui.library.localBusy()) return;
         if (!ui.diagnostics.captureRenderSmokeAction() && !HologramBackgroundTasks.commandAllowed(op)) return;
         sequence = Math.max(sequence, HologramBackgroundTasks.commandSequence(state.session));

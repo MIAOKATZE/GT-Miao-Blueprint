@@ -229,6 +229,8 @@ final class HologramUiBuildReview implements LocalView {
             status = localMaterials.status();
         } else if (localStockSite != null) status += " · " + projectorOr("stock.keep_done", "现场或库存变更时保留已完成方块");
         String blocker = localSubmitBlocker();
+        if (!localMaterials.sourceNotice()
+            .isEmpty()) status = localMaterials.sourceNotice();
         if (!localMaterialNotice.isEmpty()) status = localMaterialNotice;
         else if (!blocker.isEmpty()) status = blocker;
         else if (localHatchDelta()) status = localMaterials.status();
@@ -297,6 +299,16 @@ final class HologramUiBuildReview implements LocalView {
     }
 
     @Override
+    public boolean localOrderAvailable() {
+        return localMaterialsCurrent() && localMaterials.orderAvailable();
+    }
+
+    @Override
+    public String localOrderLabel() {
+        return localMaterials == null ? "AE" : localMaterials.orderLabel();
+    }
+
+    @Override
     public String localSubmitLabel() {
         if (ui.session.state().nativeViewport != null)
             return ui.library.savedNativePlacementReady() ? projectorOr("stock.position_build", "定位并施工")
@@ -353,7 +365,13 @@ final class HologramUiBuildReview implements LocalView {
     public void localAction(LocalAction action) {
         switch (action) {
             case BACK -> closeLocalMaterials();
-            case REFRESH -> refreshLocalMaterials();
+            case REFRESH -> {
+                refreshLocalMaterials();
+                if (localMaterials != null) localMaterials.refreshSources();
+            }
+            case ORDER -> {
+                if (localMaterialsCurrent()) localMaterials.order();
+            }
             case SUBMIT -> submitLocalMaterials();
             case RECOVERY_DESTINATION -> {
                 if (localRecoveryAvailable()) nativeRecoveryDestination = 1 - nativeRecoveryDestination;
@@ -653,11 +671,11 @@ final class HologramUiBuildReview implements LocalView {
                         }
                 }
                 return true;
-            case 51:
-                ui.session.send(ui.session.state().data.getInteger("job") == 2 ? "resume" : "pause", null, true);
-                return true;
             case 52:
-                ui.session.send("cancel", null, true);
+                if (HologramBackgroundTasks.canCancel()) HologramBackgroundTasks.cancel();
+                else if (HologramClientStockNative.OWNER.pending(ui.host.parent()))
+                    HologramClientStockNative.OWNER.cancelCurrent();
+                else ui.session.send("cancel", null, true);
                 return true;
             case 54:
                 dismissConfirmation();

@@ -563,7 +563,10 @@ public final class HologramServerLoadRegression {
             SimpleAssert
                 .that(HologramWorkBudget.beginCaptureRequest(clock::get), "later request acquires its own scope");
             try {
-                SimpleAssert.eq(ms, HologramWorkBudget.remainingNanos(100 * ms), "request honors existing tick slack");
+                SimpleAssert.eq(
+                    5 * ms,
+                    HologramWorkBudget.remainingNanos(100 * ms),
+                    "request honors the 5 ms minimum tick slack");
             } finally {
                 HologramWorkBudget.end();
             }
@@ -593,7 +596,7 @@ public final class HologramServerLoadRegression {
         SimpleAssert
             .eq(15 * ms, HologramWorkBudget.tickNanos(100 * ms, 125 * ms), "world work reduces spare tick time");
         SimpleAssert.eq(
-            ms,
+            5 * ms,
             HologramWorkBudget.tickNanos(100 * ms, 160 * ms),
             "busy tick retains only a minimum progress slice");
         Field cursor = HologramWorkspaceScheduler.class.getDeclaredField("nextSession");

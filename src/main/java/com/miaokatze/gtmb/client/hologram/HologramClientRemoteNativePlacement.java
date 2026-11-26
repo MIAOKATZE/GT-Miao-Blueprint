@@ -154,7 +154,7 @@ public final class HologramClientRemoteNativePlacement {
         FileChannel file;
         volatile NativeBlueprintPairStore.AdmissionVersion version;
         volatile boolean retired;
-        boolean begun, cancelled, reading;
+        boolean begun, cancelled, reading, started;
         long seen, last = System.nanoTime();
 
         Task(HologramLibraryClient owner, Request begin, INetHandler connection, Object world) {
@@ -180,6 +180,11 @@ public final class HologramClientRemoteNativePlacement {
             if (m.seq <= seen || m.offset > begin.length) return;
             seen = m.seq;
             last = System.nanoTime();
+            if (!started && (m.op == COMPLETE
+                || m.op == PROGRESS && !HologramPrivateNativeWire.PREPARING_PROGRESS.equals(m.message))) {
+                started = true;
+                Minecraft.getMinecraft().thePlayer.closeScreen();
+            }
             switch (m.op) {
                 case NEED -> {
                     if (cancelled || reading) return;

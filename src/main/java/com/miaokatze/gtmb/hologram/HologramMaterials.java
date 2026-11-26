@@ -228,10 +228,15 @@ public final class HologramMaterials {
                     Iterator<? extends ItemStackExtractor> iterator = InventoryUtility.getStackExtractors(player);
                     while (iterator.hasNext()) adapters.add(iterator.next());
                 }
+                if (suppliedAdapters == null && HologramBackpackMaterials.adapter() != null)
+                    adapters.add(0, HologramBackpackMaterials.adapter());
+                java.util.Set<String> backpackIds = new java.util.HashSet<>();
                 for (int slot = 0; slot < player.inventory.mainInventory.length; slot++) {
                     if (slot == protectedSlot) continue;
                     ItemStack source = player.inventory.mainInventory[slot];
                     if (source == null || source.stackSize <= 0) continue;
+                    String backpackId = suppliedAdapters == null ? HologramBackpackMaterials.identity(source) : "";
+                    if (!backpackId.isEmpty() && !backpackIds.add(backpackId)) continue;
                     for (ItemStackExtractor adapter : adapters) {
                         if (!adapter.isValidSource(source.copy(), player)) continue;
                         // Only a real container candidate needs the terminal exclusion. Do not initialize

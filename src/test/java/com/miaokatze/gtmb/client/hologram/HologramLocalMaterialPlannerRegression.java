@@ -203,6 +203,8 @@ public final class HologramLocalMaterialPlannerRegression {
     static NBTTagCompound configuration() {
         NBTTagCompound config = new NBTTagCompound();
         config.setBoolean("materialMain", true);
+        config.setBoolean("materialContainers", false);
+        config.setBoolean("materialMe", false);
         return config;
     }
 

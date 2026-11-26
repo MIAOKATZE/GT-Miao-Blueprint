@@ -226,6 +226,7 @@ final class HologramLocalPlacement {
     }
 
     Submission freeze(NBTTagCompound options) {
+        if (HologramClientMaterialStock.preferencesPending()) return null;
         if (!active() || !locked || anchor == null || !currentContext()) return null;
         NBTTagCompound request = (NBTTagCompound) options.copy();
         int[] at = anchor;

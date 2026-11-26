@@ -560,9 +560,6 @@ final class HologramActionDispatcher {
             HologramWorldPlacementWorkflow.lockVirtual(player, s.x, s.y, s.z, s.side);
         } else if (HologramBlueprintEditor.isCellEdit(op) || "editUndo".equals(op) || "editRedo".equals(op)) {
             HologramBlueprintEditor.edit(s, action, op);
-        } else if ("pause".equals(op) && s.job == 1) {
-            s.job = 2;
-            s.status = "已暂停";
         } else if ("cancel".equals(op)) {
             HologramArea area = HologramWorkspace.AREAS.get(player.getUniqueID());
             if (area != null) area.importing = false;
@@ -570,14 +567,6 @@ final class HologramActionDispatcher {
             HologramSession.cancelCaptureRetry(s);
             HologramSession.clearPending(s);
             s.status = "已取消";
-        } else if ("resume".equals(op) && s.job == 2) {
-            if (s.mode == 1 && !HologramPlanPolicy.replacementSnapshotCurrent(s)) {
-                s.status = "原结构现场已变化，替换保持暂停，请取消后重新扫描";
-                HologramSnapshots.send(s);
-                return;
-            }
-            s.job = 1;
-            s.status = "继续施工";
         } else if ("scan".equals(op) && s.job != 1 && s.job != 2) {
             // A newly accepted server scan owns session/uiSequence, not a completed library save's token.
             s.blueprintClientTaskToken = 0;

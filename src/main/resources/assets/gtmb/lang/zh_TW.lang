@@ -1504,3 +1504,23 @@ gtmb.hologram.projector.native.preset.tier_policy_hint=若必需型號沒有所�
 # Native projector interface
 gtmb.hologram.projector.native.lesson.projection_preset_target=預設更新完整目標中所有可替換外殼位置，保留宣告必需倉室；手選和精確混搭作為明確目標。
 gtmb.hologram.projector.native.lesson.structure_preset_target=基礎與自訂預設更新完整目標中所有可替換外殼位置，保留宣告必需倉室；手選與混搭明確指定具體設備及數量。
+
+gtmb.hologram.projector.stock.order_ae=AE 缺料下單
+gtmb.hologram.projector.stock.cancel_ae_order=取消 AE 訂單
+gtmb.hologram.projector.stock.refresh_sources=重新整理材料來源
+gtmb.hologram.projector.stock.sources_unavailable=材料來源暫不可用，請檢查伺服器、背包和無線終端。
+gtmb.hologram.projector.stock.enable_ae=請先啟用 AE 材料來源。
+gtmb.hologram.projector.stock.ae_progress=AE %1$s：%2$s / %3$s
+gtmb.hologram.projector.stock.ae_received=AE 訂單已接收，將在背景繼續合成。
+gtmb.hologram.projector.stock.ae_running=已有 AE 訂單正在執行。
+gtmb.hologram.projector.stock.ae_unavailable=AE 未接單，請檢查缺料、終端範圍、權限、樣板及 CPU。
+gtmb.hologram.projector.stock.ae_planning=計算中
+gtmb.hologram.projector.stock.ae_waiting_cpu=等待 CPU
+gtmb.hologram.projector.stock.ae_crafting=合成中
+gtmb.hologram.projector.stock.ae_delivering=產物入網中
+gtmb.hologram.projector.stock.ae_complete=已完成
+gtmb.hologram.projector.stock.ae_failed=失敗，請檢查 AE 及保留的產物
+gtmb.hologram.projector.stock.ae_cancelled=已取消
+gtmb.hologram.projector.stock.cancel_construction=取消施工
+gtmb.hologram.projector.stock.sources_syncing=正在同步材料來源，請稍後再提交。
+gtmb.hologram.projector.stock.sources_busy=請先取消施工，再修改材料來源。

@@ -1070,6 +1070,10 @@ final class HologramLocalBlueprintWorkspace {
     }
 
     boolean placeNativeSaved() {
+        if (HologramClientMaterialStock.preferencesPending()) {
+            ui.session.notice(HologramUiText.projectorOr("stock.sources_syncing", "正在同步材料来源，请稍后再提交。"));
+            return false;
+        }
         var doc = ui.session.document();
         if (doc == null || doc.nativeDraft() == null) return false;
         if (!savedNativePlacementReady()) {
