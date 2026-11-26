@@ -369,10 +369,12 @@ public final class HologramStockNativeClientRegression {
             SimpleAssert.that(
                 recorded.sent.size() == 4 && command(recorded.sent.get(3)) == Command.BEGIN_AFTER_PROBE,
                 "second deliberate click is independently confirmed once");
+            client.currentScreen = new GuiScreen() {}; // Inventory/NEI may replace confirmation while BEGIN is in
+                                                       // flight.
             deliver(new Reply(accepted, Phase.ACCEPTED, 0, ""), connection);
             SimpleAssert.that(
                 client.currentScreen == null && player.closedScreens == 1 && screen.stockNativePending(),
-                "real confirmation closes on authoritative acceptance and retains the live task");
+                "authoritative startup closes even a replacement GUI, while retaining the exact live task");
             HologramClientStockNative.OWNER.close(screen, HologramClientStockNative.context(client));
             deliver(new Reply(accepted, Phase.STOPPED, 0, ""), connection);
             client.currentScreen = screen; // The player explicitly reopens the same workspace after it stopped.
