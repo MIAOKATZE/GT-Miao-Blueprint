@@ -307,7 +307,7 @@ final class HologramStockNativeEntry {
                 || !ItemNekoHologramProjector.isProjector(projector)
                 || !toolId.equals(toolId(projector))) return "手持投影仪已变化，请重新确认施工。";
             if (exactEbfTool != null && !exactEbfTool.matches(projector)) return "投影仪的高炉等级、线圈或草稿状态已变化，请重新确认施工。";
-            if (!configured.configuredMatches(HologramMaterials.read(projector))) return "投影仪材料来源已变化，请重新确认施工。";
+            if (!configured.configuredToolMatches(projector)) return "投影仪材料来源已变化，请重新确认施工。";
             return null;
         }
     }
@@ -655,11 +655,16 @@ final class HologramStockNativeEntry {
 
     HologramStockNativeConstruction.State tick(long deadline,
         HologramStockNativeConstruction.PermitAdmission admission) {
+        return tick(deadline, admission, HologramDeclaredNativeConstruction.PlacementWindow.ALL);
+    }
+
+    HologramStockNativeConstruction.State tick(long deadline, HologramStockNativeConstruction.PermitAdmission admission,
+        HologramDeclaredNativeConstruction.PlacementWindow window) {
         if (retired) return state;
         if (advancing) throw new IllegalStateException("Native stock entry cannot re-enter");
         advancing = true;
         try {
-            state = declaredJob != null ? declaredJob.drain(deadline, admission)
+            state = declaredJob != null ? declaredJob.drain(deadline, admission, window)
                 : ebfJob == null ? job.drain(deadline, admission) : ebfJob.drain(deadline, admission);
             return state;
         } finally {

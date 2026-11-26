@@ -7,8 +7,11 @@ import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -33,9 +36,11 @@ import com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintCodecRegression;
 import com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintEdits;
 import com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintMigration;
 import com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintPairStore;
+import com.miaokatze.gtmb.util.ServerTaskScheduler;
 
 import cpw.mods.fml.common.eventhandler.Event;
 import cpw.mods.fml.common.eventhandler.EventBus;
+import cpw.mods.fml.common.gameevent.TickEvent;
 
 /**
  * Existing codecs, registry factories, authorization, source selection and ledger; only live transport and world
@@ -52,6 +57,7 @@ final class HologramSavedPlacementAdapterRegression {
     static void run() throws Exception {
         sign(false);
         sign(true);
+        descriptorFailureBeforeWrites();
         wireless(true);
         wireless(false);
     }
@@ -91,7 +97,7 @@ final class HologramSavedPlacementAdapterRegression {
             TestWorld world = TestWorld.create(unsafe);
             player.worldObj = world;
             HologramWorkspace.publishActionEndpoint(player, false);
-            player.inventory.mainInventory[1] = new ItemStack(Items.sign, 1);
+            player.inventory.mainInventory[1] = new ItemStack(Items.sign, veto ? 1 : 2);
             var tag = new NBTTagCompound();
             tag.setString("id", "Sign");
             tag.setString("Text1", SIGN_TEXT);
@@ -118,11 +124,20 @@ final class HologramSavedPlacementAdapterRegression {
                 }
             });
             try {
-                var result = place(connected, player, sign);
+                var second = cell("minecraft:standing_sign", "minecraft:sign");
+                second.addProperty("x", 1);
+                second.addProperty("metadata", 4);
+                second.add("tileNbt", sign.get("tileNbt"));
+                var result = place(
+                    connected,
+                    player,
+                    veto ? Collections.singletonList(sign) : Arrays.asList(sign, second),
+                    false);
                 if (!veto) {
                     var actual = world.getTileEntity(X, Y, Z);
+                    var neighbour = world.getTileEntity(X + 1, Y, Z);
                     check(
-                        result.phase == HologramNativeLocalConstruction.Phase.COMPLETE && result.placed == 1
+                        result.phase == HologramNativeLocalConstruction.Phase.COMPLETE && result.placed == 2
                             && result.satisfied == 0
                             && world.getBlock(X, Y, Z) == Blocks.standing_sign
                             && world.getBlockMetadata(X, Y, Z) == 4
@@ -133,9 +148,12 @@ final class HologramSavedPlacementAdapterRegression {
                             && actual.xCoord == X
                             && actual.yCoord == Y
                             && actual.zCoord == Z
+                            && neighbour instanceof TileEntitySign
+                            && SIGN_TEXT.equals(((TileEntitySign) neighbour).signText[0])
+                            && neighbour.xCoord == X + 1
                             && stock(player, Items.sign) == 0
                             && !connected.pendingPayment(),
-                        "native built-in sign restores exact variant/typed tile text and debits one sign: "
+                        "one saved descriptor restores both exact sign payloads and debits one sign per successful write: "
                             + describe(result));
                 } else {
                     check(
@@ -153,6 +171,25 @@ final class HologramSavedPlacementAdapterRegression {
             } finally {
                 if (veto) unsafe.putObjectVolatile(base, offset, prior);
             }
+        });
+    }
+
+    private static void descriptorFailureBeforeWrites() throws Exception {
+        HologramNativeSavedWorldRegression.withConnectedWorld(0, connected -> {
+            EntityPlayerMP player = connected.nativeActor();
+            player.inventory.mainInventory[1] = new ItemStack(Blocks.stone, 3);
+            connected.arm();
+            JsonObject valid = cell("minecraft:stone", "minecraft:stone");
+            JsonObject unknown = cell("zz_gtmb_fixture:absent_block", "zz_gtmb_fixture:absent_item");
+            unknown.addProperty("x", 1);
+            var result = place(connected, player, Arrays.asList(valid, unknown), false);
+            check(
+                result.phase == HologramNativeLocalConstruction.Phase.FAILED && result.placed == 0
+                    && connected.at(X, Y, Z, Blocks.air)
+                    && connected.at(X + 1, Y, Z, Blocks.air)
+                    && stock(player, Item.getItemFromBlock(Blocks.stone)) == 3
+                    && !connected.pendingPayment(),
+                "a rejected descriptor fails before any world write or charge: " + describe(result));
         });
     }
 
@@ -304,6 +341,12 @@ final class HologramSavedPlacementAdapterRegression {
     private static HologramNativeLocalConstruction.Result place(
         HologramNativeSavedWorldRegression.ConnectedWorld connected, EntityPlayerMP player, JsonObject cell,
         boolean expectMissingPreview) throws Exception {
+        return place(connected, player, Collections.singletonList(cell), expectMissingPreview);
+    }
+
+    private static HologramNativeLocalConstruction.Result place(
+        HologramNativeSavedWorldRegression.ConnectedWorld connected, EntityPlayerMP player, List<JsonObject> cells,
+        boolean expectMissingPreview) throws Exception {
         Path root = Files.createTempDirectory("gtmb-saved-adapter-fixture-");
         try {
             JsonObject header = new JsonObject();
@@ -311,7 +354,8 @@ final class HologramSavedPlacementAdapterRegression {
             header.addProperty("controllerType", "area");
             header.addProperty("id", ID);
             header.addProperty("name", "Saved adapter fixture");
-            byte[] bytes = NativeBlueprintMigration.author(header, new JsonObject(), 1, i -> cell, () -> true).bytes;
+            byte[] bytes = NativeBlueprintMigration
+                .author(header, new JsonObject(), cells.size(), cells::get, () -> true).bytes;
             var stage = HologramNativeBlueprintStorage.prepareAuthoredSave(
                 root,
                 ID,
@@ -354,6 +398,16 @@ final class HologramSavedPlacementAdapterRegression {
                     new int[0],
                     HologramProjectedMainPolicy.settingsKey(HologramMaterials.read(player.getHeldItem())),
                     false);
+                ServerTaskScheduler.INSTANCE.onServerTick(new TickEvent.ServerTickEvent(TickEvent.Phase.END));
+                HologramNativeLocalConstruction.tick(System.nanoTime() - 1);
+                check(
+                    attempt.result().phase == HologramNativeLocalConstruction.Phase.PREPARING
+                        && attempt.result().total == cells.size()
+                        && attempt.result().placed == 0
+                        && attempt.result().satisfied == 0
+                        && !attempt.admitted()
+                        && !connected.pendingPayment(),
+                    "expired budget suspends the real saved job before descriptor admission or payment");
                 connected.stepNative();
                 return attempt.result();
             }
@@ -421,6 +475,7 @@ final class HologramSavedPlacementAdapterRegression {
             world.placed = new HashMap<>();
             world.occupants = new HashMap<>();
             world.placed.put(key(X, Y - 1, Z), new State(Blocks.stone, 0));
+            world.placed.put(key(X + 1, Y - 1, Z), new State(Blocks.stone, 0));
             set(world, "provider", new WorldProviderSurface());
             set(world, "worldAccesses", new ArrayList<>());
             set(world, "perWorldStorage", new MapStorage(null));

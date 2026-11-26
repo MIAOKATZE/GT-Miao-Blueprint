@@ -90,7 +90,8 @@ public final class HologramNativeSavedWorldRegression {
     public static void runNativeLocalPlacement() throws Exception {
         isolated(unsafe -> {
             for (String mode : new String[] { "complete", "permission", "cancel", "changed", "changedBeforeAdmission",
-                "changedAfterAdmission", "sourceChanged", "creative", "creativeRevoked", "creativeWithoutEdit" }) {
+                "changedWhilePreparing", "changedAfterAdmission", "cancelPreparing", "sourceChanged", "creative",
+                "creativeRevoked", "creativeWithoutEdit" }) {
                 Path root = Files.createTempDirectory("gtmb-native-local-placement-");
                 String logical = "local_12345678-1234-1234-1234-123456789012";
                 try (Fixture f = new Fixture(unsafe, 5)) {
@@ -320,11 +321,46 @@ public final class HologramNativeSavedWorldRegression {
                 "real in-process server denies unprivileged player");
             return;
         }
+        var preparing = attempt.result();
         require(
-            attempt.result().phase == HologramNativeLocalConstruction.Phase.EXECUTING && f.stock() == 5
+            preparing.phase == HologramNativeLocalConstruction.Phase.PREPARING && preparing.total == 3
+                && preparing.placed == 0
+                && preparing.satisfied == 0
+                && !attempt.admitted()
+                && f.stock() == 5
+                && f.world.writes()
+                    .isEmpty()
+                && !HologramConstructionJournal.pending(f.player),
+            "enqueue acquires the world lease but performs no descriptor admission, writes or debits");
+        HologramNativeLocalConstruction.tick(System.nanoTime() - 1);
+        require(
+            attempt.result() == preparing && !attempt.admitted()
+                && f.stock() == 5
                 && f.world.writes()
                     .isEmpty(),
-            "dry source admission before any writes");
+            "expired world deadline keeps saved descriptor preparation pending without effects");
+        if ("changedWhilePreparing".equals(mode) || "cancelPreparing".equals(mode)) {
+            boolean stale = "changedWhilePreparing".equals(mode);
+            if (stale) nativeLocalSource(root, logical, 4, original);
+            else require(attempt.stop(), "preparing job can stop before world mutation");
+            HologramNativeLocalConstruction.tick(Long.MAX_VALUE);
+            var stopped = attempt.result();
+            require(
+                stopped.phase
+                    == (stale ? HologramNativeLocalConstruction.Phase.FAILED
+                        : HologramNativeLocalConstruction.Phase.CANCELLED)
+                    && stopped.placed == 0
+                    && stopped.satisfied == 0
+                    && !attempt.admitted()
+                    && f.stock() == 5
+                    && f.world.writes()
+                        .isEmpty()
+                    && !HologramConstructionJournal.pending(f.player),
+                "stale or stopped preparation cannot debit or write");
+            HologramNativeLocalConstruction.tick(Long.MAX_VALUE);
+            require(attempt.result() == stopped && !attempt.stop(), "terminal preparation result does not replay");
+            return;
+        }
         if ("creativeRevoked".equals(mode)) {
             f.player.capabilities.isCreativeMode = false;
             HologramNativeLocalConstruction.tick(Long.MAX_VALUE);
@@ -336,17 +372,31 @@ public final class HologramNativeSavedWorldRegression {
                 "a server-side mode change invalidates the free construction lease");
             return;
         }
-        if ("changedAfterAdmission".equals(mode)) nativeLocalSource(root, logical, 4, original);
+        boolean stopWrite = "cancel".equals(mode);
+        boolean changePinnedSource = "changedAfterAdmission".equals(mode);
+        var republished = new java.util.concurrent.atomic.AtomicBoolean();
         Field bus = MinecraftForge.class.getDeclaredField("EVENT_BUS");
         Object base = unsafe.staticFieldBase(bus);
         long offset = unsafe.staticFieldOffset(bus);
         EventBus prior = MinecraftForge.EVENT_BUS;
-        if ("cancel".equals(mode)) unsafe.putObjectVolatile(base, offset, new EventBus() {
+        if (stopWrite || changePinnedSource) unsafe.putObjectVolatile(base, offset, new EventBus() {
 
             @Override
             public boolean post(Event event) {
-                if (event instanceof BlockEvent.PlaceEvent place && place.player == f.player && place.y == 65)
-                    attempt.stop();
+                if (event instanceof BlockEvent.PlaceEvent place && place.player == f.player) {
+                    if (stopWrite && place.y == 65) attempt.stop();
+                    if (changePinnedSource && republished.compareAndSet(false, true)) {
+                        require(
+                            attempt.admitted()
+                                && attempt.result().phase == HologramNativeLocalConstruction.Phase.EXECUTING,
+                            "real write event occurs only after the exact saved revision is admitted");
+                        try {
+                            nativeLocalSource(root, logical, 4, original);
+                        } catch (IOException e) {
+                            throw new AssertionError("cannot republish the test source during the running job", e);
+                        }
+                    }
+                }
                 return false;
             }
         });
@@ -354,10 +404,11 @@ public final class HologramNativeSavedWorldRegression {
             HologramNativeLocalConstruction.tick(Long.MAX_VALUE); // Exact same service called from the normal world
                                                                   // tick.
         } finally {
-            if ("cancel".equals(mode)) unsafe.putObjectVolatile(base, offset, prior);
+            if (stopWrite || changePinnedSource) unsafe.putObjectVolatile(base, offset, prior);
         }
         var done = attempt.result();
-        boolean aborted = "cancel".equals(mode);
+        boolean aborted = stopWrite;
+        require(!changePinnedSource || republished.get(), "running job actually encountered a changed saved alias");
         require(
             done.phase
                 == (aborted ? HologramNativeLocalConstruction.Phase.CANCELLED
@@ -371,6 +422,15 @@ public final class HologramNativeSavedWorldRegression {
                 && f.world.getBlock(8, 65, 10) == (aborted ? Blocks.air : Blocks.stone)
                 && !HologramConstructionJournal.pending(f.player),
             "in-process native placement uses exact effects/readback, prefix settlement, rotated coordinates, no projected receipt");
+        int writes = f.world.writes()
+            .size();
+        HologramNativeLocalConstruction.tick(Long.MAX_VALUE);
+        require(
+            attempt.result() == done && !attempt.stop()
+                && f.world.writes()
+                    .size() == writes
+                && f.stock() == (creative ? 5 : aborted ? 4 : 3),
+            "terminal native placement does not write, pay, or cancel again");
         System.out.println(
             "[GTMB-NATIVE-LOCAL] " + mode
                 + " writes="

@@ -22,15 +22,28 @@ final class HologramElementCatalog {
 
     /** Only the actual air declaration through authoritative transparent wrappers proves required empty space. */
     static boolean nativeAir(IStructureElement<?> element) {
+        return nativeAir(element, null);
+    }
+
+    static final class AirStability {
+
+        boolean reusable = true;
+    }
+
+    static boolean nativeAir(IStructureElement<?> element, AirStability stability) {
         IdentityHashMap<IStructureElement<?>, Boolean> seen = new IdentityHashMap<>();
         for (int depth = 0; element != null && depth <= 12; depth++) {
             if (seen.put(element, Boolean.TRUE) != null) return false;
             if (element == StructureUtility.isAir()) return true;
             try {
                 HologramDeclarationAdapters.Declaration declaration = HologramDeclarationAdapters.declaration(element);
+                if (stability != null && (declaration != null || HologramDeclarationWrappers.isLazy(element)
+                    || element instanceof gregtech.api.util.GTStructureUtility.ProxyStructureElement<?, ?>))
+                    stability.reusable = false;
                 if (declaration != null && !declaration.backingAuthority) return false;
                 element = HologramDeclarationWrappers.backing(element);
             } catch (ReflectiveOperationException | RuntimeException | LinkageError invalid) {
+                if (stability != null) stability.reusable = false;
                 return false;
             }
         }

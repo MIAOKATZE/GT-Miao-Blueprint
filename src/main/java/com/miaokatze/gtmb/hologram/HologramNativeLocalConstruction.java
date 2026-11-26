@@ -5,6 +5,7 @@ package com.miaokatze.gtmb.hologram;
 
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -17,6 +18,7 @@ import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.item.ItemStack;
 import net.minecraft.world.World;
 
+import com.google.gson.JsonObject;
 import com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector;
 import com.miaokatze.gtmb.hologram.HologramConstructionTaskGate.End;
 import com.miaokatze.gtmb.hologram.HologramConstructionTaskGate.Permit;
@@ -141,14 +143,13 @@ public final class HologramNativeLocalConstruction {
 
         private final NativeBlueprintSpatialView source;
         private final BooleanSupplier currentVersion;
-        private final Map<Long, com.google.gson.JsonObject> targets;
+        private final Map<Long, JsonObject> targets;
         private final LongOpenHashSet excluded;
         private final int total;
         private final HologramNativeBlueprintDraft draft;
 
         private Prepared(NativeBlueprintSpatialView source, BooleanSupplier currentVersion,
-            Map<Long, com.google.gson.JsonObject> targets, LongOpenHashSet excluded, int total,
-            HologramNativeBlueprintDraft draft) {
+            Map<Long, JsonObject> targets, LongOpenHashSet excluded, int total, HologramNativeBlueprintDraft draft) {
             this.draft = draft;
             this.source = source;
             this.currentVersion = currentVersion;
@@ -201,7 +202,7 @@ public final class HologramNativeLocalConstruction {
         Map<String, Boolean> structures = new HashMap<>();
         if (header.structures != null)
             for (var structure : header.structures) structures.put(structure.id, structure.enabled);
-        Map<Long, com.google.gson.JsonObject> targets = new LinkedHashMap<>();
+        Map<Long, JsonObject> targets = new LinkedHashMap<>();
         LongOpenHashSet excluded = new LongOpenHashSet();
         int total = 0;
         for (var usage : source.counts()
@@ -348,11 +349,6 @@ public final class HologramNativeLocalConstruction {
         tx.virtualPreset = prepared.draft.header();
         tx.placementDeidentificationChosen = tx.virtualPreset.deidentificationChosen;
         var stock = new HologramMaterials.Context(player, scope, tx.slot);
-        Map<Long, Target> samples = new LinkedHashMap<>();
-        for (var row : prepared.targets.entrySet()) {
-            if (attempt.cancelled()) throw new IOException("施工已取消");
-            samples.put(row.getKey(), resolve(prepared, tx, row.getKey(), row.getValue(), recipe, bindingSlots));
-        }
         // Only the transaction knows whether the target is already satisfied. A gross bill is
         // not a stock admission gate: never reserve/spend for already-present or skipped cells.
         if (tx.jobVoucherRequested && !HologramDecorationVoucher.enabled()) throw new IOException("装饰抵用券不可用，未开始施工");
@@ -387,14 +383,14 @@ public final class HologramNativeLocalConstruction {
                 toolId,
                 anchor,
                 pose,
-                samples,
+                recipe,
+                bindingSlots,
                 creative));
-        attempt.admitted = true;
-        attempt.publish(Phase.EXECUTING, 0, 0, prepared.total, "开始原生蓝图施工");
+        attempt.publish(Phase.PREPARING, 0, 0, prepared.total, "正在核对原生施工目标");
     }
 
-    private static Target resolve(Prepared prepared, HologramSession tx, long descriptor,
-        com.google.gson.JsonObject wrapper, int[] recipe, int[] bindingSlots) throws IOException {
+    private static Target resolve(Prepared prepared, HologramSession tx, long descriptor, JsonObject wrapper,
+        int[] recipe, int[] bindingSlots) throws IOException {
         var cell = prepared.draft.executionCell(descriptor, wrapper);
         Block block = cell.block();
         ItemStack sample = cell.stack();
@@ -504,19 +500,22 @@ public final class HologramNativeLocalConstruction {
         final NativeBlueprintSpatialView.Cursor cursor;
         final int frameX, frameY, frameZ;
         final int[] rotated = new int[3];
-        final Map<Long, Target> samples;
+        final Map<Long, Target> samples = new HashMap<>();
+        final Iterator<Map.Entry<Long, JsonObject>> unresolved;
+        final int[] recipe, bindingSlots;
+        final HologramPlacementTiming trace;
         final EntityPlayerMP player;
         final World world;
         final boolean creative;
         long activeDescriptor = Long.MIN_VALUE;
         Target activeTarget;
         int placed, satisfied;
-        boolean uncertain;
+        boolean uncertain, ready;
 
         Job(Attempt attempt, Prepared prepared, HologramWorkspace.ActionEndpoint endpoint,
             HologramConstructionTaskGate gate, HologramConstructionTaskGate.Lease lease, HologramSession tx,
             HologramProjectedMainPolicy.Snapshot configured, HologramMaterials.Context stock, String toolId,
-            int[] anchor, HologramPreviewPose pose, Map<Long, Target> samples, boolean creative) {
+            int[] anchor, HologramPreviewPose pose, int[] recipe, int[] bindingSlots, boolean creative) {
             this.creative = creative;
             this.attempt = attempt;
             this.prepared = prepared;
@@ -529,13 +528,17 @@ public final class HologramNativeLocalConstruction {
             this.toolId = toolId;
             this.anchor = anchor;
             this.pose = pose;
+            this.recipe = recipe;
+            this.bindingSlots = bindingSlots;
+            this.unresolved = prepared.targets.entrySet()
+                .iterator();
+            this.trace = HologramPlacementTiming.open("blueprint", attempt.id);
             this.cursor = prepared.source.cursor();
             var frame = prepared.source.definition()
                 .frame();
             frameX = frame.anchorX;
             frameY = frame.anchorY;
             frameZ = frame.anchorZ;
-            this.samples = samples;
             player = endpoint.player;
             world = player.worldObj;
         }
@@ -557,6 +560,25 @@ public final class HologramNativeLocalConstruction {
             if (!current()) return stop(Phase.CANCELLED, "施工已停止，未完成部分不再扣料");
             int old = placed + satisfied;
             try {
+                if (!ready) {
+                    // The saved histogram groups equal descriptors; no coordinate enumeration or off-thread game
+                    // access.
+                    // Validate the entire cohort before changing the world or charging a material source.
+                    while (unresolved.hasNext() && System.nanoTime() < deadline) {
+                        if (!current()) return stop(Phase.CANCELLED, "施工已取消，未扣料");
+                        var row = unresolved.next();
+                        samples.put(
+                            row.getKey(),
+                            resolve(prepared, tx, row.getKey(), row.getValue(), recipe, bindingSlots));
+                    }
+                    if (unresolved.hasNext()) return false;
+                    if (!current()) return stop(Phase.CANCELLED, "施工已取消，未扣料");
+                    if (!prepared.currentVersion.getAsBoolean()) return stop(Phase.FAILED, "蓝图已更新，请重新打开材料页");
+                    ready = true;
+                    // Only fully validated uploads may become retained cache entries on termination.
+                    attempt.admitted = true;
+                    attempt.publish(Phase.EXECUTING, 0, 0, prepared.total, "开始原生蓝图施工");
+                }
                 while (cursor.hasNext() && System.nanoTime() < deadline) {
                     if (!current()) return stop(Phase.CANCELLED, "施工已停止，未完成部分不再扣料");
                     cursor.advance();
@@ -571,6 +593,7 @@ public final class HologramNativeLocalConstruction {
                         uncertain ? "施工结果待核定，已停止" : "施工受阻或缺料，已停止");
                 }
             } catch (IOException | RuntimeException | LinkageError invalid) {
+                if (!ready && invalid instanceof IOException) return stop(Phase.FAILED, invalid.getMessage());
                 return stop(Phase.FAILED, uncertain ? "施工结果待核定，已停止" : "读取或执行原生蓝图失败，已停止");
             }
             if (!cursor.hasNext()) return stop(Phase.COMPLETE, "原生蓝图施工完成");
@@ -593,8 +616,8 @@ public final class HologramNativeLocalConstruction {
             if (permit == null) return false;
             boolean settled = false;
             try {
-                var capture = new HologramCapture(null, HologramSessionPolicy.trigger(tx));
-                var cell = new HologramCapture.Cell(null, x, y, z);
+                // Only a position-scoped mutation record; no fabricated capture, selection or plan.
+                var cell = new HologramCapture.Cell(null, x, y, z, null, true);
                 cell.block = target.block;
                 cell.meta = target.metadata;
                 cell.blueprintBlock = target.blockId;
@@ -604,12 +627,9 @@ public final class HologramNativeLocalConstruction {
                 cell.itemNbt = target.item;
                 cell.userPosition = true;
                 cell.role = target.controller ? "templateController" : "prefab";
-                cell.stableIndex = 0;
-                capture.cells.add(cell);
-                tx.capture = capture;
-                tx.pins.put(0, target.sample.copy());
-                tx.planTargets.add(target.sample.copy());
-                if (target.facing >= 0) tx.planFacings.put(0, target.facing);
+                // A placement callback may mutate its working item. Keep the descriptor prototype unexposed.
+                cell.savedPlacementTarget = target.sample.copy();
+                cell.savedPlacementFacing = target.facing;
                 tx.materialContext = stock;
                 boolean applied = HologramWorldTransactions.operateSavedNative(
                     tx,
@@ -621,7 +641,10 @@ public final class HologramNativeLocalConstruction {
                 boolean committed = applied && "placed".equals(cell.status);
                 boolean wasSatisfied = applied && "satisfied".equals(cell.status);
                 settled = gate.settle(permit, committed ? Settlement.COMMITTED : Settlement.ROLLED_BACK);
-                if (settled && committed) placed++;
+                if (settled && committed) {
+                    placed++;
+                    if (trace != null) trace.written();
+                }
                 if (settled && wasSatisfied) satisfied++;
                 return settled && (committed || wasSatisfied);
             } finally {
@@ -630,10 +653,6 @@ public final class HologramNativeLocalConstruction {
                     gate.settle(permit, Settlement.RECOVERY_PENDING);
                 }
                 tx.materialContext = null;
-                tx.planTargets.clear();
-                tx.planFacings.clear();
-                tx.pins.clear();
-                tx.capture = null;
             }
         }
 
@@ -646,6 +665,7 @@ public final class HologramNativeLocalConstruction {
                         detail = "施工结果不能确认";
                     }
             }
+            if (trace != null) trace.finish(phase.name(), placed);
             attempt.publish(phase, placed, satisfied, prepared.total, detail);
             return true;
         }

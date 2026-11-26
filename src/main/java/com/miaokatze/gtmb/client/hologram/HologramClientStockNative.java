@@ -17,6 +17,7 @@ import net.minecraft.world.World;
 
 import com.github.bsideup.jabel.Desugar;
 import com.miaokatze.gtmb.hologram.HologramNetwork;
+import com.miaokatze.gtmb.hologram.HologramPlacementTiming;
 import com.miaokatze.gtmb.hologram.HologramStockActionTrace;
 import com.miaokatze.gtmb.hologram.HologramStockNativeWire;
 import com.miaokatze.gtmb.hologram.HologramStockNativeWire.Command;
@@ -232,8 +233,17 @@ public final class HologramClientStockNative {
             }
             var attempt = new Attempt(original, context, owner, now + FIRST_PROOF_NANOS);
             active = attempt;
+            HologramPlacementTiming.clientRequest(
+                "structure",
+                original.key()
+                    .request());
             if (context.same(known) && generation > 0) return begin(attempt, generation, false, now);
             try {
+                HologramPlacementTiming.clientPhase(
+                    "structure",
+                    original.key()
+                        .request(),
+                    "probe");
                 if (wire.probe(original)) {
                     HologramStockActionTrace.event("client.sent", original.key(), "PROBE");
                     owner.notice.accept(projectorOr("stock.probe_sent", "已发送施工查询，等待服务器确认。"));
@@ -270,6 +280,11 @@ public final class HologramClientStockNative {
             attempt.beginSent = true; // A thrown transport may already have handed the frame off; do not retry.
             attempt.deadline = now + RESULT_NANOS;
             try {
+                HologramPlacementTiming.clientPhase(
+                    "structure",
+                    issued.key()
+                        .request(),
+                    "begin");
                 if (!wire.begin(issued, afterProbe)) {
                     active = null; // Production writer returns false only before any wire send.
                     attempt.owner.notice.accept(projectorOr("stock.server_connection", "未提交施工：服务器连接不可用。"));
@@ -362,6 +377,11 @@ public final class HologramClientStockNative {
                 return;
             }
             active = null;
+            if (reply.phase() == Phase.COMPLETE) HologramPlacementTiming.clientPhase(
+                "structure",
+                reply.key()
+                    .request(),
+                "complete_seen");
             if (!attempt.owner.visible.getAsBoolean()) return;
             String reason = serverReason(reply.reason());
             String status = switch (reply.phase()) {

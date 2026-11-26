@@ -22,6 +22,7 @@ import com.miaokatze.gtmb.client.hologram.HologramMaterialConfirmationDialog.Loc
 import com.miaokatze.gtmb.client.hologram.HologramMaterialConfirmationDialog.LocalView;
 import com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector;
 import com.miaokatze.gtmb.hologram.HologramMaterials;
+import com.miaokatze.gtmb.hologram.HologramPlacementTiming;
 
 /** Lightweight local modal over the already-present world ghost; no second workspace or source read. */
 final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implements LocalView {
@@ -194,6 +195,7 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
 
     @Override
     public void localAction(LocalAction action) {
+        long clicked = action == LocalAction.SUBMIT ? HologramPlacementTiming.clickNanos() : 0;
         deferAction(() -> {
             Minecraft client = Minecraft.getMinecraft();
             if (action == LocalAction.BACK) returnToWorld(client);
@@ -207,23 +209,25 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
                 if (ticket.current(client))
                     description.refresh(() -> client.thePlayer.inventory.mainInventory, ticket.slot);
             } else if (action == LocalAction.SUBMIT && ticket.current(client)) {
-                availability = HologramLibraryClient.INSTANCE.plainPlacementAvailability(ticket.frozen, client);
-                if (availability != PlainAvailability.READY) {
-                    HologramClient.selectionNotice(availability.reason + "，未开始施工。");
-                } else {
-                    // Consume retires the screen ticket. Snapshot the validated choice first.
-                    boolean payWithVoucher = localVoucherSelected();
-                    if (voucherSelected && !payWithVoucher && !client.thePlayer.capabilities.isCreativeMode) {
-                        voucherSelected = false;
-                        HologramClient.selectionNotice(localVoucherBlocker() + "，请重新确认");
-                        return;
-                    }
-                    if (dispatchRefused(
-                        action,
-                        () -> paymentChoice(ticket.consume(client), payWithVoucher, bindingChoices()),
-                        placement::submitFrozen)) {
-                        returnToWorld(client);
-                        HologramClient.selectionNotice("施工未开始，已保留投影");
+                try (var ignored = HologramPlacementTiming.clientClick(clicked)) {
+                    availability = HologramLibraryClient.INSTANCE.plainPlacementAvailability(ticket.frozen, client);
+                    if (availability != PlainAvailability.READY) {
+                        HologramClient.selectionNotice(availability.reason + "，未开始施工。");
+                    } else {
+                        // Consume retires the screen ticket. Snapshot the validated choice first.
+                        boolean payWithVoucher = localVoucherSelected();
+                        if (voucherSelected && !payWithVoucher && !client.thePlayer.capabilities.isCreativeMode) {
+                            voucherSelected = false;
+                            HologramClient.selectionNotice(localVoucherBlocker() + "，请重新确认");
+                            return;
+                        }
+                        if (dispatchRefused(
+                            action,
+                            () -> paymentChoice(ticket.consume(client), payWithVoucher, bindingChoices()),
+                            placement::submitFrozen)) {
+                            returnToWorld(client);
+                            HologramClient.selectionNotice("施工未开始，已保留投影");
+                        }
                     }
                 }
             }

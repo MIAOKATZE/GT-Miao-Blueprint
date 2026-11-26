@@ -152,6 +152,7 @@ final class HologramCellPolicy {
     }
 
     static ItemStack targetFor(HologramSession s, HologramCapture.Cell c, int index) {
+        if (c.savedPlacementTarget != null) return HologramEssentia.shellMaterial(c.savedPlacementTarget);
         if (s.stockNativePrivate && c.declaredPlacementTarget != null) return c.declaredPlacementTarget;
         if (s.localPlanPending) return HologramEssentia.shellMaterial(draftTarget(s, c, index));
         if (index >= 0 && index < s.planTargets.size()) {
@@ -209,7 +210,8 @@ final class HologramCellPolicy {
     }
 
     static boolean explicitTarget(HologramSession s, HologramCapture.Cell c, int index) {
-        return s.stockNativePrivate && c.declaredPlacementTarget != null || s.pins.containsKey(index)
+        return c.savedPlacementTarget != null || s.stockNativePrivate && c.declaredPlacementTarget != null
+            || s.pins.containsKey(index)
             || implicitBlueprintController(s, c) != null
             || (s.scope == 3 && s.pins.containsKey(s.selected)
                 && s.selected >= 0
@@ -379,8 +381,10 @@ final class HologramCellPolicy {
         }
         if (wanted != null && wanted.getItem() instanceof ItemMachines) {
             TileEntity tile = s.player.worldObj.getTileEntity(c.x, c.y, c.z);
-            return old == Block.getBlockFromItem(wanted.getItem()) && tile instanceof IGregTechTileEntity
-                && ((IGregTechTileEntity) tile).getMetaTileID() == wanted.getItemDamage();
+            return old == Block.getBlockFromItem(wanted.getItem()) && tile instanceof IGregTechTileEntity gt
+                && gt.getMetaTileID() == wanted.getItemDamage()
+                && (c.savedPlacementFacing < 0 || gt.getFrontFacing() != null && gt.getFrontFacing()
+                    .ordinal() == c.savedPlacementFacing);
         }
         if (s.virtual && s.virtualPreset.schema >= 2 && wanted.getItem() instanceof ItemBlock) {
             try {

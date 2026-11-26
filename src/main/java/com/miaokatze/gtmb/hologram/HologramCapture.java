@@ -1260,6 +1260,9 @@ public final class HologramCapture {
         String renderKind = "block";
         // Server-only exact target from the native declaration executor; never published or serialized.
         ItemStack declaredPlacementTarget;
+        // Separate exact input for placement of a pinned saved blueprint, not a GT declaration or a UI pin.
+        ItemStack savedPlacementTarget;
+        int savedPlacementFacing = -1;
         ItemStack actualStack;
         ItemStack previewStack;
         int previewFacing = -1;

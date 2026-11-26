@@ -54,6 +54,112 @@ final class HologramDeclaredNativeConstruction {
     private record Member(DefinitionPiece definition, int index, IStructureElement<?> element, Offset position,
         int ordinal) {}
 
+    /**
+     * Small, world-independent topology memo. StructureLib exposes its backing arrays, so prove exact slot
+     * identity on reuse instead of trusting array identity. This does not rerun navigation, hashing or grouping.
+     */
+    private static final class NativeTopology {
+
+        private static final int MAX_WORDS = 65536;
+        private static final int MAX_ENTRIES = 2;
+        private static final List<NativeTopology> RECENT = new ArrayList<>();
+        private static final ClassValue<Boolean> IMMUTABLE_NAVIGATION = new ClassValue<Boolean>() {
+
+            @Override
+            protected Boolean computeValue(Class<?> type) {
+                try {
+                    if (type.getMethod("isNavigating")
+                        .getDeclaringClass() == IStructureElement.class) return true;
+                    var factory = HologramDeclarationWrappers.factory(type);
+                    return factory != null
+                        && factory.getDeclaringClass() == com.gtnewhorizon.structurelib.structure.StructureUtility.class
+                        && ("stepA".equals(factory.getName()) || "stepB".equals(factory.getName())
+                            || "stepC".equals(factory.getName()));
+                } catch (ReflectiveOperationException | RuntimeException | LinkageError unsupported) {
+                    return false;
+                }
+            }
+        };
+
+        final Map<Offset, Member> members = new LinkedHashMap<>();
+        final Map<Integer, List<Member>> layers = new LinkedHashMap<>();
+        final List<List<Member>> groups = new ArrayList<>();
+        final List<DefinitionPiece> pieces;
+        private final IStructureElement<?>[][] snapshots;
+        private final IStructureDefinition<?> definition;
+        private final ExtendedFacing facing;
+        private final long sourceRevision, adapterGeneration;
+        private boolean reusable;
+
+        NativeTopology(IStructureDefinition<?> definition, List<DefinitionPiece> pieces, ExtendedFacing facing,
+            long sourceRevision, long adapterGeneration) {
+            this.definition = definition;
+            this.pieces = pieces;
+            this.facing = facing;
+            this.sourceRevision = sourceRevision;
+            this.adapterGeneration = adapterGeneration;
+            long words = 0;
+            for (var piece : pieces) words += piece.elements.length;
+            reusable = definition.getClass() == com.gtnewhorizon.structurelib.structure.StructureDefinition.class
+                && words <= MAX_WORDS;
+            snapshots = reusable ? new IStructureElement<?>[pieces.size()][] : null;
+        }
+
+        private boolean matches(IStructureDefinition<?> expected, List<DefinitionPiece> actual, ExtendedFacing pose,
+            long source, long adapters) {
+            if (expected != definition || facing != pose
+                || source != sourceRevision
+                || adapters != adapterGeneration
+                || actual.size() != pieces.size()) return false;
+            for (int i = 0; i < pieces.size(); i++) {
+                var prior = pieces.get(i);
+                var fresh = actual.get(i);
+                if (prior.elements != fresh.elements || !prior.piece.name.equals(fresh.piece.name)
+                    || prior.piece.a != fresh.piece.a
+                    || prior.piece.b != fresh.piece.b
+                    || prior.piece.c != fresh.piece.c
+                    || !equalSignal(prior.piece.trigger, fresh.piece.trigger)) return false;
+                var snapshot = snapshots[i];
+                if (snapshot.length != fresh.elements.length) return false;
+                for (int n = 0; n < snapshot.length; n++) if (snapshot[n] != fresh.elements[n]) return false;
+            }
+            return true;
+        }
+
+        static synchronized NativeTopology find(IStructureDefinition<?> definition, List<DefinitionPiece> pieces,
+            ExtendedFacing facing, long sourceRevision, long adapterGeneration) {
+            for (int i = RECENT.size() - 1; i >= 0; i--) {
+                var candidate = RECENT.get(i);
+                if (!candidate.matches(definition, pieces, facing, sourceRevision, adapterGeneration)) continue;
+                RECENT.remove(i);
+                RECENT.add(candidate);
+                return candidate;
+            }
+            return null;
+        }
+
+        void offer() {
+            if (!reusable || adapterGeneration != HologramDeclarationAdapters.admissionGeneration()
+                || !matches(definition, pieces, facing, sourceRevision, adapterGeneration)) return;
+            publish(this);
+        }
+
+        private static synchronized void publish(NativeTopology topology) {
+            if (RECENT.size() >= MAX_ENTRIES) RECENT.remove(0);
+            RECENT.add(topology);
+        }
+
+        IStructureElement<?>[] elements(int pieceIndex) {
+            var elements = pieces.get(pieceIndex).elements;
+            if (!reusable) return elements;
+            return snapshots[pieceIndex] = elements.clone();
+        }
+
+        void observeNavigation(IStructureElement<?> element) {
+            reusable &= element != null && IMMUTABLE_NAVIGATION.get(element.getClass());
+        }
+    }
+
     @Desugar
     private record Target(HologramCapture.Cell cell, ItemStack item, int facing, boolean hatch,
         HologramDeclaredNativeMutation.Proof original, boolean rotation,
@@ -68,8 +174,37 @@ final class HologramDeclaredNativeConstruction {
     /** One native element instance and effective signal; positions never repeat declaration resolution. */
     private static final class DeclarationBatch {
 
-        final List<Member> positions = new ArrayList<>();
+        final List<Member> positions;
         ItemStack fixedMaterial;
+        private long airGeneration = Long.MIN_VALUE;
+        private boolean nativeAir, dynamicAir;
+
+        DeclarationBatch(List<Member> positions) {
+            this.positions = positions;
+        }
+
+        boolean isNativeAir(IStructureElement<?> element) {
+            long generation = HologramDeclarationAdapters.admissionGeneration();
+            if (airGeneration == generation) return dynamicAir ? HologramElementCatalog.nativeAir(element) : nativeAir;
+            var stability = new HologramElementCatalog.AirStability();
+            nativeAir = HologramElementCatalog.nativeAir(element, stability);
+            dynamicAir = !stability.reusable;
+            airGeneration = generation;
+            return nativeAir;
+        }
+    }
+
+    /** A scheduler may yield at a declaration-group or a position boundary without replaying the cursor. */
+    @FunctionalInterface
+    interface PlacementWindow {
+
+        PlacementWindow ALL = (next, total) -> total;
+
+        int endExclusive(int next, int total);
+
+        default int groupEndExclusive(int group, int nextPosition, int totalPositions) {
+            return totalPositions;
+        }
     }
 
     private static final class Need {
@@ -89,6 +224,7 @@ final class HologramDeclaredNativeConstruction {
     private final HologramDeclaredNativeSelection selection;
     private final BooleanSupplier stillConfirmed;
     private final Timing timing = Boolean.getBoolean("gtmb.hologram.declaredNativeTiming") ? new Timing() : null;
+    private final HologramPlacementTiming trace;
     private final boolean creative;
     private final BaseMetaTileEntity tile;
     private final MTEEnhancedMultiBlockBase<?> machine;
@@ -98,14 +234,14 @@ final class HologramDeclaredNativeConstruction {
     private final long epoch, revision, interpretations;
     private final ItemStack trigger;
     private final Map<Offset, Hatch> edits = new LinkedHashMap<>();
-    private final Map<Offset, Member> members = new LinkedHashMap<>();
     private final Set<Offset> selectedOffsets;
-    private final List<Member> layerMembers;
     private final IdentityHashMap<DefinitionPiece, IdentityHashMap<IStructureElement<?>, HologramCasingFallback.Target>> constantBlockDefaults = new IdentityHashMap<>();
     private final List<DeclarationBatch> batches = new ArrayList<>();
-    private final IdentityHashMap<DefinitionPiece, IdentityHashMap<IStructureElement<?>, DeclarationBatch>> batchesByPiece = new IdentityHashMap<>();
+    private final IdentityHashMap<DefinitionPiece, IdentityHashMap<IStructureElement<?>, List<Member>>> groupsByPiece = new IdentityHashMap<>();
     private final List<Target> moves = new ArrayList<>();
     private int batchIndex, batchOffset, plannedWrites, declaredMembers;
+    private int prerequisiteBatch, prerequisiteOffset;
+    private boolean prerequisiteChecked, prerequisiteRequired, traceEnded;
     private Target currentBatchTarget;
     private final Map<HologramBlueprintResources.ExactKey, Need> funding = new LinkedHashMap<>();
     private final HologramDeclarationAdapters.Bindings declarations = new HologramDeclarationAdapters.Bindings();
@@ -121,7 +257,9 @@ final class HologramDeclaredNativeConstruction {
     private MTEEnhancedMultiBlockBase<?> detached;
     private IStructureDefinition<?> definition;
     private List<DefinitionPiece> pieces;
+    private NativeTopology topology;
     private HologramStructureCursor cursor;
+    private IStructureElement<?>[] cursorElements;
     private Iterator<Member> memberIterator;
     private Iterator<Need> needs;
     private String family, reason = "";
@@ -135,10 +273,10 @@ final class HologramDeclaredNativeConstruction {
         this.endpoint = endpoint;
         this.gate = gate;
         this.lease = lease;
+        trace = HologramPlacementTiming.open("structure", lease.request.id);
         this.session = session;
         this.selection = selection;
         selectedOffsets = selection.scope() == 2 ? new HashSet<>(selection.selected()) : Collections.emptySet();
-        layerMembers = selection.scope() == 1 ? new ArrayList<>() : null;
         this.stillConfirmed = stillConfirmed;
         if (creative && selection.operation() != 0)
             throw new IllegalArgumentException("Creative placement requires ordinary construction");
@@ -223,6 +361,12 @@ final class HologramDeclaredNativeConstruction {
             accepted.add(new DefinitionPiece(elements, piece));
         }
         pieces = Collections.unmodifiableList(new ArrayList<>(accepted));
+        long adapters = HologramDeclarationAdapters.admissionGeneration();
+        topology = NativeTopology.find(definition, pieces, facing, source.sourceRevision, adapters);
+        if (topology != null) {
+            pieceIndex = pieces.size();
+            declaredMembers = topology.members.size();
+        } else topology = new NativeTopology(definition, pieces, facing, source.sourceRevision, adapters);
     }
 
     private enum Stage {
@@ -286,7 +430,7 @@ final class HologramDeclaredNativeConstruction {
                 state,
                 slices,
                 examined,
-                placementBuild() ? declaredMembers : members.size(),
+                placementBuild() ? declaredMembers : topology == null ? 0 : topology.members.size(),
                 targets,
                 demolition == null ? (placementBuild() ? plannedWrites : moves.size()) : removalOrder.size(),
                 placed,
@@ -304,6 +448,14 @@ final class HologramDeclaredNativeConstruction {
     private void recordCommitted() {
         placed++;
         if (timing != null) timing.committed();
+        if (trace != null) trace.written();
+    }
+
+    private void finishTrace() {
+        if (trace != null && !traceEnded && state != State.ACTIVE) {
+            traceEnded = true;
+            trace.finish(state.name(), placed);
+        }
     }
 
     private boolean placementBuild() {
@@ -327,7 +479,7 @@ final class HologramDeclaredNativeConstruction {
         if (currentBatchTarget == null) {
             currentBatchTarget = prepare(batch.positions.get(batchOffset), batch);
             if (currentBatchTarget != null) plannedWrites++;
-        }
+        } else requireMemberCurrent(batch.positions.get(batchOffset));
         if (currentBatchTarget != null && !place(currentBatchTarget, admission)) return false;
         currentBatchTarget = null;
         batchOffset++;
@@ -345,6 +497,11 @@ final class HologramDeclaredNativeConstruction {
     }
 
     State drain(long deadline, PermitAdmission admission) {
+        return drain(deadline, admission, PlacementWindow.ALL);
+    }
+
+    State drain(long deadline, PermitAdmission admission, PlacementWindow window) {
+        int placementEnd = -1, windowGroup = -1, windowPositionEnd = -1;
         if (!gate.onOwnerThread()) throw new IllegalStateException("Native construction owner thread");
         if (state != State.ACTIVE || System.nanoTime() >= deadline) return state;
         if (timing != null) timing.slices++;
@@ -367,6 +524,34 @@ final class HologramDeclaredNativeConstruction {
                     if (timing != null) now = System.nanoTime();
                 }
                 if (placementBuild()) {
+                    if (selection.scope() == 0 && !prerequisiteChecked) {
+                        if (timing != null) timing.enter(Stage.WORLD_PREPARE, now);
+                        checkWholePrerequisite();
+                        continue;
+                    }
+                    if (placementEnd < 0) {
+                        placementEnd = window.endExclusive(batchIndex, batches.size());
+                        if (placementEnd < batchIndex || placementEnd > batches.size())
+                            throw new IllegalArgumentException("Invalid native placement window");
+                    }
+                    if (batchIndex < batches.size() && batchIndex >= placementEnd) return state;
+                    if (batchIndex < batches.size()) {
+                        var batch = batches.get(batchIndex);
+                        int groupSize = batch.positions.size();
+                        if (windowGroup != batchIndex) {
+                            windowGroup = batchIndex;
+                            windowPositionEnd = window.groupEndExclusive(batchIndex, batchOffset, groupSize);
+                            if (windowPositionEnd < batchOffset || windowPositionEnd > groupSize)
+                                throw new IllegalArgumentException("Invalid native placement group window");
+                            if (selection.scope() == 3 && batchOffset < groupSize
+                                && !family.equals(family(batch.positions.get(0)))) {
+                                if (batchOffset != 0 || currentBatchTarget != null) return stop("当前声明材料类型已变化，未继续放置。");
+                                batchIndex++;
+                                continue;
+                            }
+                        }
+                        if (batchOffset < groupSize && batchOffset >= windowPositionEnd) return state;
+                    }
                     if (!drainPlacement(admission, now)) return state;
                     continue;
                 }
@@ -417,46 +602,52 @@ final class HologramDeclaredNativeConstruction {
                     .getSimpleName() + "）。");
         } finally {
             if (timing != null) timing.finish(System.nanoTime());
+            finishTrace();
         }
         return state;
     }
 
     private void recordMember() throws IOException {
         DefinitionPiece piece = pieces.get(pieceIndex);
-        if (cursor == null)
-            cursor = new HologramStructureCursor(piece.elements, piece.piece.a, piece.piece.b, piece.piece.c);
+        if (cursor == null) {
+            cursorElements = topology.elements(pieceIndex);
+            cursor = new HologramStructureCursor(cursorElements, piece.piece.a, piece.piece.b, piece.piece.c);
+        }
         if (cursor.done() == cursor.total()) {
             cursor = null;
+            cursorElements = null;
             pieceIndex++;
+            if (pieceIndex == pieces.size()) topology.offer();
             return;
         }
         int ordinal = examined++;
         if (ordinal >= HologramBlueprintLimits.MAX_CELLS) throw refused("原生片段超过声明复杂度边界。");
         int index = cursor.done();
+        var element = cursorElements[index];
+        topology.observeNavigation(element);
         var point = cursor.declarationOffset(facing);
         if (point == null) return; // StructureLib navigation.
         if (!point.valid()) throw refused("原生目标超出相对坐标范围。");
-        var element = piece.elements[index];
         Member next = new Member(piece, index, element, point, ordinal);
-        Member previous = members.putIfAbsent(point, next);
+        Member previous = topology.members.putIfAbsent(point, next);
         if (previous != null
             && (previous.element != element || !equalSignal(previous.definition.piece.trigger, piece.piece.trigger)))
             throw refused("原生片段在同一坐标上有冲突声明；未放置任何格。");
-        if (previous == null && layerMembers != null && !anchor(point) && point.y() == selection.layer())
-            layerMembers.add(next);
-        if (previous == null && placementBuild()
-            && !anchor(point)
-            && (selection.scope() == 0 || selection.scope() == 3
-                || layerMembers != null && point.y() == selection.layer()
-                || selection.scope() == 2 && selectedOffsets.contains(point))) {
-            var byElement = batchesByPiece.computeIfAbsent(piece, ignored -> new IdentityHashMap<>());
-            var batch = byElement.computeIfAbsent(element, ignored -> {
-                var created = new DeclarationBatch();
-                batches.add(created);
-                return created;
-            });
-            batch.positions.add(next);
+        if (previous == null && !anchor(point)) {
+            topology.layers.computeIfAbsent(point.y(), ignored -> new ArrayList<>())
+                .add(next);
+            group(next, topology.groups);
         }
+    }
+
+    private void group(Member member, List<List<Member>> groups) {
+        var byElement = groupsByPiece.computeIfAbsent(member.definition, ignored -> new IdentityHashMap<>());
+        byElement.computeIfAbsent(member.element, ignored -> {
+            var created = new ArrayList<Member>();
+            groups.add(created);
+            return created;
+        })
+            .add(member);
     }
 
     private static boolean equalSignal(ItemStack a, ItemStack b) {
@@ -468,7 +659,7 @@ final class HologramDeclaredNativeConstruction {
             selection.selected()
                 .size());
         for (Offset position : selection.selected()) {
-            Member member = members.get(position);
+            Member member = topology.members.get(position);
             if (member == null || anchor(position)) throw refused("选择不属于当前声明的可放置格。");
             selected.add(member);
         }
@@ -479,22 +670,29 @@ final class HologramDeclaredNativeConstruction {
         if (selection.operation() == 1 && !edits.keySet()
             .equals(selectedOffsets)) throw refused("换装只处理已逐格指定类型或方向的所选仓室。");
         for (Offset position : edits.keySet()) {
-            Member member = members.get(position);
+            Member member = topology.members.get(position);
             if (member == null || !includes(member)) throw refused("手选仓室不在已确认的声明范围。");
         }
+        var layerMembers = topology.layers.getOrDefault(selection.layer(), Collections.emptyList());
+        if (selection.scope() == 2) selected.sort(Comparator.comparingInt(Member::ordinal));
         if (placementBuild()) {
-            declaredMembers = members.size();
-            members.clear();
-            batchesByPiece.clear();
+            declaredMembers = topology.members.size();
+            if (selection.scope() == 0 || selection.scope() == 3) {
+                for (var group : topology.groups) batches.add(new DeclarationBatch(group));
+            } else {
+                groupsByPiece.clear();
+                List<List<Member>> scoped = new ArrayList<>();
+                for (var member : selection.scope() == 1 ? layerMembers : selected) group(member, scoped);
+                for (var group : scoped) batches.add(new DeclarationBatch(group));
+            }
+            topology = null;
+            groupsByPiece.clear();
             return Collections.emptyIterator();
         }
         // Mutating installed devices keeps exact existing scope guarantees.
-        if (selection.scope() == 2) {
-            selected.sort(Comparator.comparingInt(Member::ordinal));
-            return selected.iterator();
-        }
-        if (layerMembers != null) return layerMembers.iterator();
-        return members.values()
+        if (selection.scope() == 2) return selected.iterator();
+        if (selection.scope() == 1) return layerMembers.iterator();
+        return topology.members.values()
             .iterator();
     }
 
@@ -518,6 +716,74 @@ final class HologramDeclaredNativeConstruction {
             && HologramDeclaredNativeSelection.coordinate(c);
     }
 
+    /** Check only provable mandatory markers, before any setter or stock debit; never read the ordinary shell here. */
+    private void checkWholePrerequisite() throws IOException {
+        if (prerequisiteBatch == batches.size()) {
+            prerequisiteChecked = true;
+            return;
+        }
+        var group = batches.get(prerequisiteBatch);
+        if (prerequisiteOffset == 0) prerequisiteRequired = mandatoryHatch(group.positions.get(0).element);
+        if (!prerequisiteRequired) {
+            prerequisiteBatch++;
+            return;
+        }
+        Member member = group.positions.get(prerequisiteOffset++);
+        requireMemberCurrent(member);
+        Offset p = member.position;
+        var cell = new HologramCapture.Cell(
+            member.element,
+            ax + p.x(),
+            ay + p.y(),
+            az + p.z(),
+            member.definition.piece.trigger);
+        World world = endpoint.world;
+        if (!HologramWorldFlow.worldPosition(cell.x, cell.y, cell.z, world.getHeight())
+            || !world.blockExists(cell.x, cell.y, cell.z)) throw refused("必需仓室位置未加载或无效：" + coordinates(p) + "。");
+        Hatch selected = edits.get(p); // Both explicit edits and native preset choices arrive here.
+        if (selected != null) {
+            if (session.noHatches) throw refused("不放仓室的设置与已选必需仓室冲突：" + coordinates(p) + "。");
+            requireHatchFacing(cell, selected, hatch(selected.id()));
+        } else {
+            var block = world.getBlock(cell.x, cell.y, cell.z);
+            var present = world.getTileEntity(cell.x, cell.y, cell.z);
+            if (!compatibleHatch(cell, block, present) && defaultMaterial(member, cell, group) == null)
+                throw refused("必需仓室尚未指定或现有仓室不匹配：" + coordinates(p) + "。未放置或扣料。");
+        }
+        if (prerequisiteOffset == group.positions.size()) {
+            prerequisiteBatch++;
+            prerequisiteOffset = 0;
+        }
+    }
+
+    private static String coordinates(Offset p) {
+        return "(" + p.x() + ", " + p.y() + ", " + p.z() + ")";
+    }
+
+    private static void requireMemberCurrent(Member member) throws IOException {
+        if (member.definition.elements[member.index] != member.element)
+            throw refused("原生声明在施工期间已变化：" + coordinates(member.position) + "。");
+    }
+
+    private int[] requireHatchFacing(HologramCapture.Cell cell, Hatch edit, ItemStack item) throws IOException {
+        int[] legal = HologramCellPolicy.previewHatchFacings(cell, item, detached, facing);
+        if (legal.length == 0 || edit.facing() >= 0 && Arrays.stream(legal)
+            .noneMatch(d -> d == edit.facing()))
+            throw refused("所选仓室的类型、等级或方向不符合该格的原生声明：" + coordinates(edit.position()) + "。");
+        return legal;
+    }
+
+    private boolean compatibleHatch(HologramCapture.Cell cell, Block block, net.minecraft.tileentity.TileEntity tile) {
+        if (block != GregTechAPI.sBlockMachines || !(tile instanceof BaseMetaTileEntity base)
+            || base.getMetaTileEntity() == null
+            || base.getFrontFacing() == null) return false;
+        int installedFacing = base.getFrontFacing()
+            .ordinal();
+        for (int legal : HologramCellPolicy.previewHatchFacings(cell, hatch(base.getMetaTileID()), detached, facing))
+            if (legal == installedFacing) return true;
+        return false;
+    }
+
     private String family(Member member) {
         var fallback = HologramCasingFallback.resolve(member.element, member.definition.piece.trigger);
         var group = HologramReplacementFamily
@@ -526,7 +792,8 @@ final class HologramDeclaredNativeConstruction {
     }
 
     private Target prepare(Member member, DeclarationBatch batch) throws IOException {
-        if (!includes(member)) return null;
+        if (batch == null && !includes(member)) return null;
+        requireMemberCurrent(member);
         Offset p = member.position;
         var cell = new HologramCapture.Cell(
             member.element,
@@ -545,7 +812,7 @@ final class HologramDeclaredNativeConstruction {
         }
         Block existing = world.getBlock(cell.x, cell.y, cell.z);
         var present = world.getTileEntity(cell.x, cell.y, cell.z);
-        if (HologramElementCatalog.nativeAir(member.element)) {
+        if (batch == null ? HologramElementCatalog.nativeAir(member.element) : batch.isNativeAir(member.element)) {
             if (edit != null || existing != Blocks.air || present != null) throw refused("原生声明空位已被占用或误选。");
             if (selection.scope() == 2) throw refused("所选位置是原生留空，不是可放置格。");
             return null;
@@ -557,24 +824,13 @@ final class HologramDeclaredNativeConstruction {
         if (edit != null) {
             if (session.noHatches) throw refused("当前不放仓室的配置与手选仓室冲突。");
             item = hatch(edit.id());
-            legal = HologramCellPolicy.previewHatchFacings(cell, item, detached, facing);
-            // The handshake may leave direction unspecified, not permit a different requested exact facing.
-            if (legal.length == 0 || edit.facing() >= 0 && Arrays.stream(legal)
-                .noneMatch(d -> d == edit.facing())) throw refused("所选仓室的类型、等级或方向不符合该格的原生声明。");
+            legal = requireHatchFacing(cell, edit, item);
             requestedFacing = edit.facing() >= 0 ? edit.facing() : legal[0];
             stateful = true;
         } else {
-            if (existing == GregTechAPI.sBlockMachines && present instanceof BaseMetaTileEntity base
-                && base.getMetaTileEntity() != null) {
-                int installedFacing = base.getFrontFacing() == null ? -1
-                    : base.getFrontFacing()
-                        .ordinal();
-                if (installedFacing >= 0 && Arrays
-                    .stream(HologramCellPolicy.previewHatchFacings(cell, hatch(base.getMetaTileID()), detached, facing))
-                    .anyMatch(d -> d == installedFacing)) {
-                    targets++;
-                    return null; // Compatible installed device is not touched or charged.
-                }
+            if (compatibleHatch(cell, existing, present)) {
+                targets++;
+                return null; // Compatible installed device is not touched or charged.
             }
             item = defaultMaterial(member, cell, batch);
             if (item == null && existing == Blocks.air && present == null && mandatoryHatch(member.element)) {
@@ -809,30 +1065,26 @@ final class HologramDeclaredNativeConstruction {
         if (batch != null && batch.fixedMaterial != null) return batch.fixedMaterial.copy();
         ItemStack signal = member.definition.piece.trigger;
         var byElement = constantBlockDefaults.computeIfAbsent(member.definition, ignored -> new IdentityHashMap<>());
-        var casing = byElement.get(member.element);
-        if (casing == null) {
-            casing = HologramCasingFallback.resolve(member.element, signal);
-            if (casing != null) {
-                var factory = HologramDeclarationWrappers.factory(member.element.getClass());
-                // Only native ofBlock closes over immutable block and metadata fields. Do not memoize
-                // arbitrary alternatives, mutable tier lists or the answer of any world-aware adapter.
-                if (factory != null
-                    && factory.getDeclaringClass() == com.gtnewhorizon.structurelib.structure.StructureUtility.class
-                    && "ofBlock".equals(factory.getName())
-                    && HologramDeclarationAdapters.declaration(member.element) == null)
-                    byElement.put(member.element, casing);
+        var fixed = byElement.get(member.element);
+        var casing = fixed != null ? fixed : HologramCasingFallback.resolve(member.element, signal);
+        if (casing != null && fixed == null) {
+            var factory = HologramDeclarationWrappers.factory(member.element.getClass());
+            // Do not memoize mutable tier lists, dynamic wrappers or a result read through an adapter.
+            if (factory != null
+                && factory.getDeclaringClass() == com.gtnewhorizon.structurelib.structure.StructureUtility.class
+                && "ofBlock".equals(factory.getName())
+                && HologramDeclarationAdapters.declaration(member.element) == null) {
+                fixed = casing;
+                byElement.put(member.element, casing);
             }
         }
         if (casing != null) {
             ItemStack exact = HologramBlockIdentity.materialStack(casing.block, casing.meta);
-            if (batch != null && exact != null) batch.fixedMaterial = exact.copy();
+            if (batch != null && fixed != null && exact != null) batch.fixedMaterial = exact.copy();
             return exact;
         }
         var frame = HologramFrameSupport.target(member.element);
-        if (frame != null) {
-            if (batch != null) batch.fixedMaterial = frame.copy();
-            return frame;
-        }
+        if (frame != null) return frame;
         return declaredDefault(member.element, cell, signal, new IdentityHashMap<>(), new int[1], 0);
     }
 
@@ -1023,6 +1275,7 @@ final class HologramDeclaredNativeConstruction {
         reason = "已停止原生操作，已确认的世界与材料变更保留。";
         state = State.STOPPED;
         if (timing != null) timing.finish(System.nanoTime());
+        finishTrace();
         return true;
     }
 

@@ -175,6 +175,10 @@ final class HologramStockNativeServer {
 
     /** Called only by the existing server scheduler. One actual tick budget, no forced disk/whole-plan work. */
     void tick(long deadline) {
+        tick(deadline, HologramDeclaredNativeConstruction.PlacementWindow.ALL);
+    }
+
+    void tick(long deadline, HologramDeclaredNativeConstruction.PlacementWindow placementWindow) {
         if (draining) return;
         draining = true;
         try {
@@ -205,7 +209,7 @@ final class HologramStockNativeServer {
                     synchronized (inbound) {
                         return resetRequested || stopQueued.contains(job.key) ? null : gate.beginTransaction(lease);
                     }
-                });
+                }, placementWindow);
                 if (state == HologramStockNativeConstruction.State.ACTIVE) {
                     if (job.entry.placed() != job.reported) {
                         job.reported = job.entry.placed();

@@ -23,6 +23,7 @@ import com.miaokatze.gtmb.client.hologram.HologramOwnedPlacementProgress.Outcome
 import com.miaokatze.gtmb.client.hologram.HologramOwnedPlacementProgress.Phase;
 import com.miaokatze.gtmb.client.hologram.HologramOwnedPlacementProgress.Ticket;
 import com.miaokatze.gtmb.hologram.HologramNetwork;
+import com.miaokatze.gtmb.hologram.HologramPlacementTiming;
 import com.miaokatze.gtmb.hologram.HologramPrivateNativeWire;
 import com.miaokatze.gtmb.hologram.HologramPrivateNativeWire.Reply;
 import com.miaokatze.gtmb.hologram.HologramPrivateNativeWire.Request;
@@ -79,6 +80,7 @@ public final class HologramClientRemoteNativePlacement {
         Task task = new Task(owner, req, client.getNetHandler(), client.theWorld);
         task.ticket = HologramBackgroundTasks.beginOwnedPlacement(req.id, "原生蓝图施工", task::cancel);
         if (task.ticket == null) return false;
+        HologramPlacementTiming.clientRequest("blueprint", req.id);
         active = task;
         owner.projectedWork(() -> {
             var version = NativeBlueprintPairStore.watchForAdmission(receipt);
@@ -104,6 +106,7 @@ public final class HologramClientRemoteNativePlacement {
                         return;
                     }
                     task.begun = true;
+                    HologramPlacementTiming.clientPhase("blueprint", req.id, "begin");
                     wire.accept(req);
                 });
             } catch (IOException | RuntimeException e) {
@@ -219,9 +222,14 @@ public final class HologramClientRemoteNativePlacement {
                         finish(Outcome.FAILED, 0, 0, 0, "原生源读取失败");
                     });
                 }
-                case PROGRESS -> HologramBackgroundTasks
-                    .observeOwnedPlacement(ticket, Phase.EXECUTING, m.seq, (long) m.placed + m.satisfied, m.total);
+                case PROGRESS -> {
+                    Phase phase = HologramPrivateNativeWire.PREPARING_PROGRESS.equals(m.message) ? Phase.ADMISSION
+                        : Phase.EXECUTING;
+                    HologramBackgroundTasks
+                        .observeOwnedPlacement(ticket, phase, m.seq, (long) m.placed + m.satisfied, m.total);
+                }
                 case COMPLETE -> {
+                    HologramPlacementTiming.clientPhase("blueprint", begin.id, "complete_seen");
                     boolean accepted = HologramBackgroundTasks.acceptOwnedPlacementCommit(
                         ticket,
                         new CommitReceipt(
