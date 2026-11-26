@@ -5,7 +5,6 @@ package com.miaokatze.gtmb.client.hologram;
 
 import java.lang.reflect.Field;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -48,7 +47,6 @@ import cpw.mods.fml.common.network.simpleimpl.SimpleNetworkWrapper;
 import cpw.mods.fml.relauncher.Side;
 import gregtech.api.GregTechAPI;
 import gregtech.api.metatileentity.BaseMetaTileEntity;
-import gregtech.api.metatileentity.implementations.MTEHatchCokeOven;
 import gregtech.common.tileentities.machines.multi.MTECokeOven;
 import io.netty.buffer.Unpooled;
 
@@ -134,8 +132,6 @@ public final class HologramStockNativeClientRegression {
 
         var controller = new MTECokeOven("gtmb_stock_client_fixture");
         var controllerTile = (BaseMetaTileEntity) unsafe.allocateInstance(BaseMetaTileEntity.class);
-        var hatchTile = (BaseMetaTileEntity) unsafe.allocateInstance(BaseMetaTileEntity.class);
-        var hatch = (MTEHatchCokeOven) unsafe.allocateInstance(MTEHatchCokeOven.class);
         controllerTile.setWorldObj(world);
         controllerTile.yCoord = 64;
         controllerTile.setMetaTileID((short) 236);
@@ -144,15 +140,7 @@ public final class HologramStockNativeClientRegression {
         int[] coords = new int[3];
         controller.getExtendedFacing()
             .getWorldOffset(new int[] { 1, 1, 2 }, coords);
-        hatchTile.setWorldObj(world);
-        hatchTile.xCoord = coords[0];
-        hatchTile.yCoord = 64 + coords[1];
-        hatchTile.zCoord = coords[2];
-        hatchTile.setMetaTileID((short) 237);
-        field(BaseMetaTileEntity.class, "mFacing").set(hatchTile, ForgeDirection.WEST);
-        hatch.setBaseMetaTileEntity(hatchTile);
         world.anchor = controllerTile;
-        world.hatch = hatchTile;
 
         client.thePlayer = player;
         client.theWorld = world;
@@ -167,16 +155,17 @@ public final class HologramStockNativeClientRegression {
         field(HologramScreen.class, "openingTool").set(screen, projector);
         field(HologramScreen.class, "openingToolId").set(screen, tag.getString("gtitHologramToolId"));
         field(HologramScreen.class, "localControllerSide").set(screen, 2);
-        field(HologramScreen.class, "localNativeChoices").set(screen, new LinkedHashSet<Integer>());
-        field(HologramScreen.class, "localPresetChoices").set(screen, new LinkedHashSet<Integer>());
         NBTTagCompound metadata = new NBTTagCompound();
         metadata.setBoolean("localStandardController", true);
         metadata.setBoolean("supported", true);
         metadata.setBoolean("target", true);
         metadata.setBoolean("projectionDataComplete", true);
+        metadata.setBoolean("nativeExecutionSupported", true);
+        metadata.setString("nativeTargetDigest", String.join("", java.util.Collections.nCopies(64, "a")));
         metadata.setInteger("siteOccupied", 0);
         metadata.setInteger("siteMatchingSolid", 0);
         metadata.setInteger("main", 1);
+        metadata.setInteger("hatchTierMax", 12);
         metadata.setInteger(
             "facing",
             controller.getExtendedFacing()
@@ -186,13 +175,56 @@ public final class HologramStockNativeClientRegression {
         row.setInteger("y", 64 + coords[1]);
         row.setInteger("z", coords[2]);
         row.setBoolean("inScope", true);
+        row.setString("id", "minecraft:air");
         row.setString("wantId", "minecraft:stone");
+        row.setTag("targetStack", new ItemStack(Blocks.stone).writeToNBT(new NBTTagCompound()));
         var cells = new NBTTagList();
         cells.appendTag(row);
         metadata.setTag("cells", cells);
+        var nativeState = screen.nativeControllerState();
+        nativeState.targetReady();
+        nativeState.observe(
+            new HologramStockNativeWire.ServerObservation(
+                236,
+                0,
+                64,
+                0,
+                HologramStockNativeWire.Stage.CONTROLLER_ONLY,
+                1,
+                nativeState.targetRevision(),
+                ""));
+        NBTTagCompound actionState = nativeState.metadata();
+        for (Object key : actionState.func_150296_c()) metadata.setTag(
+            (String) key,
+            actionState.getTag((String) key)
+                .copy());
         var displayed = new HologramState(metadata);
         field(HologramUiSession.class, "state").set(ui.session, displayed);
         field(HologramScreen.class, "localControllerBaseline").set(screen, displayed);
+        field(HologramScreen.class, "nativeTargetSettings").set(screen, ui.config.configuration());
+        ui.config.activateControl(94);
+        SimpleAssert.that(
+            !ui.config.basicPresetActionAvailable(),
+            "an owned fresh target still requires an explicit preset tier");
+        ui.config.activateControl(1700);
+        for (int mode : new int[] { 0, 1, 2 }) {
+            NBTTagCompound renderMode = new NBTTagCompound();
+            renderMode.setInteger("mode", mode);
+            field(HologramUiSession.class, "state").set(ui.session, displayed.withMetadata(renderMode));
+            SimpleAssert.that(
+                ui.config.basicPresetActionAvailable(),
+                "native target configuration stays editable in render mode " + mode);
+        }
+        field(HologramUiSession.class, "state").set(ui.session, displayed);
+        ui.config.activateControl(96);
+        var presetConfiguration = new NBTTagCompound();
+        presetConfiguration.setBoolean("presetActive", false);
+        presetConfiguration.setInteger("hatchTier", 0);
+        presetConfiguration.setBoolean("hatchDowngrade", true);
+        presetConfiguration.setTag("hatchProfile", new NBTTagList());
+        displayed = displayed.withMetadata(presetConfiguration);
+        field(HologramUiSession.class, "state").set(ui.session, displayed);
+        field(HologramScreen.class, "nativeTargetSettings").set(screen, ui.config.configuration());
 
         var networkChannel = field(HologramNetwork.class, "channel");
         Object previousChannel = networkChannel.get(null);
@@ -205,15 +237,19 @@ public final class HologramStockNativeClientRegression {
             (reply, inbound) -> HologramClientStockNative.OWNER
                 .receive(reply, inbound, HologramClientStockNative.context(client), System.nanoTime()));
         try {
+            verifyNativeRecoveryRouting(ui, screen, displayed, recorded, connection);
             SimpleAssert.that(
                 ui.preview.activateControl(26) && ui.review.localFrame() != null
                     && ui.review.localFrame()
                         .scope()
-                        .contains("现场")
+                        .contains("当前完整结构")
                     && ui.review.localSubmitLabel()
-                        .equals("确认新建")
+                        .equals("确认建造")
                     && recorded.sent.isEmpty(),
-                "bare-site confirmation uses the declaration and remains local, without calling the retired coke profile");
+                "controller-only review uses the full native target and remains local until the existing submit widget is clicked");
+            SimpleAssert.that(
+                !ui.review.localRecoveryAvailable(),
+                "BUILD has no old blocks to recover and hides the recovery selector");
             SimpleAssert.that(
                 !screen.reviewLocalConstruction(ui.config.configuration()) && recorded.sent.isEmpty(),
                 "former direct/default scan/preflight cannot masquerade as visible confirmation");
@@ -236,6 +272,33 @@ public final class HologramStockNativeClientRegression {
             SimpleAssert.that(
                 recorded.sent.size() == 1 && command(recorded.sent.get(0)) == Command.PROBE,
                 "actual existing material button emits exactly one cold proof request and no eager BEGIN");
+            var projectionConfig = recorded.sent.get(0)
+                .getCompoundTag("projectionConfiguration");
+            SimpleAssert.eq(
+                new java.util.LinkedHashSet<>(
+                    java.util.Arrays.asList("presetActive", "hatchTier", "hatchDowngrade", "hatchProfile")),
+                projectionConfig.func_150296_c(),
+                "real Screen confirmation sends only the four preset fields in the strict projection configuration");
+            SimpleAssert.that(
+                !projectionConfig.getBoolean("presetActive") && projectionConfig.hasKey("hatchTier", 3)
+                    && projectionConfig.getInteger("hatchTier") == 0
+                    && projectionConfig.getBoolean("hatchDowngrade")
+                    && projectionConfig.hasKey("hatchProfile", 9),
+                "false preset activation, explicit ULV and exact NBT types survive the real UI codec");
+            SimpleAssert.that(
+                ui.config.configuration()
+                    .hasKey("scope")
+                    && ui.config.configuration()
+                        .hasKey("materialMain")
+                    && recorded.sent.get(0)
+                        .getInteger("main")
+                        == ui.config.configuration()
+                            .getInteger("main")
+                    && recorded.sent.get(0)
+                        .hasKey("projectionChannels", 10)
+                    && recorded.sent.get(0)
+                        .getIntArray("projectionHatches").length == 0,
+                "UI admission and source settings stay outside preset configuration; no automatic hatches become explicit choices");
             SimpleAssert.that(
                 ui.review.localFrame() != null && ui.review.localFrame()
                     .status()
@@ -250,13 +313,10 @@ public final class HologramStockNativeClientRegression {
             field(HologramUiSession.class, "state").set(ui.session, displayed.withMetadata(hudOnly));
             // Forge may publish another identical stack instance for the same slot/tool. Neither is a new authority.
             player.inventory.mainInventory[0] = projector.copy();
-            var changed = new NBTTagCompound();
-            changed.setLong("planRevision", displayed.data.getLong("planRevision") + 1);
-            SimpleAssert.that(
-                HologramScreen.sameNativeReview(displayed, ui.session.state())
-                    && !HologramScreen.sameNativeReview(displayed, displayed.withMetadata(changed))
-                    && !HologramScreen.sameNativeReview(displayed, new HologramState(metadata)),
-                "HUD-only state is admissible; different plan revision or new geometry is not");
+            SimpleAssert.eq(
+                displayed.data.getLong("nativeTargetRevision"),
+                ui.session.state().data.getLong("nativeTargetRevision"),
+                "a HUD-only update preserves the frozen target revision");
             Key cold = key(recorded.sent.get(0), 71);
             var proof = new Reply(cold, Phase.CAPABLE, 0, "");
             deliver(proof, other);
@@ -321,6 +381,90 @@ public final class HologramStockNativeClientRegression {
         staleProofFlow();
         lostAndUnsentFlow();
         detachedPlacementFlow();
+    }
+
+    private static void verifyNativeRecoveryRouting(HologramUiModules ui, HologramScreen screen,
+        HologramState displayed, RecordingWire recorded, NetHandlerPlayClient connection)
+        throws ReflectiveOperationException {
+        var state = screen.nativeControllerState();
+        for (var action : new HologramStockNativeWire.Operation[] { HologramStockNativeWire.Operation.REPAIR,
+            HologramStockNativeWire.Operation.REPLACE }) {
+            var stage = action == HologramStockNativeWire.Operation.REPAIR ? HologramStockNativeWire.Stage.UNFORMED
+                : HologramStockNativeWire.Stage.FORMED;
+            state.observe(
+                new HologramStockNativeWire.ServerObservation(
+                    236,
+                    0,
+                    64,
+                    0,
+                    stage,
+                    2 + action.ordinal(),
+                    state.targetRevision(),
+                    ""));
+            SimpleAssert.that(state.select(action), "matching observed stage admits recovery test action");
+            field(HologramUiSession.class, "state").set(ui.session, displayed.withMetadata(state.metadata()));
+            SimpleAssert.that(
+                ui.review.openNativeLocalMaterials() && ui.review.localRecoveryAvailable(),
+                "repair and replacement expose recovery destination in their own current material pane");
+            clickExistingRecovery(ui);
+            SimpleAssert
+                .eq(1, ui.review.nativeRecoveryDestination(), "real recovery widget chooses AE before confirmation");
+            clickExistingSubmit(ui);
+            SimpleAssert.eq(1, recorded.sent.size(), "one repair/replacement footer click sends one cold PROBE");
+            var probe = recorded.sent.get(0);
+            SimpleAssert.that(
+                probe.getInteger("projectionOperation") == action.ordinal() && probe.getInteger("destination") == 1
+                    && (probe.getInteger("sources") & 32) == 32,
+                "real confirmation freezes AE recovery in projection and source mask bit 5 for " + action);
+            SimpleAssert
+                .that(!ui.review.localRecoveryAvailable(), "pending confirmation locks the recovery destination");
+            Key key = key(probe, 71);
+            deliver(new Reply(key, Phase.CAPABLE, 0, ""), connection);
+            SimpleAssert.that(
+                recorded.sent.size() == 2 && command(recorded.sent.get(1)) == Command.BEGIN_AFTER_PROBE
+                    && recorded.sent.get(1)
+                        .getInteger("destination") == 1
+                    && recorded.sent.get(1)
+                        .getInteger("sources") == probe.getInteger("sources"),
+                "unchanged source snapshot admits the exact AE recovery intent after proof for " + action);
+            deliver(new Reply(key, Phase.REFUSED, 0, "Fixture recovery terminal"), connection);
+            SimpleAssert.that(
+                ui.review.localRecoveryAvailable() && !screen.stockNativePending(),
+                "terminal refusal releases the same recovery selector");
+            clickExistingRecovery(ui);
+            SimpleAssert
+                .eq(0, ui.review.nativeRecoveryDestination(), "real recovery widget restores inventory destination");
+            ui.review.closeLocalMaterials();
+            recorded.sent.clear();
+        }
+        state.observe(
+            new HologramStockNativeWire.ServerObservation(
+                236,
+                0,
+                64,
+                0,
+                HologramStockNativeWire.Stage.CONTROLLER_ONLY,
+                1,
+                state.targetRevision(),
+                ""));
+        field(HologramUiSession.class, "state").set(ui.session, displayed.withMetadata(state.metadata()));
+    }
+
+    private static void clickExistingRecovery(HologramUiModules ui) throws ReflectiveOperationException {
+        var dialog = new HologramMaterialConfirmationDialog(
+            new ModularPanel("gtmb_stock_recovery_fixture"),
+            ui,
+            ui.review);
+        var build = HologramMaterialConfirmationDialog.class.getDeclaredMethod("build");
+        build.setAccessible(true);
+        build.invoke(dialog);
+        var widgets = (Map<?, ?>) field(HologramMaterialConfirmationDialog.class, "controlWidgets").get(dialog);
+        var recovery = (ButtonWidget<?>) widgets.get(252);
+        SimpleAssert.that(recovery != null, "recovery destination is the real control 252");
+        recovery.playClickSound(false);
+        recovery.onUpdate();
+        SimpleAssert
+            .eq(Interactable.Result.SUCCESS, recovery.onMousePressed(0), "real recovery control handles the click");
     }
 
     private static void detachedPlacementFlow() {
@@ -431,8 +575,8 @@ public final class HologramStockNativeClientRegression {
         });
         var sender = new Object();
         var scope = new HologramClientStockNative.Context(sender, new Object(), new Object(), 0);
-        var nonce = new Key(UUID.randomUUID(), 1, 0);
-        var exact = new Confirmation(nonce, 0, UUID.randomUUID(), 0, 64, 0, 2, 0, 0, 1, false, false, 0, 1, 1, 2, 4);
+        var exact = flowIntent(1);
+        var nonce = exact.key();
         boolean[] current = { true };
         var owner = new HologramClientStockNative.Owner(
             new Object(),
@@ -512,7 +656,7 @@ public final class HologramStockNativeClientRegression {
     }
 
     private static Confirmation flowIntent(long sequence) {
-        return new Confirmation(
+        return Confirmation.projection(
             new Key(UUID.randomUUID(), sequence, 0),
             0,
             UUID.randomUUID(),
@@ -525,11 +669,14 @@ public final class HologramStockNativeClientRegression {
             1,
             false,
             false,
-            0,
             1,
-            1,
-            2,
-            4);
+            new HologramStockNativeWire.Projection(
+                236,
+                HologramStockNativeWire.Operation.BUILD,
+                java.util.Collections.emptyMap(),
+                java.util.Collections.emptyList(),
+                0,
+                sequence).withNativeTargetDigest(String.join("", java.util.Collections.nCopies(64, "a"))));
     }
 
     private static void clickExistingSubmit(HologramUiModules ui) throws ReflectiveOperationException {
@@ -539,7 +686,10 @@ public final class HologramStockNativeClientRegression {
     private static void clickExistingSubmit(HologramUiModules ui, boolean expectedAvailable)
         throws ReflectiveOperationException {
         SimpleAssert.eq(expectedAvailable, ui.review.localSubmitAvailable(), "exact local pane submit availability");
-        var dialog = new HologramMaterialConfirmationDialog(new ModularPanel("gtmb_stock_button_fixture"), ui.review);
+        var dialog = new HologramMaterialConfirmationDialog(
+            new ModularPanel("gtmb_stock_button_fixture"),
+            ui,
+            ui.review);
         var build = HologramMaterialConfirmationDialog.class.getDeclaredMethod("build");
         build.setAccessible(true);
         ModularPanel panel = (ModularPanel) build.invoke(dialog);
@@ -628,6 +778,11 @@ public final class HologramStockNativeClientRegression {
                 var decoded = new HologramNetwork.Action();
                 decoded.fromBytes(data);
                 var tag = (NBTTagCompound) field(HologramNetwork.Packet.class, "tag").get(decoded);
+                var read = HologramStockNativeWire.class.getDeclaredMethod("readRequest", NBTTagCompound.class);
+                read.setAccessible(true);
+                SimpleAssert.that(
+                    read.invoke(null, tag) != null,
+                    "actual Screen confirmation passes the unchanged native ingress decoder after the real Forge codec");
                 SimpleAssert
                     .that(!tag.hasKey("cells") && !tag.hasKey("geometry"), "no client geometry in stock messages");
                 sent.add(tag);
@@ -641,7 +796,7 @@ public final class HologramStockNativeClientRegression {
 
     private static final class CokeWorld extends WorldClient {
 
-        TileEntity anchor, hatch;
+        TileEntity anchor;
 
         CokeWorld() {
             super(null, null, 0, null, null);
@@ -655,7 +810,7 @@ public final class HologramStockNativeClientRegression {
         @Override
         public TileEntity getTileEntity(int x, int y, int z) {
             if (anchor.xCoord == x && anchor.yCoord == y && anchor.zCoord == z) return anchor;
-            return hatch.xCoord == x && hatch.yCoord == y && hatch.zCoord == z ? hatch : null;
+            return null;
         }
 
         @Override

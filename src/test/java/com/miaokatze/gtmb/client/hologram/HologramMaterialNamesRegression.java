@@ -83,7 +83,7 @@ public final class HologramMaterialNamesRegression {
                     @Override
                     public void localAction(HologramMaterialConfirmationDialog.LocalAction action) {}
                 });
-            verifySelectedChanges(item, first, second);
+            verifyWholeTargetChanges(item, first, second);
             var a = dialog.descriptionMaterial(row(HOST, first));
             var b = dialog.descriptionMaterial(row(HOST, second));
             SimpleAssert.eq("First hatch", a.name, "real localized machine subtype label");
@@ -120,11 +120,16 @@ public final class HologramMaterialNamesRegression {
             null);
     }
 
-    private static void verifySelectedChanges(ItemMachines item, int first, int second) {
+    private static void verifyWholeTargetChanges(ItemMachines item, int first, int second) {
         var data = new net.minecraft.nbt.NBTTagCompound();
         var list = new net.minecraft.nbt.NBTTagList();
         data.setBoolean("localStandardController", true);
         data.setInteger("mode", 1);
+        data.setInteger(
+            "nativeAction",
+            com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.REPLACE.ordinal());
+        data.setLong("nativeTargetRevision", 1);
+        data.setBoolean("nativeTargetReady", true);
         for (int i = 0; i < 6; i++) {
             var row = new net.minecraft.nbt.NBTTagCompound();
             row.setInteger("x", i + 1);
@@ -157,35 +162,43 @@ public final class HologramMaterialNamesRegression {
         var rows = review.visible()
             .getTagList("rows", 10);
         SimpleAssert.that(
-            delta.blocker.isEmpty() && delta.exchanges == 2
+            delta.blocker.isEmpty() && delta.exchanges == 4
                 && delta.turns == 1
                 && delta.unchanged == 1
                 && rows.tagCount() == 2,
-            "only selected site/target pairs contribute");
+            "all target/site pairs contribute, independently of a visual hatch selection");
         var swap = rows.getCompoundTagAt(0);
-        var turn = rows.getCompoundTagAt(1);
+        var recovery = rows.getCompoundTagAt(1);
         SimpleAssert.that(
-            swap.getLong("required") == 2 && swap.getCompoundTag("item")
+            swap.getLong("required") == 4 && swap.getCompoundTag("item")
                 .getShort("Damage") == second
-                && swap.getString("hatchChange")
-                    .contains("First hatch")
-                && turn.getLong("required") == 0,
-            "two identical swaps grouped with real old item; facing change zero; unselected cells excluded");
+                && "Second hatch".equals(swap.getString("label"))
+                && recovery.getLong("required") == 0
+                && recovery.getCompoundTag("item")
+                    .getShort("Damage") == first
+                && "First hatch".equals(recovery.getString("label"))
+                && recovery.getString("hatchChange")
+                    .contains("4"),
+            "full-target swaps retain exact subtype names and distinct recovery identity; rotation charges no new item");
         settings.setIntArray("selectedIndices", new int[] { 0, 4 });
         review = new HologramLocalMaterialReview(state, settings);
         SimpleAssert.that(
-            !review.hatchDelta.blocker.isEmpty() && review.visible()
-                .getTagList("rows", 10)
-                .tagCount() == 0,
-            "one unproved old hatch never yields a partial or whole-structure bill");
+            review.hatchDelta.exchanges == 4 && review.hatchDelta.turns == 1,
+            "changing the visual selection cannot shrink the full native replacement estimate");
+        list.getCompoundTagAt(4)
+            .setBoolean("localObservationMissing", true);
+        var partiallyObserved = new HologramState(data);
         settings.setInteger("scope", 0);
         settings.setIntArray("selectedIndices", new int[0]);
-        review = new HologramLocalMaterialReview(state, settings);
+        review = new HologramLocalMaterialReview(partiallyObserved, settings);
         SimpleAssert.that(
-            !review.hatchDelta.blocker.isEmpty() && review.visible()
-                .getTagList("rows", 10)
-                .tagCount() == 0,
-            "missing explicit scope has no fallback to full construction");
+            review.ready() && review.hatchDelta.unknown == 1
+                && review.hatchDelta.exchanges == 3
+                && review.visible()
+                    .getInteger("unaccounted") == 1
+                && !review.visible()
+                    .getBoolean("complete"),
+            "unread world data stays explicitly unaccounted and cannot grant authoritative zero-cost or ownership proof");
     }
 
     private static MTEHatchOutputBusME prototype(String name) throws Exception {

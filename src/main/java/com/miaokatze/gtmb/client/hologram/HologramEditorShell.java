@@ -4,6 +4,7 @@
 package com.miaokatze.gtmb.client.hologram;
 
 import static com.miaokatze.gtmb.client.hologram.HologramUiText.projector;
+import static com.miaokatze.gtmb.client.hologram.HologramUiText.projectorOr;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -159,7 +160,8 @@ final class HologramEditorShell {
             .childPadding(4)
             .background(HologramEditorNativeTheme.PANEL)
             .child(
-                HologramEditorNativeTheme.button(() -> "\u7ed3\u6784\u5217\u8868  \u2039", this::toggleStructures)
+                HologramEditorNativeTheme
+                    .button(() -> projectorOr("native_common.structure_list", "结构列表  ‹"), this::toggleStructures)
                     .widthRel(1f)
                     .height(22));
         if (!deferHiddenPanes || structuresOpen) mountStructureList();
@@ -177,10 +179,9 @@ final class HologramEditorShell {
                 .right(8)
                 .top(8));
         viewport.child(
-            HologramEditorNativeTheme
-                .label(
-                    () -> "\u7b49\u8ddd \u00b7 \u6b63\u4ea4   " + ui.session.state().cells.size() + " \u683c",
-                    0xffc6c7c1)
+            HologramEditorNativeTheme.label(
+                () -> projectorOr("native_common.viewport_caption", "等距 · 正交   %s 格", ui.session.state().cells.size()),
+                0xffc6c7c1)
                 .name("editor_native_viewport_caption")
                 .pos(10, 10)
                 .size(140, 12));

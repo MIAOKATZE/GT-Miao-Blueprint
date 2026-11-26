@@ -4,6 +4,7 @@
 package com.miaokatze.gtmb.client.hologram;
 
 import static com.miaokatze.gtmb.client.hologram.HologramUiCanvas.*;
+import static com.miaokatze.gtmb.client.hologram.HologramUiText.projectorOr;
 import static net.minecraft.client.gui.Gui.*;
 import static net.minecraft.client.gui.GuiScreen.isCtrlKeyDown;
 import static net.minecraft.client.gui.GuiScreen.isShiftKeyDown;
@@ -227,7 +228,12 @@ final class HologramUiPreview {
                 if (ui.session.controllerOpening()) {
                     String message = HologramClient.text("controllerReading", "Checking the structure…  Esc to close");
                     ui.canvas.sceneText(message, viewportX() + 8, viewportY() + 24, viewportWidth() - 16, 0xb9d5d4);
-                } else ui.canvas.sceneText("正在准备蓝图", viewportX() + 8, viewportY() + 12, 160, 0xb9d5d4);
+                } else ui.canvas.sceneText(
+                    projectorOr("native_common.preview.preparing", "正在准备蓝图"),
+                    viewportX() + 8,
+                    viewportY() + 12,
+                    160,
+                    0xb9d5d4);
                 return;
             }
             HologramState display = configureControllerSiteDisplay(viewport, snapshot);
@@ -285,13 +291,17 @@ final class HologramUiPreview {
     String viewControlLabel(int id) {
         boolean browse = ui.library.browsePreviewActive();
         return switch (id) {
-            case 10 -> new String[] { "\u76ee\u6807", "\u73b0\u573a", "\u5dee\u5206" }[view];
-            case 11 -> (browse ? browseAllLayers : allLayers) ? "\u5168\u90e8\u5c42"
-                : "\u5c42 " + (browse ? browseLayer : layer);
-            case 12 -> "\u4e0a\u4e00\u5c42";
-            case 13 -> "\u4e0b\u4e00\u5c42";
-            case 14 -> "\u590d\u4f4d\u89c6\u89d2";
-            case 15 -> "\u4e16\u754c\u6295\u5f71 " + (HologramClient.worldPreview ? "\u2713" : "\u00d7");
+            case 10 -> new String[] { projectorOr("native_common.view.target", "目标"),
+                projectorOr("native_common.view.actual", "现场"), projectorOr("native_common.view.diff", "差分") }[view];
+            case 11 -> (browse ? browseAllLayers : allLayers) ? projectorOr("native_common.view.all_layers", "全部层")
+                : projectorOr("native_common.view.layer_prefix", "层 %s", browse ? browseLayer : layer);
+            case 12 -> projectorOr("native_common.view.previous_layer", "上一层");
+            case 13 -> projectorOr("native_common.view.next_layer", "下一层");
+            case 14 -> projectorOr("native_common.view.reset", "复位视角");
+            case 15 -> projectorOr(
+                "native_common.view.world_prefix",
+                "世界投影 %s",
+                HologramClient.worldPreview ? "\u2713" : "\u00d7");
             default -> "";
         };
     }
@@ -317,7 +327,12 @@ final class HologramUiPreview {
             if (sourcePreparing()) {
                 hovered = -1;
                 viewport.waitingPreview(ui.session.state());
-                ui.canvas.sceneText("正在准备蓝图", viewportX() + 8, viewportY() + 12, 160, 0xb9d5d4);
+                ui.canvas.sceneText(
+                    projectorOr("native_common.preview.preparing", "正在准备蓝图"),
+                    viewportX() + 8,
+                    viewportY() + 12,
+                    160,
+                    0xb9d5d4);
                 return;
             }
             HologramState snapshot = ui.session.state();
@@ -346,8 +361,29 @@ final class HologramUiPreview {
         } finally {
             GL11.glPopAttrib();
         }
-        ui.canvas.button(10, 38, 55, 44, 17, new String[] { "目标", "现场", "差分" }[this.view], true, mx, my);
-        ui.canvas.button(11, 84, 55, 50, 17, this.allLayers ? "全部层" : "层 " + this.layer, true, mx, my);
+        ui.canvas.button(
+            10,
+            38,
+            55,
+            44,
+            17,
+            new String[] { projectorOr("native_common.view.target", "目标"),
+                projectorOr("native_common.view.actual", "现场"),
+                projectorOr("native_common.view.diff", "差分") }[this.view],
+            true,
+            mx,
+            my);
+        ui.canvas.button(
+            11,
+            84,
+            55,
+            50,
+            17,
+            this.allLayers ? projectorOr("native_common.view.all_layers", "全部层")
+                : projectorOr("native_common.view.layer_prefix", "层 %s", this.layer),
+            true,
+            mx,
+            my);
         ui.canvas.button(
             12,
             136,
@@ -370,17 +406,41 @@ final class HologramUiPreview {
                 .controllerView(view).maxY,
             mx,
             my);
-        if (this.selection.size() > 0)
-            ui.canvas.text("选中 " + this.selection.size() + " 格 · G 移动轴", 186, 61, 122, 0xffe59b);
-        if (this.selection.canSelectRelated(ui.session.state())) ui.canvas.text("全选 T", 264, 61, 42, 0xc99bff);
+        if (this.selection.size() > 0) ui.canvas.text(
+            projectorOr("native_common.preview.selection_count", "选中 %s 格 · G 移动轴", this.selection.size()),
+            186,
+            61,
+            122,
+            0xffe59b);
+        if (this.selection.canSelectRelated(ui.session.state()))
+            ui.canvas.text(projectorOr("native_common.preview.select_related", "全选 T"), 264, 61, 42, 0xc99bff);
         if (!ui.library.libraryDrawer()) ui.preview.drawMoveHandleControl(mx, my);
         if (!ui.library.libraryDrawer()) {
-            ui.canvas.button(14, 38, 282, 66, 17, "复位视角", true, mx, my);
-            ui.canvas.button(15, 106, 282, 74, 17, HologramClient.worldPreview ? "世界投影 ✓" : "世界投影 ×", true, mx, my);
+            ui.canvas.button(14, 38, 282, 66, 17, projectorOr("native_common.view.reset", "复位视角"), true, mx, my);
+            ui.canvas.button(
+                15,
+                106,
+                282,
+                74,
+                17,
+                HologramClient.worldPreview ? projectorOr("native_common.view.world_on", "世界投影 ✓")
+                    : projectorOr("native_common.view.world_off", "世界投影 ×"),
+                true,
+                mx,
+                my);
         }
         if (!ui.library.libraryDrawer()) {
             ui.config.drawResetButton(184, 282, 120, mx, my);
-            if (this.selected >= 0) ui.canvas.button(146, 310, 282, 132, 17, "所选格提示词", ui.session.editable(), mx, my);
+            if (this.selected >= 0) ui.canvas.button(
+                146,
+                310,
+                282,
+                132,
+                17,
+                projectorOr("native_common.preview.cell_hint", "所选格提示词"),
+                ui.session.editable(),
+                mx,
+                my);
         }
         if (this.moveHandles && ui.preview.canMoveSelection()
             && !ui.library.libraryDrawer()
@@ -390,19 +450,24 @@ final class HologramUiPreview {
             if (cell.missingBlock || cell.excluded || cell.sourceMissing) {
                 ui.canvas.tooltip(new ArrayList<>());
                 if (cell.missingBlock) ui.canvas.tooltip()
-                    .add("缺失方块：" + cell.wantId + "（点击查看来源版本）");
+                    .add(projectorOr("native_common.preview.missing_block", "缺失方块：%s（点击查看来源版本）", cell.wantId));
                 if (cell.sourceMissing) {
                     ui.canvas.tooltip()
                         .addAll(
                             ui.host.font()
-                                .listFormattedStringToWidth("来源结构缺失：" + cell.sourceWarning, 260));
+                                .listFormattedStringToWidth(
+                                    projectorOr(
+                                        "native_common.preview.missing_source",
+                                        "来源结构缺失：%s",
+                                        cell.sourceWarning),
+                                    260));
                     if (!cell.sourceClass.isEmpty()) ui.canvas.tooltip()
                         .addAll(
                             ui.host.font()
                                 .listFormattedStringToWidth(cell.sourceClass, 260));
                 }
                 if (cell.excluded) ui.canvas.tooltip()
-                    .add("已排除施工");
+                    .add(projectorOr("native_common.preview.excluded", "已排除施工"));
             }
         }
         String hint = HologramRenderer.hintAt(mx, my);
@@ -411,7 +476,9 @@ final class HologramUiPreview {
             ui.canvas.tooltip()
                 .addAll(
                     ui.host.font()
-                        .listFormattedStringToWidth("提示区 " + hint, 260));
+                        .listFormattedStringToWidth(
+                            projectorOr("native_common.preview.hint_area", "提示区 %s", hint),
+                            260));
         }
         String structure = HologramRenderer.pickStructure(mx, my);
         if (!structure.isEmpty()) {
@@ -421,12 +488,17 @@ final class HologramUiPreview {
                 if (!structure.equals(row.getString("id"))) continue;
                 if (ui.canvas.tooltip() == null) ui.canvas.tooltip(new ArrayList<>());
                 ui.canvas.tooltip()
-                    .add(row.getString("name") + " · 点击边缘整选");
+                    .add(projectorOr("native_common.preview.select_outline", "%s · 点击边缘整选", row.getString("name")));
                 if (row.getBoolean("sourceMissing")) {
                     ui.canvas.tooltip()
                         .addAll(
                             ui.host.font()
-                                .listFormattedStringToWidth("来源结构缺失：" + row.getString("sourceWarning"), 260));
+                                .listFormattedStringToWidth(
+                                    projectorOr(
+                                        "native_common.preview.missing_source",
+                                        "来源结构缺失：%s",
+                                        row.getString("sourceWarning")),
+                                    260));
                     ui.canvas.tooltip()
                         .addAll(
                             ui.host.font()
@@ -500,7 +572,7 @@ final class HologramUiPreview {
             if (drawBrowseImage(library, height)) return;
             String status = HologramLibraryClient.INSTANCE.browsePreviewStatus();
             ui.canvas.text(
-                status.isEmpty() ? "在右侧选择蓝图以预览" : status,
+                status.isEmpty() ? projectorOr("native_common.preview.select_blueprint", "在右侧选择蓝图以预览") : status,
                 viewportX() + 12,
                 viewportY() + 35,
                 viewportWidth() - 24,
@@ -535,8 +607,18 @@ final class HologramUiPreview {
         if (!visible) drawBrowseImage(library, height);
         if (!display.data.getBoolean("displayPartial") && viewport.previewMeshReady(display))
             library.releaseBrowseImage();
-        ui.canvas.text("只读预览", 38, 61, 76, 0x81dce9);
-        ui.canvas.button(11, 116, 55, 50, 17, browseAllLayers ? "全部层" : "层 " + browseLayer, visible, mx, my);
+        ui.canvas.text(projectorOr("native_common.preview.read_only", "只读预览"), 38, 61, 76, 0x81dce9);
+        ui.canvas.button(
+            11,
+            116,
+            55,
+            50,
+            17,
+            browseAllLayers ? projectorOr("native_common.view.all_layers", "全部层")
+                : projectorOr("native_common.view.layer_prefix", "层 %s", browseLayer),
+            visible,
+            mx,
+            my);
         ui.canvas.button(12, 168, 55, 20, 17, "−", visible && browseLayer > display.minY, mx, my);
         ui.canvas.button(13, 190, 55, 22, 17, "+", visible && browseLayer < display.maxY, mx, my);
     }
@@ -987,29 +1069,30 @@ final class HologramUiPreview {
             .getDisplayName();
         net.minecraft.block.Block block = cell.block(current);
         if (block != null) return block.getLocalizedName();
-        return current ? "空位 / 未知现场" : "固定接口 / 未知目标";
+        return current ? projectorOr("native_common.preview.unknown_actual", "空位 / 未知现场")
+            : projectorOr("native_common.preview.unknown_target", "固定接口 / 未知目标");
     }
 
     static String statusName(String status) {
         switch (status) {
             case "blocked":
-                return "被遮挡：请清空占位后补建";
+                return projectorOr("native_common.status.blocked", "被遮挡：请清空占位后补建");
             case "protected":
-                return "受保护：控制器 / 未适配设备保留";
+                return projectorOr("native_common.status.protected", "受保护：控制器 / 未适配设备保留");
             case "unsupported":
-                return "固定接口待手动补齐";
+                return projectorOr("native_common.status.unsupported", "固定接口待手动补齐");
             case "missing":
-                return "缺少材料";
+                return projectorOr("native_common.status.missing", "缺少材料");
             case "satisfied":
-                return "目标已满足";
+                return projectorOr("native_common.status.satisfied", "目标已满足");
             case "pending":
-                return "待施工";
+                return projectorOr("native_common.status.pending", "待施工");
             case "placed":
-                return "已建造";
+                return projectorOr("native_common.status.placed", "已建造");
             case "replaced":
-                return "已替换";
+                return projectorOr("native_common.status.replaced", "已替换");
             case "removed":
-                return "已拆除";
+                return projectorOr("native_common.status.removed", "已拆除");
             default:
                 return status;
         }

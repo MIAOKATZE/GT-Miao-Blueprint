@@ -3,12 +3,14 @@
 
 package com.miaokatze.gtmb.client.hologram;
 
+import static com.miaokatze.gtmb.client.hologram.HologramUiText.projectorOr;
+
 import org.lwjgl.input.Keyboard;
 
 /** Internal shortcuts workflow; composed by the workstation, never part of the mod extension API. */
 final class HologramUiShortcuts {
 
-    private static final String CLOSE_HELP = "Esc/E 关闭";
+    private static final String CLOSE_HELP = projectorOr("native.ui.esc_e_closes", "Esc/E 关闭");
     static final int BINDING_FIRST = HologramEditorControlIds.TOOLS + 700;
     static final int BINDING_PREVIOUS = HologramEditorControlIds.TOOLS + 850;
     static final int BINDING_NEXT = HologramEditorControlIds.TOOLS + 851;
@@ -54,40 +56,46 @@ final class HologramUiShortcuts {
 
     java.util.List<String> idleHintLines() {
         String editing = ui.session.state().data.getBoolean("virtual")
-            ? "中键拖动平移 · 左键拖动旋转 · " + geometryHelp() + "（当前" + (ui.preview.moveHandles() ? "开" : "关") + "）"
+            ? (projectorOr("native.ui.middle_drag_pans_left_drag_rotates", "中键拖动平移 · 左键拖动旋转 ·") + " ") + geometryHelp()
+                + (" " + projectorOr("native.ui.currently", "（当前") + " ")
+                + (ui.preview.moveHandles() ? projectorOr("native.ui.on", "开") : projectorOr("native.ui.off", "关"))
+                + projectorOr("native.ui.text", "）")
             : viewHelp();
         return java.util.Arrays.asList(
             selectionHelp(),
             editing,
             ui.tools.commands()
-                .shortcut("editUndo") + " 撤销规划"
+                .shortcut("editUndo") + (" " + projectorOr("native.ui.undo_plan", "撤销规划"))
                 + " · "
                 + ui.tools.commands()
                     .shortcut("editRedo")
-                + " 重做规划"
+                + (" " + projectorOr("native.ui.redo_plan", "重做规划"))
                 + " · "
                 + CLOSE_HELP);
     }
 
     private String selectionHelp() {
         return ui.tools.commands()
-            .shortcut("sameType") + " 同种全选 · Ctrl 多选 · Shift 框选 · "
+            .shortcut("sameType")
+            + (" " + projectorOr("native.ui.select_same_type_ctrl_multi_select_shift", "同种全选 · Ctrl 多选 · Shift 框选 ·")
+                + " ")
             + ui.tools.commands()
                 .shortcut("selectAll")
-            + " 全选";
+            + (" " + projectorOr("native.ui.select_all", "全选"));
     }
 
     private String geometryHelp() {
         return ui.tools.commands()
-            .shortcut("air") + " 选空气 · "
+            .shortcut("air") + (" " + projectorOr("native.ui.pick_air", "选空气 ·") + " ")
             + ui.tools.commands()
                 .shortcut("moveHandles")
-            + " 移动轴 · Ctrl+拖轴复制";
+            + (" " + projectorOr("native.ui.move_axes_ctrl_drag_axis_copies", "移动轴 · Ctrl+拖轴复制"));
     }
 
     private String viewHelp() {
-        return (ui.preview.blueprintCameraControls() ? "中键拖动平移 · 左键拖动旋转 · 滚轮缩放 · " : "左键拖动旋转 · 滚轮缩放 · ")
-            + ui.tools.commands()
+        return (ui.preview.blueprintCameraControls()
+            ? (projectorOr("native.ui.middle_drag_pans_left_drag_rotates_scroll", "中键拖动平移 · 左键拖动旋转 · 滚轮缩放 ·") + " ")
+            : (projectorOr("native.ui.left_drag_rotates_scroll_zooms", "左键拖动旋转 · 滚轮缩放 ·") + " ")) + ui.tools.commands()
                 .shortcut("cameraForward")
             + "/"
             + ui.tools.commands()
@@ -98,7 +106,7 @@ final class HologramUiShortcuts {
             + "/"
             + ui.tools.commands()
                 .shortcut("cameraRight")
-            + " 平移";
+            + (" " + projectorOr("native.ui.pan", "平移"));
     }
 
     void drawIdleHints() {
@@ -140,7 +148,8 @@ final class HologramUiShortcuts {
                     .defaults();
                 ui.session.notice(
                     ui.tools.commands()
-                        .save() ? "已恢复全部编辑器快捷键" : "快捷键保存失败");
+                        .save() ? projectorOr("native.ui.all_editor_shortcuts_restored", "已恢复全部编辑器快捷键")
+                            : projectorOr("native.ui.could_not_save_shortcuts", "快捷键保存失败"));
                 return true;
             case BINDING_PREVIOUS:
                 bindingPage = Math.max(0, bindingPage - 1);
@@ -166,8 +175,10 @@ final class HologramUiShortcuts {
                         this.captureBinding = -1;
                         ui.session.notice(
                             ui.tools.commands()
-                                .save() ? "编辑器快捷键已保存" : "快捷键保存失败");
-                    } else ui.session.notice("该组合已使用；E/Esc保留逐级返回与退出，请选择其他按键");
+                                .save() ? projectorOr("native.ui.editor_shortcuts_saved", "编辑器快捷键已保存")
+                                    : projectorOr("native.ui.could_not_save_shortcuts", "快捷键保存失败"));
+                    } else ui.session
+                        .notice(projectorOr("native.ui.this_binding_is_in_use_e_esc", "该组合已使用；E/Esc保留逐级返回与退出，请选择其他按键"));
                 }
             return true;
         }
@@ -212,9 +223,10 @@ final class HologramUiShortcuts {
                     .shortcut(command.name)
                 + "\n"
                 + command.help
-                + "\n点击后按新的组合；Esc取消录入。";
+                + projectorOr("native.ui.click_and_press_a_new_combination_esc", "\n点击后按新的组合；Esc取消录入。");
         }
-        if (id == BINDING_PREVIOUS || id == BINDING_NEXT) return "翻页查看并重绑全部编辑器命令。";
+        if (id == BINDING_PREVIOUS || id == BINDING_NEXT)
+            return projectorOr("native.ui.browse_pages_to_view_and_rebind_all", "翻页查看并重绑全部编辑器命令。");
         return null;
     }
 }

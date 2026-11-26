@@ -53,7 +53,7 @@ final class HologramMaterialRowPresentation {
         } catch (RuntimeException | LinkageError unavailable) {
             // Optional mod item cannot be constructed in this client. Retain the exact identity for diagnostics.
         }
-        return new Sample("无法解析的材料", identity, null);
+        return new Sample(HologramUiText.projectorOr("native.material_unresolved", "无法解析的材料"), identity, null);
     }
 
     private static boolean technicalKey(String value) {
@@ -79,6 +79,6 @@ final class HologramMaterialRowPresentation {
         } catch (RuntimeException | LinkageError ignored) {
             // Broken or missing mod localization must not take the whole material list down.
         }
-        return "材料名称不可用";
+        return HologramUiText.projectorOr("native.material_name_unavailable", "材料名称不可用");
     }
 }

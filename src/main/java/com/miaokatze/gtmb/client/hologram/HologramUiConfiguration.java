@@ -4,6 +4,7 @@
 package com.miaokatze.gtmb.client.hologram;
 
 import static com.miaokatze.gtmb.client.hologram.HologramUiCanvas.*;
+import static com.miaokatze.gtmb.client.hologram.HologramUiText.projectorOr;
 import static net.minecraft.client.gui.Gui.*;
 
 import java.util.ArrayList;
@@ -85,7 +86,9 @@ final class HologramUiConfiguration {
             y,
             width,
             17,
-            ui.session.state().data.getBoolean("structureBuilt") ? "校准为当前" : "重置为默认",
+            ui.session.state().data.getBoolean("structureBuilt")
+                ? projectorOr("native.ui.match_current_world_396", "校准为当前")
+                : projectorOr("native.ui.reset_to_default", "重置为默认"),
             ui.session.editable() && ui.preview.previewInteractive()
                 && ui.session.state().data.getBoolean("target")
                 && ui.session.state().data.getBoolean("supported"),
@@ -101,8 +104,9 @@ final class HologramUiConfiguration {
             HologramUiCanvas.panelY + HologramScreenLayout.PANEL_HEIGHT,
             0xef172f36);
         ui.canvas.skin("panel", HologramUiCanvas.panelX, HologramUiCanvas.panelY, HologramScreenLayout.PANEL_WIDTH, 17);
-        ui.canvas.text("目标属性", 286, 65, 220, 0xf5e4b9);
-        String[] modes = { "补建", "替换", "拆除" };
+        ui.canvas.text(projectorOr("native.ui.target_properties", "目标属性"), 286, 65, 220, 0xf5e4b9);
+        String[] modes = { projectorOr("native.ui.repair", "补建"), projectorOr("native.ui.replace", "替换"),
+            projectorOr("native.ui.demolish", "拆除") };
         for (int i = 0; i < 3; i++) ui.canvas.button(
             70 + i,
             284 + i * 58,
@@ -115,27 +119,44 @@ final class HologramUiConfiguration {
             my);
         ui.canvas.text(
             ui.preview.selection()
-                .size() == 0 ? "点击预览选择编辑范围"
-                    : "编辑所选 " + ui.preview.selection()
-                        .size() + " 格 · T 同种 / Ctrl 多选",
+                .size() == 0
+                    ? projectorOr("native.ui.click_the_preview_to_select_an_editing", "点击预览选择编辑范围")
+                    : (projectorOr("native.ui.edit_selected", "编辑所选") + " ") + ui.preview.selection()
+                        .size()
+                        + (" " + projectorOr("native.ui.cells_t_same_type_ctrl_multi_select", "格 · T 同种 / Ctrl 多选")),
             286,
             104,
             170,
             0x94afb4);
         HologramState.Cell cell = ui.session.selectedCell();
         ui.canvas.text(
-            cell == null ? "在预览中点击选择位置"
-                : cell.sourceMissing ? "来源结构缺失" : "位置 " + cell.dx + "," + cell.dy + "," + cell.dz,
+            cell == null ? projectorOr("native.ui.click_a_position_in_the_preview", "在预览中点击选择位置")
+                : cell.sourceMissing ? projectorOr("native.ui.source_structure_missing", "来源结构缺失")
+                    : (projectorOr("native.ui.position", "位置") + " ") + cell.dx + "," + cell.dy + "," + cell.dz,
             286,
             122,
             168,
             cell != null && cell.sourceMissing ? 0xff7272 : 0xb9d5d4);
         NBTTagCompound grade = ui.config.stableGradeCapability();
         if (grade != null) {
-            ui.canvas.text(grade.getString("label"), 286, 140, 220, 0xf5e4b9);
-            ui.canvas.text("＋ / − 连续调整等级，保留当前选区", 286, 160, 220, 0x94afb4);
+            ui.canvas.text(capabilityLabel(grade), 286, 140, 220, 0xf5e4b9);
+            ui.canvas.text(
+                projectorOr("native.ui.continuously_adjusts_tier_keeping_the_selection", "＋ / − 连续调整等级，保留当前选区"),
+                286,
+                160,
+                220,
+                0x94afb4);
             ui.config.drawGradeSelector(grade, mx, my);
-            if (cell != null) ui.canvas.button(95, 284, 200, 224, 17, "查看可替换方块", ui.session.editable(), mx, my);
+            if (cell != null) ui.canvas.button(
+                95,
+                284,
+                200,
+                224,
+                17,
+                projectorOr("native.ui.view_replacement_blocks", "查看可替换方块"),
+                ui.session.editable(),
+                mx,
+                my);
         } else {
             List<String> roles = ui.config.hatchRoles();
             this.hatchRole = Math.floorMod(this.hatchRole, roles.size());
@@ -145,17 +166,21 @@ final class HologramUiConfiguration {
                 135,
                 224,
                 17,
-                "类型：" + HologramUiConfiguration.roleLabel(roles.get(this.hatchRole)) + " ▾",
+                (projectorOr("native.ui.type", "类型：") + " ")
+                    + HologramUiConfiguration.roleLabel(roles.get(this.hatchRole))
+                    + " ▾",
                 cell != null,
                 mx,
                 my);
             ui.config.drawTierSelector(284, 155, 224, mx, my);
             if (mx >= 284 && mx < 508 && my >= 135 && my < 173) ui.canvas.tooltip(
                 Collections.singletonList(
-                    "目标类型：" + HologramUiConfiguration.roleLabel(roles.get(this.hatchRole))
-                        + "；目标等级："
-                        + (this.hatchFilterTier < 0 ? "未指定" : ui.config.tierName(this.hatchFilterTier))
-                        + "；筛选候选后点击具体目标。"
+                    (projectorOr("native.ui.target_type", "目标类型：") + " ")
+                        + HologramUiConfiguration.roleLabel(roles.get(this.hatchRole))
+                        + (projectorOr("native.ui.target_tier", "；目标等级：") + " ")
+                        + (this.hatchFilterTier < 0 ? projectorOr("native.ui.unspecified", "未指定")
+                            : ui.config.tierName(this.hatchFilterTier))
+                        + projectorOr("native.ui.filter_candidates_then_choose_an_exact_target", "；筛选候选后点击具体目标。")
                         + ui.config.candidateNote()));
             List<Integer> indices = ui.config.filteredHatches();
             this.hatchOffset = Math.max(0, Math.min(this.hatchOffset, Math.max(0, indices.size() - 2)));
@@ -179,7 +204,11 @@ final class HologramUiConfiguration {
                 if (mx >= 284 && mx < 508 && my >= 177 + row * 20 && my < 195 + row * 20) ui.canvas.tooltip(
                     ui.host.font()
                         .listFormattedStringToWidth(
-                            stack.getDisplayName() + " · 已启用来源可用 " + count + "；仅更新规划目标。" + ui.config.candidateNote(),
+                            stack.getDisplayName()
+                                + (" " + projectorOr("native.ui.available_from_enabled_sources", "· 已启用来源可用") + " ")
+                                + count
+                                + projectorOr("native.ui.updates_the_planned_target_only", "；仅更新规划目标。")
+                                + ui.config.candidateNote(),
                             230));
             }
             if (indices.isEmpty()) {
@@ -187,15 +216,22 @@ final class HologramUiConfiguration {
                 if (primary != null && !"_hatch_candidate".equals(primary.getString("id"))) {
                     ui.config.drawGradeSelector(primary, mx, my);
                 } else ui.canvas.text(
-                    cell != null && !cell.candidateComplete ? "未完整识别 / 无此筛选候选" : "无此类型 / 等级候选",
+                    cell != null && !cell.candidateComplete
+                        ? projectorOr("native.ui.not_fully_recognized_no_matching_candidates", "未完整识别 / 无此筛选候选")
+                        : projectorOr("native.ui.no_candidates_for_this_type_tier", "无此类型 / 等级候选"),
                     286,
                     181,
                     220,
                     0x94afb4);
             }
         }
-        ui.canvas
-            .text(cell == null ? "仅编辑规划，不立即施工" : "目标：" + ui.preview.cellName(cell, false), 286, 218, 220, 0x94afb4);
+        ui.canvas.text(
+            cell == null ? projectorOr("native.ui.edits_the_plan_does_not_build_immediately", "仅编辑规划，不立即施工")
+                : (projectorOr("native.ui.target", "目标：") + " ") + ui.preview.cellName(cell, false),
+            286,
+            218,
+            220,
+            0x94afb4);
         if (cell != null && mx >= 284 && mx < 456 && my >= 120 && my < 134
             || cell != null && mx >= 284 && mx < 508 && my >= 216 && my < 230)
             ui.canvas.tooltip(
@@ -204,34 +240,74 @@ final class HologramUiConfiguration {
                         ui.preview.cellName(cell, true) + " → "
                             + ui.preview.cellName(cell, false)
                             + "；"
-                            + HologramUiText.reason(
-                                ui.session.cellTag()
-                                    .getString("reason"))
+                            + (ui.session.state().data.getBoolean("localStandardController")
+                                ? HologramNativeUiText.reason(
+                                    ui.session.cellTag()
+                                        .getString("reason"))
+                                : HologramUiText.reason(
+                                    ui.session.cellTag()
+                                        .getString("reason")))
                             + "；"
                             + HologramUiPreview.statusName(cell.status),
                         230));
-        ui.canvas.button(112, 284, 231, 40, 17, "复制", ui.session.editable() && cell != null, mx, my);
-        ui.canvas.button(66, 327, 231, 75, 17, "恢复默认壳", ui.session.editable() && cell != null && !cell.anchor, mx, my);
-        ui.canvas.button(113, 405, 231, 103, 17, "六面转向", ui.session.editable() && cell != null, mx, my);
+        ui.canvas.button(
+            112,
+            284,
+            231,
+            40,
+            17,
+            projectorOr("native.ui.copy", "复制"),
+            ui.session.editable() && cell != null,
+            mx,
+            my);
+        ui.canvas.button(
+            66,
+            327,
+            231,
+            75,
+            17,
+            projectorOr("native.ui.restore_default_casing", "恢复默认壳"),
+            ui.session.editable() && cell != null && !cell.anchor,
+            mx,
+            my);
+        ui.canvas.button(
+            113,
+            405,
+            231,
+            103,
+            17,
+            projectorOr("native.ui.rotate_facing", "六面转向"),
+            ui.session.editable() && cell != null,
+            mx,
+            my);
         ui.canvas.button(
             94,
             284,
             251,
             107,
             15,
-            "仓室预设",
-            ui.session.editable() && ui.session.state().data.getInteger("mode") != 2,
+            projectorOr("native.ui.hatch_presets", "仓室预设"),
+            ui.session.editable() && ui.config.targetEditingMode(),
             mx,
             my);
-        ui.canvas.button(78, 395, 251, 113, 15, "材料来源", ui.session.editable(), mx, my);
+        ui.canvas.button(
+            78,
+            395,
+            251,
+            113,
+            15,
+            projectorOr("native.ui.material_sources", "材料来源"),
+            ui.session.editable(),
+            mx,
+            my);
         ui.canvas.button(
             61,
             458,
             100,
             50,
             17,
-            "背包选材",
-            ui.session.editable() && ui.session.state().data.getInteger("mode") != 2,
+            projectorOr("native.ui.inventory_materials", "背包选材"),
+            ui.session.editable() && ui.config.targetEditingMode(),
             mx,
             my);
     }
@@ -276,19 +352,48 @@ final class HologramUiConfiguration {
 
     void drawResetReview(int mx, int my) {
         drawRect(58, 76, 358, 246, 0xff172f36);
-        ui.canvas.text(this.resetCalibration ? "将规划校准为当前现场？" : "将规划重置为结构默认？", 70, 91, 274, 0xe4b85a);
-        ui.canvas.text(this.resetCalibration ? "识别现场材质信道，保留独立仓室与朝向。" : "清除自定义目标，恢复结构默认规划。", 70, 118, 274, 0xb9d5d4);
-        ui.canvas.text("仅更新规划，不施工，也不删除已存预设。", 70, 141, 274, 0xb9d5d4);
-        ui.canvas
-            .text(this.resetCalibration ? "未识别的尺寸与信道保留，已识别项可继续修改。" : "操作前请确认当前手改目标是否需要保留。", 70, 162, 274, 0xe4b85a);
-        ui.canvas.button(136, 70, 211, 132, 21, "保留当前规划", true, mx, my);
+        ui.canvas.text(
+            this.resetCalibration ? projectorOr("native.ui.match_the_plan_to_the_current_world", "将规划校准为当前现场？")
+                : projectorOr("native.ui.reset_the_plan_to_structure_defaults", "将规划重置为结构默认？"),
+            70,
+            91,
+            274,
+            0xe4b85a);
+        ui.canvas.text(
+            this.resetCalibration
+                ? projectorOr(
+                    "native.ui.recognize_world_material_channels_while_keeping_independent",
+                    "识别现场材质信道，保留独立仓室与朝向。")
+                : projectorOr("native.ui.clear_custom_targets_and_restore_the_structure", "清除自定义目标，恢复结构默认规划。"),
+            70,
+            118,
+            274,
+            0xb9d5d4);
+        ui.canvas.text(
+            projectorOr("native.ui.updates_only_the_plan_does_not_build", "仅更新规划，不施工，也不删除已存预设。"),
+            70,
+            141,
+            274,
+            0xb9d5d4);
+        ui.canvas.text(
+            this.resetCalibration
+                ? projectorOr(
+                    "native.ui.unrecognized_dimensions_and_channels_are_kept_recognized",
+                    "未识别的尺寸与信道保留，已识别项可继续修改。")
+                : projectorOr("native.ui.check_whether_to_keep_your_manual_targets", "操作前请确认当前手改目标是否需要保留。"),
+            70,
+            162,
+            274,
+            0xe4b85a);
+        ui.canvas.button(136, 70, 211, 132, 21, projectorOr("native.ui.keep_current_plan", "保留当前规划"), true, mx, my);
         ui.canvas.button(
             137,
             212,
             211,
             132,
             21,
-            this.resetCalibration ? "确认校准为当前" : "确认重置为默认",
+            this.resetCalibration ? projectorOr("native.ui.confirm_match_current_world", "确认校准为当前")
+                : projectorOr("native.ui.confirm_reset_to_default", "确认重置为默认"),
             ui.session.editable(),
             mx,
             my);
@@ -303,15 +408,17 @@ final class HologramUiConfiguration {
             315,
             138,
             17,
-            ui.review.placementReviewActive() ? "继续放置预检"
+            ui.review.placementReviewActive() ? projectorOr("native.ui.continue_placement_review", "继续放置预检")
                 : ui.session.state().data.getBoolean("virtual")
                     && !ui.session.state().data.getBoolean("virtualPlacement")
-                        ? "从蓝图库放置"
+                        ? projectorOr("native.ui.place_from_library", "从蓝图库放置")
                         : ui.session.state().data.getBoolean("virtual")
                             && !ui.session.state().data.getBoolean("virtualLocked")
-                                ? "世界右键确定位置"
-                                : new String[] { "确认构建", "确认替换", "确认拆除" }[Math
-                                    .floorMod(ui.session.state().data.getInteger("mode"), 3)],
+                                ? projectorOr("native.ui.right_click_in_the_world_to_position", "世界右键确定位置")
+                                : new String[] { projectorOr("native.ui.confirm_build", "确认构建"),
+                                    projectorOr("native.ui.confirm_replacement", "确认替换"),
+                                    projectorOr("native.ui.confirm_demolition", "确认拆除") }[Math
+                                        .floorMod(ui.session.state().data.getInteger("mode"), 3)],
             ui.session.editable()
                 && (!ui.session.state().data.getBoolean("virtual")
                     || ui.session.state().data.getBoolean("virtualPlacement")
@@ -326,7 +433,7 @@ final class HologramUiConfiguration {
             315,
             37,
             17,
-            job == 2 ? "继续" : "暂停",
+            job == 2 ? projectorOr("native.ui.resume", "继续") : projectorOr("native.ui.pause", "暂停"),
             ui.session.pendingSequence() < 0 && (job == 1 || job == 2),
             mx,
             my);
@@ -336,7 +443,7 @@ final class HologramUiConfiguration {
             315,
             37,
             17,
-            "取消",
+            projectorOr("native.ui.cancel", "取消"),
             ui.session.pendingSequence() < 0
                 && (job == 1 || job == 2 || ui.session.state().data.getBoolean("capturePending")),
             mx,
@@ -350,7 +457,12 @@ final class HologramUiConfiguration {
             return;
         }
         drawRect(160, 59, 405, 257, 0xff172f36);
-        ui.canvas.text(cap.getString("label") + " · 选择目标", 168, 65, 203, 0xf5e4b9);
+        ui.canvas.text(
+            capabilityLabel(cap) + (" " + projectorOr("native.ui.choose_target", "· 选择目标")),
+            168,
+            65,
+            203,
+            0xf5e4b9);
         ui.canvas.button(63, 375, 62, 23, 17, "×", true, mx, my);
         NBTTagList options = cap.getTagList("options", 10);
         for (int i = this.drawerOffset; i < options.tagCount() && i < this.drawerOffset + 7; i++) {
@@ -365,77 +477,146 @@ final class HologramUiConfiguration {
                 y,
                 228,
                 17,
-                (chosen ? "✓ " : "") + option.getString("label"),
+                (chosen ? "✓ " : "") + capabilityOptionLabel(option),
                 ui.session.editable(),
                 mx,
                 my);
             if (mx >= 168 && mx < 396 && my >= y && my < y + 17) ui.canvas.tooltip(
                 Collections.singletonList(
-                    option.getString("label") + " · "
-                        + (option.getBoolean("present") ? "显式目标，原始值 " + option.getInteger("value") : "恢复默认值")
-                        + (ui.session.editable() ? "；仅更新目标。" : "；" + ui.session.editingReason())));
+                    capabilityOptionLabel(option) + " · "
+                        + (option.getBoolean("present")
+                            ? (projectorOr("native.ui.explicit_target_raw_value_415", "显式目标，原始值") + " ")
+                                + option.getInteger("value")
+                            : projectorOr("native.ui.restore_default_value", "恢复默认值"))
+                        + (ui.session.editable() ? projectorOr("native.ui.updates_the_target_only", "；仅更新目标。")
+                            : "；" + ui.session.editingReason())));
         }
         if (!"_hatch_candidate".equals(this.optionChannel)) {
-            ui.canvas.text("原始正整数（可指定列表之外的值）", 168, 215, 228, 0x94afb4);
+            ui.canvas.text(
+                projectorOr("native.ui.raw_positive_integer_values_outside_the_list_418", "原始正整数（可指定列表之外的值）"),
+                168,
+                215,
+                228,
+                0x94afb4);
             this.optionValueField.drawTextBox();
-            ui.canvas.button(68, 311, 232, 85, 16, "应用原始值", ui.session.editable(), mx, my);
+            ui.canvas.button(
+                68,
+                311,
+                232,
+                85,
+                16,
+                projectorOr("native.ui.apply_raw_value", "应用原始值"),
+                ui.session.editable(),
+                mx,
+                my);
         }
     }
 
     void drawChannels(int mx, int my) {
         ui.canvas.tooltip(null);
         drawRect(157, 59, 405, 257, 0xff172f36);
-        ui.canvas.text("等级 / 信道设置（滚轮查看全部）", 165, 65, 205, 0xf5e4b9);
+        ui.canvas.text(
+            projectorOr("native.ui.tier_channel_settings_scroll_for_all", "等级 / 信道设置（滚轮查看全部）"),
+            165,
+            65,
+            205,
+            0xf5e4b9);
         ui.canvas.button(62, 373, 62, 23, 17, "×", true, mx, my);
         NBTTagList caps = ui.config.capabilities();
         for (int i = this.drawerOffset; i < caps.tagCount() && i < this.drawerOffset + 4; i++) {
             NBTTagCompound cap = caps.getCompoundTagAt(i);
             int y = 86 + (i - this.drawerOffset) * 22;
             String source = cap.getString("id")
-                .equals("main") ? "主值"
-                    : cap.getBoolean("explicit") ? "指定" : "presence".equals(cap.getString("kind")) ? "默认" : "继承";
+                .equals("main")
+                    ? projectorOr("native.ui.main_value", "主值")
+                    : cap.getBoolean("explicit") ? projectorOr("native.ui.explicit", "指定")
+                        : "presence".equals(cap.getString("kind")) ? projectorOr("native.ui.default", "默认")
+                            : projectorOr("native.ui.inherited", "继承");
             ui.canvas.button(
                 2000 + i,
                 165,
                 y,
                 231,
                 20,
-                cap.getString("label") + "：" + ui.config.optionLabel(cap) + "（" + source + "）",
+                capabilityLabel(
+                    cap) + "：" + ui.config.optionLabel(cap) + "（" + source + projectorOr("native.ui.text", "）"),
                 ui.session.editable() && cap.getBoolean("editable"),
                 mx,
                 my);
             if (mx >= 165 && mx < 396 && my >= y && my < y + 20) {
                 ui.canvas.tooltip(new ArrayList<>());
                 ui.canvas.tooltip()
-                    .add(cap.getString("label") + " / " + cap.getString("id"));
+                    .add(capabilityLabel(cap) + " / " + cap.getString("id"));
                 ui.canvas.tooltip()
-                    .add("当前目标：" + ui.config.optionLabel(cap) + " · 原始值 " + cap.getInteger("current"));
+                    .add(
+                        (projectorOr("native.ui.current_target", "当前目标：") + " ") + ui.config.optionLabel(cap)
+                            + (" " + projectorOr("native.ui.raw_value", "· 原始值") + " ")
+                            + cap.getInteger("current"));
                 ui.canvas.tooltip()
                     .add(
                         cap.getString("id")
-                            .equals("main") ? "主原始信号：未独立指定的子信道继承此值。"
-                                : cap.getBoolean("explicit") ? "已显式指定；选择继承项可恢复默认。" : "未指定：使用主信号或机器默认规则。");
+                            .equals("main")
+                                ? projectorOr(
+                                    "native.ui.main_raw_signal_channels_without_an_explicit",
+                                    "主原始信号：未独立指定的子信道继承此值。")
+                                : cap.getBoolean("explicit")
+                                    ? projectorOr(
+                                        "native.ui.explicitly_set_choose_inheritance_to_restore_the",
+                                        "已显式指定；选择继承项可恢复默认。")
+                                    : projectorOr(
+                                        "native.ui.unspecified_uses_the_main_signal_or_machine",
+                                        "未指定：使用主信号或机器默认规则。"));
                 ui.canvas.tooltip()
-                    .add("具名目标或原始正整数均可设置；机器是否使用信道由自身规则决定。");
+                    .add(
+                        projectorOr("native.ui.set_a_named_target_or_raw_positive", "具名目标或原始正整数均可设置；机器是否使用信道由自身规则决定。"));
                 if (!ui.session.editable()) ui.canvas.tooltip()
                     .add(ui.session.editingReason());
             }
         }
-        ui.canvas.text("手填 name（小写） / 正整数 value", 165, 178, 231, 0x94afb4);
+        ui.canvas.text(
+            projectorOr("native.ui.enter_lowercase_name_positive_integer_value", "手填 name（小写） / 正整数 value"),
+            165,
+            178,
+            231,
+            0x94afb4);
         this.channelNameField.drawTextBox();
         this.channelValueField.drawTextBox();
-        ui.canvas.button(67, 165, 213, 98, 16, "添加 / 更新", ui.session.editable(), mx, my);
+        ui.canvas.button(
+            67,
+            165,
+            213,
+            98,
+            16,
+            projectorOr("native.ui.add_update", "添加 / 更新"),
+            ui.session.editable(),
+            mx,
+            my);
         this.mainField.drawTextBox();
-        ui.canvas.button(30, 330, 213, 66, 16, "应用主值", ui.session.editable(), mx, my);
-        ui.canvas.button(23, 165, 234, 74, 16, "重新采集", ui.session.editable(), mx, my);
+        ui.canvas.button(
+            30,
+            330,
+            213,
+            66,
+            16,
+            projectorOr("native.ui.apply_main_value", "应用主值"),
+            ui.session.editable(),
+            mx,
+            my);
+        ui.canvas
+            .button(23, 165, 234, 74, 16, projectorOr("native.ui.recapture", "重新采集"), ui.session.editable(), mx, my);
         ui.canvas.button(
             33,
             242,
             234,
             74,
             16,
-            ui.session.state().data.getBoolean("noHatches") ? "只放外壳 ✓" : "允许仓室",
-            ui.session.editable() && ui.session.state().data.getInteger("mode") != 2,
+            ui.session.state().data.getBoolean("localStandardController")
+                ? projectorOr("native.ui.clear_preset", "撤销预设")
+                : ui.session.state().data.getBoolean("noHatches") ? projectorOr("native.ui.casings_only", "只放外壳 ✓")
+                    : projectorOr("native.ui.allow_hatches", "允许仓室"),
+            ui.session.configurationEditable() && ui.config.targetEditingMode()
+                && (!ui.session.state().data.getBoolean("localStandardController")
+                    || ui.session.state().data.getBoolean("presetActive")),
             mx,
             my);
         NBTTagCompound hatch = ui.config.capability("gt_hatch");
@@ -445,8 +626,10 @@ final class HologramUiConfiguration {
             234,
             77,
             16,
-            hatch != null && hatch.getBoolean("explicit") ? "自动选材" : "仓室手选",
-            ui.session.editable() && ui.session.state().data.getInteger("mode") != 2
+            hatch != null && hatch.getBoolean("explicit") ? projectorOr("native.ui.automatic_materials", "自动选材")
+                : projectorOr("native.ui.manual_hatches", "仓室手选"),
+            !ui.session.state().data.getBoolean("localStandardController") && ui.session.editable()
+                && ui.config.targetEditingMode()
                 && hatch != null
                 && hatch.getBoolean("editable"),
             mx,
@@ -460,7 +643,7 @@ final class HologramUiConfiguration {
 
     List<String> hatchRoles() {
         List<String> roles = new ArrayList<>();
-        roles.add("全部类型");
+        roles.add(projectorOr("native.ui.all_types", "全部类型"));
         List<String> tags = ui.session.candidateRoles();
         for (String role : tags) {
             if (!role.isEmpty() && !roles.contains(role)) roles.add(role);
@@ -486,7 +669,7 @@ final class HologramUiConfiguration {
     }
 
     String tierName(int tier) {
-        return tier >= 0 && tier < GTValues.VN.length ? GTValues.VN[tier] : "固定";
+        return tier >= 0 && tier < GTValues.VN.length ? GTValues.VN[tier] : projectorOr("native.ui.fixed", "固定");
     }
 
     List<Integer> availableTiers() {
@@ -522,7 +705,8 @@ final class HologramUiConfiguration {
             y,
             width - 46,
             17,
-            this.hatchFilterTier < 0 ? "等级：全部" : "等级：" + ui.config.tierName(this.hatchFilterTier),
+            this.hatchFilterTier < 0 ? projectorOr("native.ui.tier_all", "等级：全部")
+                : (projectorOr("native.ui.tier", "等级：") + " ") + ui.config.tierName(this.hatchFilterTier),
             available,
             mx,
             my);
@@ -557,19 +741,24 @@ final class HologramUiConfiguration {
                 mx,
                 my);
         }
-        ui.canvas.tooltip(Collections.singletonList("直接选择类型 · 滚轮查看更多 · Esc关闭"));
+        ui.canvas.tooltip(
+            Collections
+                .singletonList(projectorOr("native.ui.select_a_type_scroll_for_more_esc", "直接选择类型 · 滚轮查看更多 · Esc关闭")));
     }
 
     String directionName(int facing) {
-        String[] names = { "下", "上", "北", "南", "西", "东" };
-        return facing >= 0 && facing < names.length ? names[facing] : "默认";
+        String[] names = { projectorOr("native.ui.down", "下"), projectorOr("native.ui.up", "上"),
+            projectorOr("native.ui.north", "北"), projectorOr("native.ui.south", "南"),
+            projectorOr("native.ui.west", "西"), projectorOr("native.ui.east", "东") };
+        return facing >= 0 && facing < names.length ? names[facing] : projectorOr("native.ui.default", "默认");
     }
 
     void drawHatches(int mx, int my) {
         drawRect(157, 59, 405, 281, 0xff172f36);
         ui.canvas.text(
-            ui.session.selectedCell() != null && ui.session.selectedCell().candidateComplete ? "本格可替换选项 · 类型 / 等级"
-                : "本格已知选项 · 类型 / 等级",
+            ui.session.selectedCell() != null && ui.session.selectedCell().candidateComplete
+                ? projectorOr("native.ui.replacement_options_type_tier", "本格可替换选项 · 类型 / 等级")
+                : projectorOr("native.ui.known_options_for_this_cell_type_tier", "本格已知选项 · 类型 / 等级"),
             165,
             65,
             205,
@@ -586,7 +775,8 @@ final class HologramUiConfiguration {
             84,
             231,
             18,
-            "类型：" + HologramUiConfiguration.roleLabel(roles.get(this.hatchRole)) + " ▾",
+            (projectorOr("native.ui.type", "类型：") + " ") + HologramUiConfiguration.roleLabel(roles.get(this.hatchRole))
+                + " ▾",
             true,
             mx,
             my);
@@ -600,7 +790,8 @@ final class HologramUiConfiguration {
             ItemStack stack = ui.session.selectedCell().candidates.get(index);
             int y = 128 + row * 21;
             ui.canvas.drawItem(stack, 165, y);
-            String count = ui.session.state().data.getBoolean("creativeMaterials") ? "无限"
+            String count = ui.session.state().data.getBoolean("creativeMaterials")
+                ? projectorOr("native.ui.unlimited", "无限")
                 : index < available.length ? Integer.toString(available[index]) : "?";
             ui.canvas.button(
                 10000 + index,
@@ -617,18 +808,42 @@ final class HologramUiConfiguration {
                 ui.canvas.tooltip()
                     .add(stack.getDisplayName());
                 ui.canvas.tooltip()
-                    .add((index < tiers.length ? ui.config.tierName(tiers[index]) : "固定等级") + " · 已启用来源可用 " + count);
+                    .add(
+                        (index < tiers.length ? ui.config.tierName(tiers[index])
+                            : projectorOr("native.ui.fixed_tier", "固定等级"))
+                            + (" " + projectorOr("native.ui.available_from_enabled_sources", "· 已启用来源可用") + " ")
+                            + count);
                 ui.canvas.tooltip()
-                    .add("仅指定本格目标；施工时重新核对材料。");
+                    .add(projectorOr("native.ui.sets_this_cell_s_target_only_materials", "仅指定本格目标；施工时重新核对材料。"));
                 ui.canvas.tooltip()
                     .add(ui.config.candidateNote());
                 if (!ui.session.editable()) ui.canvas.tooltip()
                     .add(ui.session.editingReason());
             }
         }
-        if (indices.isEmpty()) ui.canvas.text("本筛选没有候选，请更换类型或等级", 165, 125, 231, 0xe4b85a);
-        ui.canvas.text("滚轮翻页 · " + indices.size() + " 项", 165, 240, 115, 0x94afb4);
-        ui.canvas.button(66, 282, 237, 114, 18, "恢复默认壳", ui.session.editable() && ui.preview.hasSelectedPin(), mx, my);
+        if (indices.isEmpty()) ui.canvas.text(
+            projectorOr("native.ui.no_matching_candidates_change_the_type_or", "本筛选没有候选，请更换类型或等级"),
+            165,
+            125,
+            231,
+            0xe4b85a);
+        ui.canvas.text(
+            (projectorOr("native.ui.scroll_pages", "滚轮翻页 ·") + " ") + indices.size()
+                + (" " + projectorOr("native.ui.entries", "项")),
+            165,
+            240,
+            115,
+            0x94afb4);
+        ui.canvas.button(
+            66,
+            282,
+            237,
+            114,
+            18,
+            projectorOr("native.ui.restore_default_casing", "恢复默认壳"),
+            ui.session.editable() && ui.preview.hasSelectedPin(),
+            mx,
+            my);
         int[] facings = ui.session.hatchFacings();
         ui.canvas.button(
             99,
@@ -636,8 +851,8 @@ final class HologramUiConfiguration {
             259,
             139,
             18,
-            facings.length == 0 ? "仓室朝向不可用"
-                : "仓室朝向：" + ui.config.directionName(
+            facings.length == 0 ? projectorOr("native.ui.hatch_facing_unavailable", "仓室朝向不可用")
+                : (projectorOr("native.ui.hatch_facing", "仓室朝向：") + " ") + ui.config.directionName(
                     ui.session.cellTag()
                         .getInteger("hatchFacing")),
             ui.session.editable() && facings.length > 0,
@@ -649,7 +864,7 @@ final class HologramUiConfiguration {
             259,
             88,
             18,
-            "恢复朝向",
+            projectorOr("native.ui.restore_facing", "恢复朝向"),
             ui.session.editable() && ui.session.cellTag()
                 .getBoolean("hasFacingPin"),
             mx,
@@ -658,17 +873,46 @@ final class HologramUiConfiguration {
 
     String candidateNote() {
         HologramState.Cell cell = ui.session.selectedCell();
-        if (cell == null) return "请先选择预览中的位置。";
-        return cell.candidateComplete ? "选项来自本格结构声明；机器成型仍受整体结构条件限制。"
-            : "仅列出已解析选项：" + cell.candidateBoundary + "；机器成型仍受整体结构条件限制。";
+        if (cell == null) return projectorOr("native.ui.select_a_position_in_the_preview_first", "请先选择预览中的位置。");
+        return cell.candidateComplete
+            ? projectorOr("native.ui.options_come_from_this_cell_s_declaration", "选项来自本格结构声明；机器成型仍受整体结构条件限制。")
+            : (projectorOr("native.ui.parsed_options_only", "仅列出已解析选项：") + " ") + cell.candidateBoundary
+                + projectorOr("native.ui.formation_still_depends_on_the_whole_structure", "；机器成型仍受整体结构条件限制。");
     }
 
     void drawPreset(int mx, int my) {
         drawRect(157, 59, 405, 291, 0xff172f36);
-        ui.canvas.text(customPresets ? "仓室预设 · 保留手选及实体仓室" : "仓室预设 · 可选快捷搭配", 165, 65, 205, 0xf5e4b9);
+        ui.canvas.text(
+            customPresets && !ui.session.state().data.getBoolean("localStandardController")
+                ? projectorOr("native.ui.hatch_presets_keep_manual_and_installed_hatches", "仓室预设 · 保留手选及实体仓室")
+                : projectorOr("native.ui.hatch_presets_optional_shortcuts", "仓室预设 · 可选快捷搭配"),
+            165,
+            65,
+            205,
+            0xf5e4b9);
         ui.canvas.button(96, 373, 62, 23, 17, "×", true, mx, my);
-        ui.canvas.button(1710, 165, 85, 95, 18, customPresets ? "基础预设" : "✓ 基础预设", true, mx, my);
-        ui.canvas.button(1711, 264, 85, 94, 18, customPresets ? "✓ 自定义" : "自定义搭配", true, mx, my);
+        ui.canvas.button(
+            1710,
+            165,
+            85,
+            95,
+            18,
+            customPresets ? projectorOr("native.ui.base_presets", "基础预设")
+                : projectorOr("native.ui.base_presets_338", "✓ 基础预设"),
+            true,
+            mx,
+            my);
+        ui.canvas.button(
+            1711,
+            264,
+            85,
+            94,
+            18,
+            customPresets ? projectorOr("native.ui.custom", "✓ 自定义")
+                : projectorOr("native.ui.custom_presets_341", "自定义搭配"),
+            true,
+            mx,
+            my);
         ui.canvas.button(1717, 362, 85, 16, 18, "‹", presetOffset > 0, mx, my);
         int count = customPresets ? hatchPresetNames().size() : ui.session.state().data.getInteger("hatchTierMax") + 1;
         presetOffset = Math.max(0, Math.min(presetOffset, Math.max(0, count - 4)));
@@ -676,14 +920,20 @@ final class HologramUiConfiguration {
         List<String> names = hatchPresetNames();
         for (int row = 0; row < 4 && presetOffset + row < count; row++) {
             int index = presetOffset + row;
-            String name = customPresets ? names.get(index) : tierName(index) + " · 按结构声明配额";
+            String name = customPresets ? names.get(index)
+                : tierName(index) + (" " + projectorOr("native.ui.structure_declared_quotas", "· 按结构声明配额"));
             boolean selected = customPresets ? names.get(index)
                 .equals(selectedHatchPreset) : index == presetTier;
             ui.canvas.button(1700 + row, 165, 108 + row * 18, 231, 17, (selected ? "✓ " : "") + name, true, mx, my);
         }
         if (customPresets) {
-            if (names.isEmpty()) ui.canvas.text("尚无搭配；可命名保存当前仓室目标", 165, 124, 231, 0x94afb4);
-            ui.canvas.text("名称", 165, 191, 34, 0x94afb4);
+            if (names.isEmpty()) ui.canvas.text(
+                projectorOr("native.ui.no_presets_save_the_current_hatch_targets", "尚无搭配；可命名保存当前仓室目标"),
+                165,
+                124,
+                231,
+                0x94afb4);
+            ui.canvas.text(projectorOr("native.ui.name", "名称"), 165, 191, 34, 0x94afb4);
             hatchPresetNameField.drawTextBox();
             ui.canvas.button(
                 1712,
@@ -691,16 +941,56 @@ final class HologramUiConfiguration {
                 208,
                 75,
                 19,
-                ui.session.isTutorial() ? "演示不保存" : "命名保存",
+                ui.session.isTutorial() ? projectorOr("native.ui.tutorial_no_saving", "演示不保存")
+                    : projectorOr("native.ui.save_with_name", "命名保存"),
                 ui.session.editable() && !ui.session.isTutorial(),
                 mx,
                 my);
-            ui.canvas
-                .button(1713, 244, 208, 74, 19, "覆盖所选", ui.session.editable() && selectedPresetAvailable(), mx, my);
-            ui.canvas.button(1714, 322, 208, 74, 19, "删除所选", selectedPresetAvailable(), mx, my);
+            ui.canvas.button(
+                1713,
+                244,
+                208,
+                74,
+                19,
+                projectorOr("native.ui.overwrite_selected", "覆盖所选"),
+                ui.session.editable() && selectedPresetAvailable(),
+                mx,
+                my);
+            ui.canvas.button(
+                1714,
+                322,
+                208,
+                74,
+                19,
+                projectorOr("native.ui.delete_selected", "删除所选"),
+                selectedPresetAvailable(),
+                mx,
+                my);
         } else {
-            ui.canvas.button(105, 165, 186, 231, 19, presetDowngrade ? "缺料时允许降级 ✓" : "缺料时严格保持等级", true, mx, my);
-            ui.canvas.text(presetTier < 0 ? "未选择预设；先选择等级才可生成目标" : "保留现场仓室；不选择预设也可确认构建", 165, 213, 231, 0x94afb4);
+            ui.canvas.button(
+                105,
+                165,
+                186,
+                231,
+                19,
+                ui.session.state().data.getBoolean("localStandardController")
+                    ? HologramNativeUiText.presetTierPolicy(presetDowngrade)
+                    : presetDowngrade ? projectorOr("native.ui.allow_downgrade_on_shortage_452", "缺料时允许降级 ✓")
+                        : projectorOr("native.ui.keep_exact_tier_on_shortage_453", "缺料时严格保持等级"),
+                true,
+                mx,
+                my);
+            ui.canvas.text(
+                ui.session.state().data.getBoolean("localStandardController") ? HologramNativeUiText.presetTargetNote()
+                    : presetTier < 0
+                        ? projectorOr("native.ui.no_preset_selected_choose_a_tier_before", "未选择预设；先选择等级才可生成目标")
+                        : projectorOr(
+                            "native.ui.keep_installed_hatches_construction_does_not_require",
+                            "保留现场仓室；不选择预设也可确认构建"),
+                165,
+                213,
+                231,
+                0x94afb4);
         }
         ui.canvas.button(
             106,
@@ -708,8 +998,11 @@ final class HologramUiConfiguration {
             260,
             142,
             20,
-            customPresets ? "应用所选搭配" : "生成预设目标",
-            ui.session.editable() && ui.session.state().data.getBoolean("supported")
+            customPresets ? projectorOr("native.ui.apply_selected_preset", "应用所选搭配")
+                : projectorOr("native.ui.generate_preset_target", "生成预设目标"),
+            ui.session.configurationEditable()
+                && (ui.session.state().data.getBoolean("localStandardController")
+                    || ui.session.state().data.getBoolean("supported"))
                 && (customPresets ? customPresetActionAvailable() : basicPresetActionAvailable()),
             mx,
             my);
@@ -719,19 +1012,20 @@ final class HologramUiConfiguration {
             260,
             84,
             20,
-            "撤销预设",
+            projectorOr("native.ui.clear_preset", "撤销预设"),
             ui.session.editable() && ui.session.state().data.getBoolean("presetActive"),
             mx,
             my);
     }
 
     private void applyHatchProfile(NBTTagCompound profile, boolean basic) {
-        if (!ui.session.editable() || profile == null) return;
+        if (!ui.session.configurationEditable() || profile == null) return;
         if (basic ? !basicPresetActionAvailable() : !customPresetActionAvailable()) return;
         NBTTagCompound config = configuration();
         config.setInteger("hatchTier", profile.getInteger("tier"));
         config.setBoolean("hatchDowngrade", profile.getBoolean("downgrade"));
         config.setBoolean("applyHatchPreset", true);
+        config.removeTag("hatchProfile");
         if (!basic) config.setTag("hatchProfile", profile.copy());
         presetDrawer = false;
         ui.session.send("configure", config, true);
@@ -739,7 +1033,8 @@ final class HologramUiConfiguration {
 
     private void manageHatchPreset(int id) {
         if (ui.session.isTutorial()) {
-            ui.session.notice("演示隔离：不读取或修改本机仓室搭配文件");
+            ui.session.notice(
+                projectorOr("native.ui.tutorial_isolation_local_hatch_preset_files_are", "演示隔离：不读取或修改本机仓室搭配文件"));
             return;
         }
         try {
@@ -747,7 +1042,7 @@ final class HologramUiConfiguration {
                 presetStore.delete(selectedHatchPreset);
                 selectedHatchPreset = "";
                 hatchPresetNameField.setText("");
-                ui.session.notice("本机仓室搭配已删除");
+                ui.session.notice(projectorOr("native.ui.local_hatch_preset_deleted", "本机仓室搭配已删除"));
                 return;
             }
             if (!ui.session.editable()) return;
@@ -762,7 +1057,9 @@ final class HologramUiConfiguration {
             selectedHatchPreset = name;
             customPresets = true;
             presetOffset = Math.max(0, hatchPresetNames().indexOf(name) - 3);
-            ui.session.notice("已保存当前服务端仓室搭配到本机：" + name);
+            ui.session.notice(
+                (projectorOr("native.ui.saved_the_current_server_hatch_preset_locally", "已保存当前服务端仓室搭配到本机：") + " ")
+                    + name);
         } catch (java.io.IOException invalid) {
             ui.session.notice(invalid.getMessage());
         }
@@ -771,10 +1068,12 @@ final class HologramUiConfiguration {
     void drawSources(int mx, int my) {
         ui.canvas.tooltip(null);
         drawRect(157, 59, 405, 257, 0xff172f36);
-        ui.canvas.text("材料来源", 166, 67, 200, 0xf5e4b9);
+        ui.canvas.text(projectorOr("native.ui.material_sources", "材料来源"), 166, 67, 200, 0xf5e4b9);
         ui.canvas.button(88, 375, 62, 23, 17, "×", true, mx, my);
         String[] keys = { "materialMain", "materialContainers", "materialMe" };
-        String[] labels = { "主背包", "背包内物品容器", "携带的 ME 无线终端" };
+        String[] labels = { projectorOr("native.ui.main_inventory_363", "主背包"),
+            projectorOr("native.ui.inventory_item_containers", "背包内物品容器"),
+            projectorOr("native.ui.carried_me_wireless_terminal", "携带的 ME 无线终端") };
         for (int i = 0; i < keys.length; i++) ui.canvas.button(
             84 + i,
             166,
@@ -792,24 +1091,36 @@ final class HologramUiConfiguration {
             175,
             230,
             21,
-            "优先：" + new String[] { "主背包", "物品容器", "ME 终端" }[priority],
+            (projectorOr("native.ui.priority", "优先：") + " ") + new String[] {
+                projectorOr("native.ui.main_inventory_363", "主背包"), projectorOr("native.ui.item_containers", "物品容器"),
+                projectorOr("native.ui.me_terminal", "ME 终端") }[priority],
             ui.session.editable(),
             mx,
             my);
         ui.canvas.text(
-            new String[] { "主背包 → 容器 → ME", "容器 → 主背包 → ME", "ME → 主背包 → 容器" }[priority],
+            new String[] { projectorOr("native.ui.main_inventory_containers_me", "主背包 → 容器 → ME"),
+                projectorOr("native.ui.containers_main_inventory_me", "容器 → 主背包 → ME"),
+                projectorOr("native.ui.me_main_inventory_containers", "ME → 主背包 → 容器") }[priority],
             166,
             203,
             230,
             0xb9d5d4);
-        ui.canvas.text("已绑定、有电、在范围内；遵守网络权限", 166, 245, 230, 0x94afb4);
+        ui.canvas.text(
+            projectorOr("native.ui.bound_powered_and_in_range_network_permissions", "已绑定、有电、在范围内；遵守网络权限"),
+            166,
+            245,
+            230,
+            0x94afb4);
     }
 
     String facingName() {
         int index = ui.session.state().data.getInteger("facing");
-        if (index < 0 || index >= ExtendedFacing.values().length) return "未知";
+        if (index < 0 || index >= ExtendedFacing.values().length) return projectorOr("native.ui.unknown", "未知");
         ExtendedFacing facing = ExtendedFacing.values()[index];
-        String[] names = { "下", "上", "北", "南", "西", "东", "未知" };
+        String[] names = { projectorOr("native.ui.down", "下"), projectorOr("native.ui.up", "上"),
+            projectorOr("native.ui.north", "北"), projectorOr("native.ui.south", "南"),
+            projectorOr("native.ui.west", "西"), projectorOr("native.ui.east", "东"),
+            projectorOr("native.ui.unknown", "未知") };
         int direction = facing.getDirection()
             .ordinal();
         return names[Math.min(direction, names.length - 1)] + " / "
@@ -818,12 +1129,23 @@ final class HologramUiConfiguration {
             + "°"
             + (facing.getFlip()
                 .ordinal() == 0 ? ""
-                    : " / 镜像 " + facing.getFlip()
+                    : (" " + projectorOr("native.ui.mirror", "/ 镜像") + " ") + facing.getFlip()
                         .ordinal());
     }
 
     NBTTagList capabilities() {
         return ui.session.state().data.getTagList("capabilities", 10);
+    }
+
+    String capabilityLabel(NBTTagCompound capability) {
+        return ui.session.state().data.getBoolean("localStandardController")
+            ? HologramNativeUiText.capabilityLabel(capability)
+            : capability.getString("label");
+    }
+
+    String capabilityOptionLabel(NBTTagCompound option) {
+        return ui.session.state().data.getBoolean("localStandardController") ? HologramNativeUiText.optionLabel(option)
+            : option.getString("label");
     }
 
     NBTTagCompound capability(String id) {
@@ -870,7 +1192,8 @@ final class HologramUiConfiguration {
                 return null;
             }
         }
-        if (selected != null && !"coil".equals(selected.family)) return null;
+        if (selected != null && !"coil".equals(selected.family)
+            && !ui.session.state().data.getBoolean("localStandardController")) return null;
         NBTTagCompound coil = ui.config.capability("coil");
         if (coil != null && coil.getBoolean("editable")) return coil;
         NBTTagList list = ui.config.capabilities();
@@ -882,12 +1205,12 @@ final class HologramUiConfiguration {
                     .equals("gt_hatch")
                 && cap.getBoolean("editable")) return cap;
         }
-        return null;
+        return ui.session.state().data.getBoolean("localStandardController") ? capability("main") : null;
     }
 
     NBTTagCompound hatchCandidateCapability() {
         HologramState.Cell cell = ui.session.selectedCell();
-        if (cell == null || cell.anchor || ui.session.state().data.getInteger("mode") == 2) return null;
+        if (cell == null || cell.anchor || !targetEditingMode()) return null;
         ItemStack target = ItemStack.loadItemStackFromNBT(
             ui.session.cellTag()
                 .getCompoundTag("targetStack"));
@@ -922,7 +1245,7 @@ final class HologramUiConfiguration {
         NBTTagCompound row = new NBTTagCompound();
         row.setString("id", "_hatch_candidate");
         row.setString("kind", "hatchCandidate");
-        row.setString("label", "空仓室目标 · 独立设备等级");
+        row.setString("label", projectorOr("native.ui.empty_hatch_target_independent_device_tier", "空仓室目标 · 独立设备等级"));
         row.setBoolean("editable", true);
         row.setBoolean("explicit", true);
         row.setInteger("current", current);
@@ -934,7 +1257,8 @@ final class HologramUiConfiguration {
             option.setBoolean("present", true);
             option.setString(
                 "label",
-                stack.getDisplayName() + " · 等级 " + HologramUiConfiguration.hatchPrototype(stack).mTier);
+                stack.getDisplayName() + (" " + projectorOr("native.ui.tier_467", "· 等级") + " ")
+                    + HologramUiConfiguration.hatchPrototype(stack).mTier);
             option.setTag("item", stack.writeToNBT(new NBTTagCompound()));
             options.appendTag(option);
         }
@@ -966,10 +1290,10 @@ final class HologramUiConfiguration {
 
     String optionLabel(NBTTagCompound cap) {
         int index = ui.config.optionIndex(cap);
-        return index < 0 ? "有效值 " + cap.getInteger("current")
-            : cap.getTagList("options", 10)
-                .getCompoundTagAt(index)
-                .getString("label");
+        return index < 0 ? (projectorOr("native.ui.effective_value", "有效值") + " ") + cap.getInteger("current")
+            : capabilityOptionLabel(
+                cap.getTagList("options", 10)
+                    .getCompoundTagAt(index));
     }
 
     boolean canStep(NBTTagCompound cap, int delta) {
@@ -1009,35 +1333,35 @@ final class HologramUiConfiguration {
     static String roleLabel(String role) {
         switch (role) {
             case "Energy Hatch":
-                return "能源仓";
+                return projectorOr("native.ui.energy_input_hatch", "能源仓");
             case "Dynamo Hatch":
-                return "动力仓";
+                return projectorOr("native.ui.dynamo_hatch", "动力仓");
             case "Multi-Amp Energy Hatch":
-                return "多安能源仓";
+                return projectorOr("native.ui.multi_amp_energy_input_hatch", "多安能源仓");
             case "Laser Source Hatch":
-                return "激光源仓";
+                return projectorOr("native.ui.laser_energy_input_hatch", "激光源仓");
             case "Laser/Multi-Amp Energy Hatch":
-                return "激光 / 多安能源仓";
+                return projectorOr("native.ui.laser_multi_amp_energy_input_hatch", "激光 / 多安能源仓");
             case "Laser/Multi-Amp Dynamo Hatch":
-                return "激光 / 多安动力仓";
+                return projectorOr("native.ui.laser_multi_amp_dynamo_hatch", "激光 / 多安动力仓");
             case "Maintenance Hatch":
-                return "维护仓";
+                return projectorOr("native.ui.maintenance_hatch", "维护仓");
             case "Muffler Hatch":
-                return "消声仓";
+                return projectorOr("native.ui.muffler_hatch", "消声仓");
             case "Input Bus":
-                return "输入总线";
+                return projectorOr("native.ui.input_bus", "输入总线");
             case "Input Hatch":
-                return "输入仓";
+                return projectorOr("native.ui.input_hatch", "输入仓");
             case "Output Bus":
-                return "输出总线";
+                return projectorOr("native.ui.output_bus", "输出总线");
             case "Output Hatch":
-                return "输出仓";
+                return projectorOr("native.ui.output_hatch", "输出仓");
             case "Solidifier Hatch":
-                return "流体固化仓";
+                return projectorOr("native.ui.fluid_solidifier_hatch", "流体固化仓");
             case "Cryotheum Cooling Hatch":
-                return "极寒之凛冰冷却仓";
+                return projectorOr("native.ui.cryotheum_cooling_hatch", "极寒之凛冰冷却仓");
             case "Pyrotheum Heating Hatch":
-                return "烈焰之炽焱加热仓";
+                return projectorOr("native.ui.pyrotheum_heating_hatch", "烈焰之炽焱加热仓");
             default:
                 return net.minecraft.util.StatCollector.translateToLocal(role);
         }
@@ -1072,13 +1396,13 @@ final class HologramUiConfiguration {
     void selectFilteredTarget() {
         List<Integer> candidates = ui.config.filteredHatches();
         if (!candidates.isEmpty()) ui.router.activate(10000 + candidates.get(0));
-        else ui.session.notice("此类型 / 等级没有合法候选，目标未改变");
+        else ui.session.notice(projectorOr("native.ui.no_valid_candidate_for_this_type_tier", "此类型 / 等级没有合法候选，目标未改变"));
     }
 
     void applyRawChannel(String name, String raw) {
         if (!ui.session.configurationEditable()) return;
         if (!name.matches("[a-z0-9_.-]{1,48}") || "_hatch_candidate".equals(name)) {
-            ui.session.notice("name须为1–48位小写字母、数字、_、.或-");
+            ui.session.notice(projectorOr("native.ui.name_must_be_1_48_lowercase_letters", "name须为1–48位小写字母、数字、_、.或-"));
             return;
         }
         try {
@@ -1091,7 +1415,7 @@ final class HologramUiConfiguration {
             this.optionChannel = "";
             ui.session.send("configure", config, true);
         } catch (NumberFormatException invalid) {
-            ui.session.notice("value须为1–2147483647");
+            ui.session.notice(projectorOr("native.ui.value_must_be_1_2147483647", "value须为1–2147483647"));
         }
     }
 
@@ -1121,6 +1445,20 @@ final class HologramUiConfiguration {
             "channels",
             ui.session.state().data.getCompoundTag("channels")
                 .copy());
+        if (ui.session.state().data.getBoolean("localStandardController")) {
+            n.setInteger("scope", 0);
+            n.setInteger("selected", -1);
+            n.setIntArray("selectedIndices", new int[0]);
+            n.setString("structureId", "");
+            n.setBoolean("noHatches", false);
+            n.setInteger("demolitionDestination", ui.review.nativeRecoveryDestination());
+            for (String key : new String[] { "nativeAction", "nativeTargetRevision", "presetActive", "hatchTier",
+                "hatchDowngrade", "hatchProfile", "nativeHatchChoices" })
+                if (ui.session.state().data.hasKey(key)) n.setTag(
+                    key,
+                    ui.session.state().data.getTag(key)
+                        .copy());
+        }
         return n;
     }
 
@@ -1132,6 +1470,7 @@ final class HologramUiConfiguration {
     }
 
     void requestSelectedDetails() {
+        if (ui.session.state().data.getBoolean("localStandardController")) return;
         if (ui.session.editable() && ui.preview.selected() >= 0
             && ui.session.state().data.getInteger("selected") != ui.preview.selected())
             ui.session.send("configure", ui.config.configuration(), true);
@@ -1185,7 +1524,13 @@ final class HologramUiConfiguration {
     }
 
     boolean selectModeControl(int id) {
+        if (id >= 1720 && id <= 1723 && ui.session.state().data.getBoolean("localStandardController")) {
+            HologramScreen root = ui.host == null ? null : ui.host.parent();
+            if (root != null) root.selectNativeAction(id - 1720);
+            return true;
+        }
         if (id >= 70 && id <= 72) {
+            if (ui.session.state().data.getBoolean("localStandardController")) return true;
             if (!ui.session.configurationEditable()) return true;
             NBTTagCompound modeConfig = ui.config.configuration();
             modeConfig.setInteger("mode", id - 70);
@@ -1200,7 +1545,10 @@ final class HologramUiConfiguration {
 
     boolean activateControl(int id) {
         if (ui.session.isTutorial() && id >= 1712 && id <= 1714) {
-            ui.session.notice("演示隔离：本机命名搭配与上次配置不可用，不会读取或保存用户预设");
+            ui.session.notice(
+                projectorOr(
+                    "native.ui.tutorial_isolation_local_named_presets_and_last",
+                    "演示隔离：本机命名搭配与上次配置不可用，不会读取或保存用户预设"));
             return true;
         }
         if (id >= 1700 && id < 1704) {
@@ -1256,7 +1604,10 @@ final class HologramUiConfiguration {
                 if (ui.session.state().data.getBoolean("virtual")
                     && ui.session.state().data.getString("activeStructure")
                         .isEmpty()) {
-                    ui.session.notice("先选中结构轮廓并打开结构编辑，再设置该结构等级和信道");
+                    ui.session.notice(
+                        projectorOr(
+                            "native.ui.select_a_source_outline_and_open_structure",
+                            "先选中结构轮廓并打开结构编辑，再设置该结构等级和信道"));
                     return true;
                 }
                 this.drawer = true;
@@ -1314,6 +1665,11 @@ final class HologramUiConfiguration {
                 return true;
             case 99:
             case 102:
+                if (ui.session.state().data.getBoolean("localStandardController")) {
+                    ui.session
+                        .notice(projectorOr("native.ui.native_hatch_facing_is_generated_by_the", "原生仓室朝向由控制器的建造流程生成。"));
+                    return true;
+                }
                 if (!ui.session.selectedNativeEditable()) return true;
                 int[] facings = ui.session.hatchFacings();
                 int nextFacing = -1;
@@ -1363,7 +1719,8 @@ final class HologramUiConfiguration {
                 presetOffset = Math.max(0, presetOffset + (id == 1717 ? -4 : 4));
                 return true;
             case 107:
-                if (!ui.session.editable() || !ui.session.state().data.getBoolean("presetActive")) return true;
+                if (!ui.session.configurationEditable() || !ui.session.state().data.getBoolean("presetActive"))
+                    return true;
                 this.presetDrawer = false;
                 ui.session.send("clearHatchPreset", new NBTTagCompound(), true);
                 return true;
@@ -1393,12 +1750,18 @@ final class HologramUiConfiguration {
                         this.mainField.getText()
                             .trim());
                     if (value >= 1) ui.config.configure("main", value);
-                    else ui.session.notice("主值须为1–2147483647");
+                    else ui.session
+                        .notice(projectorOr("native.ui.main_value_must_be_1_2147483647", "主值须为1–2147483647"));
                 } catch (NumberFormatException ignored) {
-                    ui.session.notice("主值须为1–2147483647");
+                    ui.session.notice(projectorOr("native.ui.main_value_must_be_1_2147483647", "主值须为1–2147483647"));
                 }
                 return true;
             case 33:
+                if (ui.session.state().data.getBoolean("localStandardController")) {
+                    if (ui.host != null) ui.host.parent()
+                        .clearNativePreset();
+                    return true;
+                }
                 if (ui.session.configurationEditable()) {
                     NBTTagCompound n = ui.config.configuration();
                     n.setBoolean("noHatches", !ui.session.state().data.getBoolean("noHatches"));
@@ -1526,7 +1889,8 @@ final class HologramUiConfiguration {
             if (target != null) {
                 int row = filteredHatches().indexOf(target.chosenChoice);
                 if (row >= 0) hatchOffset = row;
-                else if (hatchRole == 0) ui.session.notice("目标已更新；所选候选不在当前等级筛选中");
+                else if (hatchRole == 0) ui.session.notice(
+                    projectorOr("native.ui.target_updated_the_selected_candidate_is_outside", "目标已更新；所选候选不在当前等级筛选中"));
             }
         }
         if (mainField != null && !mainField.isFocused())
@@ -1710,15 +2074,26 @@ final class HologramUiConfiguration {
 
     boolean customPresetActionAvailable() {
         NBTTagCompound state = ui.session.state().data;
-        return selectedPresetAvailable() && state.getInteger("mode") != 2 && !state.getBoolean("capturePending");
+        return selectedPresetAvailable() && targetEditingMode()
+            && (state.getBoolean("localStandardController") ? ui.session.configurationEditable()
+                : !state.getBoolean("capturePending"));
     }
 
     private boolean presetActionAvailable() {
         NBTTagCompound state = ui.session.state().data;
-        return state.getInteger("mode") != 2 && !state.getBoolean("capturePending")
-            && (state.getBoolean("presetAvailable")
-                || state.getBoolean("localStandardController") && state.getBoolean("supported")
-                    && !state.getBoolean("virtual"));
+        if (state.getBoolean("localStandardController")) return ui.session.configurationEditable();
+        return targetEditingMode() && !state.getBoolean("capturePending") && state.getBoolean("presetAvailable");
+    }
+
+    boolean targetEditingMode() {
+        return ui.session.state().data.getBoolean("localStandardController")
+            || ui.session.state().data.getInteger("mode") != 2;
+    }
+
+    String nativeFacingLabel() {
+        HologramState.Cell cell = ui.session.selectedCell();
+        return cell == null || cell.targetFacing < 0 ? projectorOr("native.ui.native_automatic_facing", "原生自动朝向")
+            : (projectorOr("native.ui.native_facing", "原生朝向：") + " ") + directionName(cell.targetFacing);
     }
 
     int nativePresetCount() {
@@ -1728,7 +2103,8 @@ final class HologramUiConfiguration {
     String nativePresetRow(int row) {
         int index = presetOffset + row;
         if (index < 0 || index >= nativePresetCount()) return "";
-        String name = customPresets ? hatchPresetNames().get(index) : tierName(index) + " · 按结构声明配额";
+        String name = customPresets ? hatchPresetNames().get(index)
+            : tierName(index) + (" " + projectorOr("native.ui.structure_declared_quotas", "· 按结构声明配额"));
         boolean chosen = customPresets ? name.equals(selectedHatchPreset) : index == presetTier;
         return (chosen ? "✓ " : "") + name;
     }

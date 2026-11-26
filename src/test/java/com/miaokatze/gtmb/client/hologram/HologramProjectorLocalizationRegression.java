@@ -63,10 +63,12 @@ public final class HologramProjectorLocalizationRegression {
             "matching native site uses English");
         var data = new net.minecraft.nbt.NBTTagCompound();
         data.setBoolean("localStandardController", true);
+        data.setLong("nativeTargetRevision", 1);
         SimpleAssert.eq(
-            "This controller has no native structure available for construction.",
+            "Updating the complete target.",
             HologramPlacementConfirmation.localStructureReviewBlocker(new HologramState(data)),
             "native eligibility blocker uses English");
+        nativeWorkflowLabels();
         expect("Construction complete. 12 cells placed.", "stock.done_placement", "Construction", 12);
         expect(
             "The selected material sources do not have enough stock. Placement did not start.",
@@ -92,6 +94,187 @@ public final class HologramProjectorLocalizationRegression {
         expect("藍圖庫", "library.title");
         expect("7 格 · 2 結構", "library.row_counts", 7, 2);
         System.out.println("PASS projector localization: " + english.size() + " keys in en_US, zh_CN, zh_TW");
+    }
+
+    private static void nativeWorkflowLabels() {
+        var operations = com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.values();
+        String[] labels = { "Build", "Repair", "Replace", "Demolish" };
+        for (int i = 0; i < operations.length; i++) {
+            SimpleAssert.eq(labels[i], HologramNativeControllerState.label(operations[i]), "native action label");
+            SimpleAssert.eq(
+                "Confirm " + labels[i],
+                HologramNativeControllerState.confirmationLabel(operations[i]),
+                "native confirmation uses a complete translated template");
+            SimpleAssert.eq(
+                "Review and confirm " + labels[i],
+                HologramNativeControllerState.reviewLabel(operations[i]),
+                "native launcher uses a complete translated template");
+        }
+        var state = new HologramNativeControllerState();
+        state.targetReady();
+        var stage = com.miaokatze.gtmb.hologram.HologramStockNativeWire.Stage.CONTROLLER_ONLY;
+        state.observe(
+            new com.miaokatze.gtmb.hologram.HologramStockNativeWire.ServerObservation(
+                1,
+                0,
+                64,
+                0,
+                stage,
+                1,
+                state.targetRevision(),
+                ""));
+        SimpleAssert.eq("Controller only", state.statusCaption(), "server state caption uses English");
+        SimpleAssert.eq(
+            "Controller only",
+            HologramUiBuildReview.nativeCompletionCaption("", "", state.statusCaption()),
+            "normal native summary uses observed stage without inventing a validation failure from an opening status");
+        SimpleAssert.eq(
+            "Reading the controller site",
+            HologramUiBuildReview.nativeCompletionCaption("", "Reading the controller site", state.statusCaption()),
+            "ordinary English native progress is preserved rather than passed to the blueprint diagnostic fallback");
+        String progress = HologramUiText.projector("stock.confirmed_cells", "Build", 12);
+        SimpleAssert.eq(
+            progress,
+            HologramUiBuildReview.nativeCompletionCaption(progress, "Earlier notice", state.statusCaption()),
+            "live native Flow progress takes precedence over an earlier notice and observed stage");
+        String complete = HologramUiText.projector("stock.done_changes", "Repair", 33);
+        SimpleAssert.eq(
+            complete,
+            HologramUiBuildReview.nativeCompletionCaption("", complete, state.statusCaption()),
+            "actual translated native completion text remains the completion summary");
+        SimpleAssert.eq(
+            "Only the controller is present. Build the structure first.",
+            state.blocker(operations[1]),
+            "wrong action explains the server stage in English");
+        state.observe(
+            new com.miaokatze.gtmb.hologram.HologramStockNativeWire.ServerObservation(
+                1,
+                0,
+                64,
+                0,
+                com.miaokatze.gtmb.hologram.HologramStockNativeWire.Stage.UNFORMED,
+                2,
+                state.targetRevision(),
+                ""));
+        SimpleAssert.eq("Structure incomplete", state.statusCaption(), "incomplete server stage is translated");
+        state.observe(
+            new com.miaokatze.gtmb.hologram.HologramStockNativeWire.ServerObservation(
+                1,
+                0,
+                64,
+                0,
+                com.miaokatze.gtmb.hologram.HologramStockNativeWire.Stage.FORMED,
+                3,
+                state.targetRevision(),
+                "控制器正在运行，请先停止。"));
+        SimpleAssert.eq(
+            "The controller is running. Stop it first.",
+            state.blocker(operations[2]),
+            "known native server reason is translated without changing admission");
+        SimpleAssert.that(
+            state.statusCaption()
+                .startsWith("Structure formed · The controller is running."),
+            "formed server status preserves its readable reason");
+        SimpleAssert.eq(
+            "unknown native diagnostic: raw-id",
+            HologramNativeUiText.reason("unknown native diagnostic: raw-id"),
+            "unknown diagnostics retain their original evidence");
+        var config = new net.minecraft.nbt.NBTTagCompound();
+        config.setBoolean("localStandardController", true);
+        config.setBoolean("nativeTargetReady", true);
+        var estimate = new HologramNativeTargetReview(
+            new HologramState(config),
+            new net.minecraft.nbt.NBTTagCompound());
+        SimpleAssert.eq(
+            "Complete target: update 0 cells, turn 0 cells, leave 0 matching cells unchanged."
+                + " The server verifies payment, recovery and protection.",
+            estimate.status(),
+            "material delta summary is actually English");
+        config.setInteger("nativeAction", operations[3].ordinal());
+        var removal = new HologramNativeTargetReview(new HologramState(config), new net.minecraft.nbt.NBTTagCompound());
+        SimpleAssert.eq(
+            "Whole structure demolition preview: 0 world blocks."
+                + " The server verifies payment, recovery and protection.",
+            removal.status(),
+            "whole demolition material summary is actually English");
+        var local = new HologramMaterialConfirmationDialog.LocalView() {
+
+            @Override
+            public HologramMaterialConfirmationDialog.LocalFrame localFrame() {
+                return null;
+            }
+
+            @Override
+            public boolean localSubmitAvailable() {
+                return false;
+            }
+
+            @Override
+            public void localAction(HologramMaterialConfirmationDialog.LocalAction action) {}
+        };
+        SimpleAssert.eq("Cannot submit now.", local.localSubmitBlocker(), "material confirmation blocker is English");
+        SimpleAssert
+            .eq("Submit construction for verification…", local.localSubmitLabel(), "material footer is English");
+        SimpleAssert.eq(
+            "Material sources: verified by the server during execution",
+            local.localSourcesLabel(),
+            "source admission explanation is English");
+        SimpleAssert.eq("items", HologramNativeUiText.unit("个"), "native material rows translate units");
+        var commands = new HologramEditorCommands(null);
+        SimpleAssert.eq(
+            "Structure tier / Channels",
+            commands.get("channels").label,
+            "real command catalogue uses English rather than Chinese definitions");
+        SimpleAssert.eq(
+            "Edit the source structure's main value and named channels.",
+            commands.get("channels").help,
+            "real command help uses English");
+        var capability = new net.minecraft.nbt.NBTTagCompound();
+        capability.setString("id", "main");
+        capability.setString("label", "主信号（未设子信道时回退）");
+        SimpleAssert.eq(
+            "Main signal (fallback for unset channels)",
+            HologramNativeUiText.capabilityLabel(capability),
+            "captured native main capability label is translated at presentation");
+        capability.setString("id", "machine_raw");
+        capability.setString("label", "machine_raw（原始整数）");
+        SimpleAssert.eq(
+            "machine_raw (raw integer)",
+            HologramNativeUiText.capabilityLabel(capability),
+            "raw channel label is translated while its identifier stays visible");
+        SimpleAssert.eq(
+            "machine_raw（原始整数）",
+            capability.getString("label"),
+            "presentation does not rewrite native metadata or raw channels");
+        var option = new net.minecraft.nbt.NBTTagCompound();
+        option.setString("label", "继承主信号");
+        SimpleAssert.eq(
+            "Inherit main signal",
+            HologramNativeUiText.optionLabel(option),
+            "captured channel inheritance option is translated");
+        capability.setString("label", "custom source label");
+        SimpleAssert.eq(
+            "Allow lower tier hatches ✓",
+            HologramNativeUiText.presetTierPolicy(true),
+            "native preset relaxation describes model tiers rather than missing stock");
+        SimpleAssert.eq(
+            "Use selected tier only",
+            HologramNativeUiText.presetTierPolicy(false),
+            "native strict preset describes exact model tiers");
+        SimpleAssert.that(
+            HologramNativeUiText.presetTierPolicyHint()
+                .contains("projected model")
+                && HologramNativeUiText.presetTargetNote()
+                    .contains("Unconfigured optional positions use casings"),
+            "native preset hints explain projected material payment and complete optional casing defaults");
+        SimpleAssert.that(
+            HologramNativeUiText.reason("所选仓室配置未通过控制器的原生结构检查。")
+                .contains("Check channels and mandatory hatch tiers"),
+            "native structure-check refusal provides a generic actionable tier and channel hint");
+        SimpleAssert.eq(
+            "custom source label",
+            HologramNativeUiText.capabilityLabel(capability),
+            "unknown machine-specific channel labels are preserved");
     }
 
     private static void expect(String expected, String key, Object... args) {
