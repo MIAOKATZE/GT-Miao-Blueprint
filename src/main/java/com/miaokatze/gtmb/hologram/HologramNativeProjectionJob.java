@@ -340,13 +340,18 @@ final class HologramNativeProjectionJob {
                     : stage == Stage.UNFORMED || stage == Stage.FORMED;
     }
 
-    private boolean current() {
+    private boolean executionCurrent() {
         return state == State.ACTIVE && confirmed.getAsBoolean()
             && HologramWorkspace.currentActionEndpoint(endpoint)
             && endpoint.player.worldObj == endpoint.world
             && HologramWorkspace.find(endpoint.actor) == session
             && endpoint.player.capabilities.isCreativeMode == creative
-            && !controller.isInvalid()
+            && !endpoint.player.isDead
+            && endpoint.player.capabilities.allowEdit;
+    }
+
+    private boolean current() {
+        return executionCurrent() && !controller.isInvalid()
             && endpoint.world.getTileEntity(session.x, session.y, session.z) == controller
             && endpoint.world.getBlock(session.x, session.y, session.z) == GregTechAPI.sBlockMachines
             && controller.getMetaTileID() == intent.controller()
@@ -358,6 +363,17 @@ final class HologramNativeProjectionJob {
             && controller.getMetaTileEntity() == machine
             && controller.getMetaTileID() == intent.controller()
             && machine.getExtendedFacing() == facing;
+    }
+
+    /** Used only after the successful native removal of the final whole-structure controller. */
+    private boolean removalCurrent(boolean anchor) {
+        return current() || anchor && intent.operation() == Operation.DEMOLISH
+            && next >= work.size()
+            && !anchorDone
+            && executionCurrent()
+            && endpoint.world.blockExists(session.x, session.y, session.z)
+            && endpoint.world.getBlock(session.x, session.y, session.z) == Blocks.air
+            && endpoint.world.getTileEntity(session.x, session.y, session.z) == null;
     }
 
     private static String key(HologramNativeTargetPlan.Cell cell) {
@@ -502,7 +518,8 @@ final class HologramNativeProjectionJob {
                 () -> current() && gate.transactionCurrent(permit)
                     && world.getBlock(x, y, z) == block
                     && world.getBlockMetadata(x, y, z) == metadata
-                    && world.getTileEntity(x, y, z) == tile);
+                    && world.getTileEntity(x, y, z) == tile,
+                () -> removalCurrent(anchor) && gate.transactionCurrent(permit));
             recovery.recoverWorldAtPlayer(result.drops, intent.destination());
             boolean removed = result.removed && world.getBlock(x, y, z) == Blocks.air
                 && world.getTileEntity(x, y, z) == null;

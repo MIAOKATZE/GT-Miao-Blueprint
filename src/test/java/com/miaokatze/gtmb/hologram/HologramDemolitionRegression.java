@@ -88,6 +88,7 @@ public final class HologramDemolitionRegression {
                 protection(world, player, guard);
                 chest(world, player);
                 nativeFailure(world, player);
+                scopedHarvestPhases(world, player, guard);
                 declaredToolLifecycle(world, player, guard);
                 try (AutoCloseable nativeScope = HologramDemolitionDestinationRegression.nativeClassScope()) {
                     nativeGtHatches(unsafe, world, player);
@@ -274,6 +275,80 @@ public final class HologramDemolitionRegression {
         SimpleAssert.that(
             !MinecraftForge.EVENT_BUS.post(joinEvent(later, world)),
             "exception never leaks capture to later world activity");
+    }
+
+    private static void scopedHarvestPhases(Scene world, Player player, Guard guard) throws IOException {
+        for (String scenario : new String[] { "immediate", "deferred", "removedForeign", "destroyedForeign",
+            "removedForeignTile", "revoked", "nativeFailure", "falseAir", "falseForeign", "falseDrops" }) {
+            boolean[] authority = { true };
+            ScopedHarvestBlock source = new ScopedHarvestBlock(scenario, authority);
+            world.block = source;
+            world.metadata = 3;
+            world.tile = null;
+            world.liveItems = 0;
+            HologramDemolition.Removal result = HologramDemolition.removeBlock(
+                player,
+                world,
+                0,
+                64,
+                0,
+                () -> authority[0] && world.block == source && world.metadata == 3 && world.tile == null,
+                () -> authority[0]);
+            boolean completed = scenario.equals("immediate") || scenario.equals("deferred")
+                || scenario.equals("nativeFailure");
+            if (completed) {
+                SimpleAssert.that(
+                    result.removed && world.block == Blocks.air && world.tile == null,
+                    "the scoped native removal retains its expected empty result: " + scenario);
+                SimpleAssert.eq(
+                    1,
+                    source.harvests,
+                    "native harvest runs exactly once after the legitimate transition: " + scenario);
+                SimpleAssert.that(
+                    result.drops.size() == 1 && result.drops.get(0)
+                        .getItem() == Items.apple && result.drops.get(0).stackSize == 3 && world.liveItems == 0,
+                    "only the three actual native-emitted items are captured once: " + scenario);
+                SimpleAssert.that(
+                    (result.failure != null) == scenario.equals("nativeFailure"),
+                    "a failure after native drops preserves both real receipts and the failure");
+            } else {
+                SimpleAssert.eq(
+                    0,
+                    source.harvests,
+                    "revoked authority or a foreign post-removal cell cannot be harvested: " + scenario);
+                SimpleAssert.that(
+                    result.failure != null,
+                    "interrupted native removal cannot be misreported as complete: " + scenario);
+                if (scenario.equals("falseDrops")) SimpleAssert.that(
+                    result.drops.size() == 1 && result.drops.get(0)
+                        .getItem() == Items.apple && result.drops.get(0).stackSize == 2,
+                    "a false native result preserves its actual emitted drops exactly once");
+                else SimpleAssert
+                    .that(result.drops.isEmpty(), "refused native harvest cannot fabricate a refund: " + scenario);
+                SimpleAssert.that(
+                    result.removed != scenario.equals("falseDrops"),
+                    "a false or interrupted callback reports the actual changed source identity: " + scenario);
+                if (!scenario.equals("revoked") && !scenario.equals("falseAir")) SimpleAssert.that(
+                    world.block != Blocks.air || world.tile != null,
+                    "the foreign block or TE remains untouched by the old source's harvest: " + scenario);
+                SimpleAssert.that(
+                    source.destroyed == (scenario.equals("destroyedForeign") ? 1 : 0),
+                    "foreign identity is checked before and after onBlockDestroyedByPlayer: " + scenario);
+            }
+        }
+        ScopedHarvestBlock source = new ScopedHarvestBlock("immediate", new boolean[] { true });
+        world.block = source;
+        world.metadata = 3;
+        world.tile = null;
+        guard.toolCheck = () -> world.block = Blocks.air;
+        try {
+            var result = HologramDemolition.removeBlock(player, world, 0, 64, 0, () -> true, () -> true);
+            SimpleAssert.that(
+                result.removed && source.removals == 0 && source.harvests == 0 && result.drops.isEmpty(),
+                "air installed by a pre-removal BreakEvent is never mistaken for this removal's authorized transition");
+        } finally {
+            guard.toolCheck = null;
+        }
     }
 
     private static void declaredToolLifecycle(Scene world, Player player, Guard guard) throws Exception {
@@ -565,6 +640,55 @@ public final class HologramDemolitionRegression {
 
         VanillaBlockDefaults() {
             super(Material.iron);
+        }
+    }
+
+    private static final class ScopedHarvestBlock extends Block {
+
+        final String scenario;
+        final boolean[] authority;
+        int removals, destroyed, harvests;
+
+        ScopedHarvestBlock(String scenario, boolean[] authority) {
+            super(Material.wood);
+            this.scenario = scenario;
+            this.authority = authority;
+        }
+
+        @Override
+        public boolean canHarvestBlock(EntityPlayer player, int metadata) {
+            return true;
+        }
+
+        @Override
+        public boolean removedByPlayer(World world, EntityPlayer player, int x, int y, int z, boolean harvest) {
+            removals++;
+            Scene scene = (Scene) world;
+            if (!scenario.equals("deferred") && !scenario.equals("falseDrops")) world.setBlockToAir(x, y, z);
+            if (scenario.equals("falseDrops"))
+                world.spawnEntityInWorld(new EntityItem(world, x + .5, y + .5, z + .5, new ItemStack(Items.apple, 2)));
+            if (scenario.equals("removedForeign") || scenario.equals("falseForeign")) scene.block = Blocks.gold_block;
+            if (scenario.equals("removedForeignTile")) scene.tile = new TileEntityChest();
+            if (scenario.equals("revoked")) authority[0] = false;
+            return !scenario.startsWith("false");
+        }
+
+        @Override
+        public void onBlockDestroyedByPlayer(World world, int x, int y, int z, int metadata) {
+            destroyed++;
+            if (scenario.equals("destroyedForeign")) {
+                ((Scene) world).block = Blocks.gold_block;
+                ((Scene) world).tile = new TileEntityChest();
+            }
+        }
+
+        @Override
+        public void harvestBlock(World world, EntityPlayer player, int x, int y, int z, int metadata) {
+            harvests++;
+            if (scenario.equals("deferred")) world.setBlockToAir(x, y, z);
+            world.spawnEntityInWorld(new EntityItem(world, x + .5, y + .5, z + .5, new ItemStack(Items.apple, 3)));
+            if (scenario.equals("nativeFailure"))
+                throw new IllegalStateException("actual drops emitted before failure");
         }
     }
 

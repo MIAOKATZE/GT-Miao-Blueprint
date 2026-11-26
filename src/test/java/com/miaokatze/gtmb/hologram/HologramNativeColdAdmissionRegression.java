@@ -46,7 +46,7 @@ final class HologramNativeColdAdmissionRegression {
             HologramNativeSavedWorldRegression.withOfflineRegistries(() -> {
                 try {
                     for (String scenario : new String[] { "unchanged", "toolReplaced", "anchorReplaced",
-                        "accessRevoked" }) coldRoundTrip(scenario);
+                        "accessRevoked", "finalAnchor" }) coldRoundTrip(scenario);
                 } catch (Exception failure) {
                     throw new AssertionError("cold native reservation fixture", failure);
                 }
@@ -82,6 +82,7 @@ final class HologramNativeColdAdmissionRegression {
                 SimpleAssert.that(
                     seat != null && seat.stockNativePrivate && seat.boundTool == held,
                     "accepted admission owns the exact marked private seat and authenticated raw tool");
+                if (scenario.equals("finalAnchor")) verifyFinalAnchorAuthority(serverRef[0], endpoint, world, held);
                 SimpleAssert.that(
                     serverRef[0].enqueue(
                         endpoint,
@@ -116,9 +117,15 @@ final class HologramNativeColdAdmissionRegression {
                         .get(0)
                         .requiredAir(),
                 "the fixture target is independently produced by the real native compiler");
+            boolean demolish = scenario.equals("finalAnchor");
+            if (demolish) {
+                var body = target.cells()
+                    .get(0);
+                world.seed(body.dx(), 64 + body.dy(), body.dz(), Blocks.stone, 0);
+            }
             var projection = new HologramStockNativeWire.Projection(
                 CONTROLLER_ID,
-                HologramStockNativeWire.Operation.BUILD,
+                demolish ? HologramStockNativeWire.Operation.DEMOLISH : HologramStockNativeWire.Operation.BUILD,
                 Collections.emptyMap(),
                 Collections.emptyList(),
                 0,
@@ -148,8 +155,10 @@ final class HologramNativeColdAdmissionRegression {
             var capable = replies.get(replies.size() - 1);
             SimpleAssert.that(
                 capable.phase() == HologramStockNativeWire.Phase.CAPABLE && capable.observation()
-                    .stage() == HologramStockNativeWire.Stage.CONTROLLER_ONLY,
-                "native observation confirms the empty site before a cold BUILD");
+                    .stage()
+                    == (demolish ? HologramStockNativeWire.Stage.UNFORMED
+                        : HologramStockNativeWire.Stage.CONTROLLER_ONLY),
+                "native observation publishes the actual stage before the cold action");
             SimpleAssert.that(
                 HologramWorkspace.find(player.getUniqueID()) == null,
                 "observation cannot seize an editor or private execution workspace");
@@ -173,7 +182,7 @@ final class HologramNativeColdAdmissionRegression {
             server.tick(Long.MAX_VALUE);
             boolean accepted = replies.stream()
                 .anyMatch(reply -> reply.phase() == HologramStockNativeWire.Phase.ACCEPTED);
-            if (scenario.equals("unchanged")) {
+            if (scenario.equals("unchanged") || demolish) {
                 SimpleAssert.that(
                     accepted,
                     "unchanged cold proof must acquire its marked private workspace before native preparation");
@@ -205,6 +214,59 @@ final class HologramNativeColdAdmissionRegression {
             HologramNativeProjectionJob.clearBaselines();
             GregTechAPI.METATILEENTITIES[CONTROLLER_ID] = oldPrototype;
             GregTechAPI.sBlockMachines = oldMachines;
+        }
+    }
+
+    private static void verifyFinalAnchorAuthority(HologramStockNativeServer server,
+        HologramWorkspace.ActionEndpoint endpoint, HologramPlacementFixtureWorld world, ItemStack held) {
+        try {
+            Field active = HologramStockNativeServer.class.getDeclaredField("active");
+            active.setAccessible(true);
+            Object owner = ((java.util.Map<?, ?>) active.get(server)).get(endpoint.actor);
+            Field entryField = owner.getClass()
+                .getDeclaredField("entry");
+            entryField.setAccessible(true);
+            Field jobField = HologramStockNativeEntry.class.getDeclaredField("job");
+            jobField.setAccessible(true);
+            Object job = jobField.get(entryField.get(owner));
+            Field next = HologramNativeProjectionJob.class.getDeclaredField("next");
+            Field work = HologramNativeProjectionJob.class.getDeclaredField("work");
+            next.setAccessible(true);
+            work.setAccessible(true);
+            var guard = HologramNativeProjectionJob.class.getDeclaredMethod("removalCurrent", boolean.class);
+            guard.setAccessible(true);
+            Object originalAnchor = world.occupants.get("0,64,0");
+            int originalNext = next.getInt(job);
+            try {
+                next.setInt(job, ((java.util.List<?>) work.get(job)).size());
+                world.seed(0, 64, 0, Blocks.air, 0);
+                world.occupants.remove("0,64,0");
+                SimpleAssert.that(
+                    !(Boolean) guard.invoke(job, false) && (Boolean) guard.invoke(job, true),
+                    "only the accepted whole-demolition job's final anchor may retain authority after its expected empty result");
+                endpoint.player.inventory.mainInventory[0] = held.copy();
+                SimpleAssert.that(
+                    !(Boolean) guard.invoke(job, true),
+                    "an equal-NBT replacement tool cannot inherit final-anchor authority");
+                endpoint.player.inventory.mainInventory[0] = held;
+                world.seed(0, 64, 0, Blocks.gold_block, 0);
+                SimpleAssert.that(
+                    !(Boolean) guard.invoke(job, true),
+                    "a foreign replacement block cannot inherit expected-air anchor authority");
+                world.seed(0, 64, 0, Blocks.air, 0);
+                endpoint.player.capabilities.allowEdit = false;
+                SimpleAssert.that(
+                    !(Boolean) guard.invoke(job, true),
+                    "the final-anchor transition cannot bypass revoked player edit permission");
+            } finally {
+                endpoint.player.inventory.mainInventory[0] = held;
+                endpoint.player.capabilities.allowEdit = true;
+                world.seed(0, 64, 0, GregTechAPI.sBlockMachines, 0);
+                world.occupants.put("0,64,0", (net.minecraft.tileentity.TileEntity) originalAnchor);
+                next.setInt(job, originalNext);
+            }
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError("accepted native final-anchor authority fixture", failure);
         }
     }
 
