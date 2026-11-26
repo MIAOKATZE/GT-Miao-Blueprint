@@ -49,6 +49,8 @@ public final class HologramHatchPolicy {
     private static final Map<IStructureElement<?>, Predicate<ItemStack>> COLD_ELEMENTS = new WeakHashMap<>();
     private static final Map<Object, Object> NATIVE_BROWSE_BUILDERS = new WeakHashMap<>();
     private static final Map<IStructureElement<?>, NativeBrowse> NATIVE_BROWSE_ELEMENTS = new WeakHashMap<>();
+    private static final Map<Object, Object> SINGLE_ROLE_BROWSE_BUILDERS = new WeakHashMap<>();
+    private static final Map<IStructureElement<?>, NativeBrowse> SINGLE_ROLE_BROWSE_ELEMENTS = new WeakHashMap<>();
 
     private static final class NativeBrowse {
 
@@ -86,6 +88,48 @@ public final class HologramHatchPolicy {
             && types != null
             && !types.isEmpty()
             && ELEMENTS.containsKey(element);
+    }
+
+    /** Native anyOf(single stock role) picker, never an implicit placement. */
+    static HatchElement singleNativePresetRole(IStructureElement<?> element) {
+        try {
+            for (int depth = 0; element != null && depth <= 12; depth++) {
+                if (element instanceof IStructureElementChain
+                    || HologramDeclarationAdapters.declaration(element) != null) return null;
+                if (completeMarkerLeaf(element)) return singleNativePresetLeaf(element);
+                var factory = HologramDeclarationWrappers.factory(element.getClass());
+                if (factory == null
+                    || factory.getDeclaringClass() != com.gtnewhorizon.structurelib.structure.StructureUtility.class
+                    || !java.util.Arrays.asList("withChannel", "onElementPass", "onElementFail", "withDescription")
+                        .contains(factory.getName()))
+                    return null;
+                element = HologramDeclarationWrappers.nativeBacking(element);
+            }
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
+            // No preset offer if the exact native shape cannot be proved.
+        }
+        return null;
+    }
+
+    private static synchronized HatchElement singleNativePresetLeaf(IStructureElement<?> element) {
+        var roles = ELEMENT_DECLARED.get(element);
+        var needs = ELEMENT_REQUIREMENTS.get(element);
+        if (roles == null || roles.size() != 1
+            || !(roles.get(0) instanceof HatchElement role)
+            || !stockColdCount(role)
+            || needs == null
+            || needs.size() != 1
+            || !Integer.valueOf(1)
+                .equals(needs.get(role)))
+            return null;
+        var proof = SINGLE_ROLE_BROWSE_ELEMENTS.get(element);
+        if (proof == null || SINGLE_ROLE_BROWSE_BUILDERS.get(proof.builder.get()) != proof.declaration) return null;
+        return role;
+    }
+
+    static boolean singleNativePresetMatches(HatchElement role, IMetaTileEntity candidate) {
+        return candidate != null && !role.mteBlacklist()
+            .contains(candidate.getClass()) && matchesHatch(role, candidate);
     }
 
     public static synchronized void directions(IStructureElement<?> element,
@@ -208,6 +252,7 @@ public final class HologramHatchPolicy {
         SINGLE_IDS.remove(builder);
         COLD_BUILDERS.remove(builder);
         NATIVE_BROWSE_BUILDERS.remove(builder);
+        SINGLE_ROLE_BROWSE_BUILDERS.remove(builder);
         List<IHatchElement<?>> declared = new ArrayList<>(elements);
         // Native decorators preserve the reviewed matching declaration, independently of their count/adder callbacks.
         if (declared.stream()
@@ -218,7 +263,11 @@ public final class HologramHatchPolicy {
         DECLARED.put(builder, declared);
         if (!sharedBlacklist) {
             Map<IHatchElement<?>, Integer> values = new java.util.LinkedHashMap<>();
-            if (declared.size() == 1) values.put(declared.get(0), 1);
+            if (declared.size() == 1) {
+                values.put(declared.get(0), 1);
+                if (declared.get(0) instanceof HatchElement role && stockColdCount(role))
+                    SINGLE_ROLE_BROWSE_BUILDERS.put(builder, new Object());
+            }
             REQUIREMENTS.put(builder, values);
         }
         Predicate<ItemStack> structural = stack -> {
@@ -308,6 +357,7 @@ public final class HologramHatchPolicy {
         DECLARED.remove(builder);
         COLD_BUILDERS.remove(builder);
         NATIVE_BROWSE_BUILDERS.remove(builder);
+        SINGLE_ROLE_BROWSE_BUILDERS.remove(builder);
     }
 
     public static synchronized void singleId(Object builder, int id) {
@@ -383,6 +433,7 @@ public final class HologramHatchPolicy {
         BUILDERS.remove(builder);
         COLD_BUILDERS.remove(builder);
         NATIVE_BROWSE_BUILDERS.remove(builder);
+        SINGLE_ROLE_BROWSE_BUILDERS.remove(builder);
     }
 
     public static synchronized void built(Object builder, IStructureElement<?> element) {
@@ -402,6 +453,8 @@ public final class HologramHatchPolicy {
         if (cold != null && element != null) COLD_ELEMENTS.put(element, cold);
         Object browse = NATIVE_BROWSE_BUILDERS.get(builder);
         if (element != null && browse != null) NATIVE_BROWSE_ELEMENTS.put(element, new NativeBrowse(builder, browse));
+        Object single = SINGLE_ROLE_BROWSE_BUILDERS.get(builder);
+        if (single != null) SINGLE_ROLE_BROWSE_ELEMENTS.put(element, new NativeBrowse(builder, single));
     }
 
     /** Only the plain native atLeast filter; arbitrary filters and wrappers do not inherit this marker. */

@@ -104,21 +104,6 @@ final class HologramConfigurationPresets {
         persist();
     }
 
-    boolean hasLast(boolean hatch) {
-        return data.hasKey(hatch ? "lastHatch" : "lastSources", 10);
-    }
-
-    NBTTagCompound last(boolean hatch) {
-        String key = hatch ? "lastHatch" : "lastSources";
-        return data.hasKey(key, 10) ? (NBTTagCompound) data.getCompoundTag(key)
-            .copy() : null;
-    }
-
-    void accepted(boolean hatch, NBTTagCompound value) throws IOException {
-        data.setTag(hatch ? "lastHatch" : "lastSources", value.copy());
-        persist();
-    }
-
     private void persist() throws IOException {
         Files.createDirectories(
             file.toAbsolutePath()
@@ -133,36 +118,6 @@ final class HologramConfigurationPresets {
             Files.move(pending, file, StandardCopyOption.REPLACE_EXISTING);
         } finally {
             Files.deleteIfExists(pending);
-        }
-    }
-
-    /** Tracks one explicit command; snapshots can acknowledge it but can never generate another command. */
-    static final class Pending {
-
-        private long sequence = -1;
-        private String session = "";
-        private boolean hatch;
-        private NBTTagCompound value;
-
-        void begin(String session, long sequence, boolean hatch, NBTTagCompound value) {
-            this.session = session;
-            this.sequence = sequence;
-            this.hatch = hatch;
-            this.value = (NBTTagCompound) value.copy();
-        }
-
-        void reject(long sequence) {
-            if (this.sequence == sequence) this.sequence = -1;
-        }
-
-        void acknowledge(String session, NBTTagCompound snapshot, HologramConfigurationPresets store)
-            throws IOException {
-            if (sequence < 0 || !this.session.equals(session) || snapshot.getLong("uiSequence") < sequence) return;
-            boolean accepted = snapshot.getLong("uiSequence") == sequence
-                && snapshot.hasKey("configurationAcceptedSequence")
-                && snapshot.getLong("configurationAcceptedSequence") == sequence;
-            sequence = -1;
-            if (accepted) store.accepted(hatch, value);
         }
     }
 }

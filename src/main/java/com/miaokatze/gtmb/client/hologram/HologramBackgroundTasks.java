@@ -742,7 +742,7 @@ public final class HologramBackgroundTasks {
     static boolean reopen() {
         Minecraft mc = Minecraft.getMinecraft();
         if (world != mc.theWorld || connection != mc.getNetHandler()) return false;
-        if (ownedPlacementTask()) return showOwnedPlacement(placementProgress.ticket());
+        if (ownedPlacementTask()) return true; // Native construction is presented only in the HUD.
         HologramState next = workspaceState();
         if (next == null || !busy() && !(detached() && presentation != null)) return false;
         OWNER.attach();

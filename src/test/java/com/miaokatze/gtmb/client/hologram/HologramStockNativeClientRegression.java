@@ -285,12 +285,87 @@ public final class HologramStockNativeClientRegression {
                 "uncertain actual BEGIN issues at most one exact STOP, no retry");
         } finally {
             HologramClientStockNative.OWNER.close(screen, HologramClientStockNative.context(client));
+            HologramClientStockNative.OWNER.tick(null, null, System.nanoTime());
             HologramNetwork.setStockNativeReplies(previous);
             networkChannel.set(null, previousChannel);
             ui.review.closeLocalMaterials();
         }
         staleProofFlow();
         lostAndUnsentFlow();
+        detachedPlacementFlow();
+    }
+
+    private static void detachedPlacementFlow() {
+        var sent = new ArrayList<Command>();
+        var flow = new HologramClientStockNative.Flow(new HologramClientStockNative.Wire() {
+
+            @Override
+            public boolean probe(Confirmation value) {
+                sent.add(Command.PROBE);
+                return true;
+            }
+
+            @Override
+            public boolean begin(Confirmation value, boolean cold) {
+                sent.add(cold ? Command.BEGIN_AFTER_PROBE : Command.BEGIN);
+                return true;
+            }
+
+            @Override
+            public boolean stop(Key key) {
+                sent.add(Command.STOP);
+                return true;
+            }
+        });
+        var handler = new Object();
+        var scope = new HologramClientStockNative.Context(handler, new Object(), new Object(), 0);
+        boolean[] open = { true };
+        var owner = new HologramClientStockNative.Owner(
+            new Object(),
+            () -> open[0],
+            () -> open[0],
+            notice -> {},
+            reply -> { if (!open[0]) throw new AssertionError("Disposed screen received a callback"); },
+            () -> true);
+        var first = flowIntent(1);
+        SimpleAssert.that(flow.submit(first, scope, owner, 0), "submit cold construction");
+        open[0] = false;
+        flow.close(owner.view(), scope);
+        SimpleAssert.that(flow.pendingHere(scope), "closing before capability does not cancel the frozen intent");
+        var key = first.forGeneration(32)
+            .key();
+        flow.receive(new Reply(key, Phase.CAPABLE, 0, ""), handler, scope, 1);
+        flow.close(owner.view(), scope);
+        flow.receive(new Reply(key, Phase.ACTIVE, 2, ""), handler, scope, 2);
+        SimpleAssert.that(
+            flow.worldStatus(scope, 2)
+                .contains("2"),
+            "detached construction exposes committed progress");
+        flow.receive(new Reply(key, Phase.COMPLETE, 6, ""), handler, scope, 3);
+        SimpleAssert
+            .eq(java.util.Arrays.asList(Command.PROBE, Command.BEGIN_AFTER_PROBE), sent, "close never sends STOP");
+        SimpleAssert.that(
+            !flow.pendingHere(scope) && flow.worldStatus(scope, 3)
+                .contains("6"),
+            "world HUD sees completion");
+        open[0] = true;
+        var second = flowIntent(2);
+        SimpleAssert.that(flow.submit(second, scope, owner, 4), "another user confirmation warms same context");
+        open[0] = false;
+        flow.close(owner.view(), scope);
+        SimpleAssert
+            .that(flow.cancelHere(scope, 5) && !flow.cancelHere(scope, 6), "explicit cancellation sends one STOP");
+        SimpleAssert.eq(Command.STOP, sent.get(sent.size() - 1), "only explicit cancellation stops this submission");
+        flow.receive(
+            new Reply(
+                second.forGeneration(32)
+                    .key(),
+                Phase.STOPPED,
+                0,
+                ""),
+            handler,
+            scope,
+            7);
     }
 
     private static void staleProofFlow() {

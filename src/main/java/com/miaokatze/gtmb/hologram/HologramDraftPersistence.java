@@ -3,8 +3,6 @@
 
 package com.miaokatze.gtmb.hologram;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Map;
 
 import net.minecraft.entity.player.EntityPlayerMP;
@@ -13,8 +11,6 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 import net.minecraft.tileentity.TileEntity;
-
-import com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor;
 
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
 
@@ -27,19 +23,14 @@ final class HologramDraftPersistence {
         ItemStack held = HologramSessionPolicy.jobTool(s);
         if (held == null) return;
         if (s.capture != null && s.capture.projectionOnly && s.capturePending) s.projectionPersistPending = true;
-        writeSettings(s, held);
-        List<String> existing = new ArrayList<>();
-        ChannelDataAccessor.iterateChannelData(held)
-            .forEach(entry -> existing.add(entry.getKey()));
-        for (String name : existing) ChannelDataAccessor.unsetChannelData(held, name);
-        for (Object key : s.channels.func_150296_c())
-            ChannelDataAccessor.setChannelData(held, (String) key, s.channels.getInteger((String) key));
+        // Channel geometry and preset choices belong to this draft, never to the physical tool.
+        HologramMaterials.write(held, s.materialSettings);
         writeDraft(s, held);
         s.player.inventory.markDirty();
     }
 
-    /** The detached native trigger and the saved tool carry the same current GTMB settings. */
-    static void writeSettings(HologramSession s, ItemStack held) {
+    /** Encode workspace-specific settings on the detached native trigger only. */
+    static void writeTriggerSettings(HologramSession s, ItemStack held) {
         HologramMaterials.write(held, s.materialSettings);
         held.getTagCompound()
             .setInteger("gtitHologramMain", s.main);

@@ -60,7 +60,6 @@ final class HologramUiConfiguration {
 
     private HologramMuiTextField hatchPresetNameField;
     private static HologramConfigurationPresets presetStore;
-    private static final HologramConfigurationPresets.Pending presetPending = new HologramConfigurationPresets.Pending();
     private boolean customPresets;
     private int presetOffset;
     private String selectedHatchPreset = "";
@@ -703,7 +702,6 @@ final class HologramUiConfiguration {
             ui.canvas.button(105, 165, 186, 231, 19, presetDowngrade ? "缺料时允许降级 ✓" : "缺料时严格保持等级", true, mx, my);
             ui.canvas.text("保留现场仓室；不选择预设也可确认构建", 165, 213, 231, 0x94afb4);
         }
-        ui.canvas.button(1715, 165, 232, 231, 19, "使用上次预设", ui.session.editable() && lastPresetAvailable(true), mx, my);
         ui.canvas.button(
             106,
             165,
@@ -803,8 +801,6 @@ final class HologramUiConfiguration {
             203,
             230,
             0xb9d5d4);
-        ui.canvas
-            .button(1716, 166, 220, 230, 19, "使用上次预设", ui.session.editable() && lastPresetAvailable(false), mx, my);
         ui.canvas.text("已绑定、有电、在范围内；遵守网络权限", 166, 245, 230, 0x94afb4);
     }
 
@@ -1202,7 +1198,7 @@ final class HologramUiConfiguration {
     }
 
     boolean activateControl(int id) {
-        if (ui.session.isTutorial() && id >= 1712 && id <= 1716) {
+        if (ui.session.isTutorial() && id >= 1712 && id <= 1714) {
             ui.session.notice("演示隔离：本机命名搭配与上次配置不可用，不会读取或保存用户预设");
             return true;
         }
@@ -1358,22 +1354,6 @@ final class HologramUiConfiguration {
             case 1714:
                 manageHatchPreset(id);
                 return true;
-            case 1715:
-                NBTTagCompound previous = lastPreset(true);
-                if (previous != null) applyHatchProfile(previous, previous.getBoolean("basic"));
-                return true;
-            case 1716:
-                if (ui.session.configurationEditable()) {
-                    NBTTagCompound previousSources = lastPreset(false);
-                    if (previousSources != null) {
-                        NBTTagCompound sources = configuration();
-                        for (String key : new String[] { "materialMain", "materialContainers", "materialMe" })
-                            sources.setBoolean(key, previousSources.getBoolean(key));
-                        sources.setInteger("materialPriority", previousSources.getInteger("materialPriority"));
-                        ui.session.send("configure", sources, true);
-                    }
-                }
-                return true;
             case 1717:
             case 1718:
                 presetOffset = Math.max(0, presetOffset + (id == 1717 ? -4 : 4));
@@ -1518,7 +1498,6 @@ final class HologramUiConfiguration {
     }
 
     void acknowledgeConfiguration(HologramState next) {
-        if (!ui.session.isTutorial()) observePresetSnapshot(next);
         if (basicConfigurationSequence >= 0 && next.data.getLong("uiSequence") >= basicConfigurationSequence) {
             basicConfigurationSequence = -1;
             if (next.data.getLong("planRevision") != basicConfigurationRevision
@@ -1529,34 +1508,7 @@ final class HologramUiConfiguration {
         }
     }
 
-    void acceptNativePresetShortcut(NBTTagCompound request) {
-        if (presetStore == null || ui.session.isTutorial()) return;
-        boolean basic = !request.hasKey("hatchProfile", 10);
-        NBTTagCompound profile = basic ? new NBTTagCompound()
-            : (NBTTagCompound) request.getCompoundTag("hatchProfile")
-                .copy();
-        profile.setBoolean("basic", basic);
-        profile.setInteger("tier", request.getInteger("hatchTier"));
-        profile.setBoolean("downgrade", request.getBoolean("hatchDowngrade"));
-        try {
-            presetStore.accepted(true, profile);
-        } catch (java.io.IOException ignored) {
-            // accepted() already updated the in-memory shortcut.
-        }
-    }
-
-    /** Called for accepted snapshots even while the workspace is closed; never sends an action. */
-    static void observePresetSnapshot(HologramState next) {
-        if (presetStore == null) return;
-        try {
-            presetPending.acknowledge(next.session, next.data, presetStore);
-        } catch (java.io.IOException ignored) {
-            // The accepted shortcut remains available in memory when the local preference file is unwritable.
-        }
-    }
-
     void rejectCommand(long sequence) {
-        if (!ui.session.isTutorial()) presetPending.reject(sequence);
         if (basicConfigurationSequence == sequence) basicConfigurationSequence = -1;
     }
 
@@ -1717,16 +1669,8 @@ final class HologramUiConfiguration {
         return ui.session.isTutorial() || presetStore == null ? null : presetStore.get(name);
     }
 
-    private NBTTagCompound lastPreset(boolean hatch) {
-        return ui.session.isTutorial() || presetStore == null ? null : presetStore.last(hatch);
-    }
-
     private boolean selectedPresetAvailable() {
         return !ui.session.isTutorial() && presetStore != null && presetStore.containsName(selectedHatchPreset);
-    }
-
-    private boolean lastPresetAvailable(boolean hatch) {
-        return !ui.session.isTutorial() && presetStore != null && presetStore.hasLast(hatch);
     }
 
     // Native presentation adapters. Configuration, legality and command dispatch stay above.
@@ -1778,10 +1722,6 @@ final class HologramUiConfiguration {
 
     boolean nativeSelectedPreset() {
         return selectedPresetAvailable();
-    }
-
-    boolean nativeLastPreset(boolean hatch) {
-        return lastPresetAvailable(hatch);
     }
 
     boolean nativePresetDowngrade() {
@@ -1843,28 +1783,6 @@ final class HologramUiConfiguration {
     }
 
     void prepareCommand(String op, NBTTagCompound request, long sequence) {
-        if (!ui.session.isTutorial() && "configure".equals(op)) {
-            if (request.getBoolean("applyHatchPreset")) {
-                boolean basic = !request.hasKey("hatchProfile", 10);
-                NBTTagCompound profile = basic ? new NBTTagCompound()
-                    : (NBTTagCompound) request.getCompoundTag("hatchProfile")
-                        .copy();
-                profile.setInteger("tier", request.getInteger("hatchTier"));
-                profile.setBoolean("downgrade", request.getBoolean("hatchDowngrade"));
-                profile.setBoolean("basic", basic);
-                presetPending.begin(ui.session.state().session, sequence, true, profile);
-            } else {
-                boolean changed = request.getInteger("materialPriority")
-                    != ui.session.state().data.getInteger("materialPriority");
-                NBTTagCompound sources = new NBTTagCompound();
-                for (String key : new String[] { "materialMain", "materialContainers", "materialMe" }) {
-                    changed |= request.getBoolean(key) != sourceEnabled(key);
-                    sources.setBoolean(key, request.getBoolean(key));
-                }
-                sources.setInteger("materialPriority", request.getInteger("materialPriority"));
-                if (changed) presetPending.begin(ui.session.state().session, sequence, false, sources);
-            }
-        }
         if ("hatchPreset".equals(op) || "pin".equals(op)
             || "customPin".equals(op)
             || "sourcePin".equals(op)

@@ -187,17 +187,20 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
             orientation);
     }
 
-    /** The GTMB master value is stored separately because the projector itself is unstackable. */
+    /** The native tool stack count is a physical signal, not a previous GTMB planning value. */
+    public static int defaultMainSignal(ItemStack tool) {
+        return tool == null ? 1 : Math.max(1, tool.stackSize);
+    }
+
+    /** New workspaces inherit only physical StructureLib inputs, not a previous GTMB workspace. */
     public static NBTTagCompound toolSettings(ItemStack tool) {
         NBTTagCompound settings = new NBTTagCompound();
-        NBTTagCompound tags = tool == null ? null : tool.getTagCompound();
-        int main = tags != null && tags.hasKey("gtitHologramMain", 3) ? Math.max(1, tags.getInteger("gtitHologramMain"))
-            : tool == null ? 1 : Math.max(1, tool.stackSize);
+        int main = defaultMainSignal(tool);
         NBTTagCompound channels = new NBTTagCompound();
         if (tool != null) ChannelDataAccessor.iterateChannelData(tool)
             .forEach(entry -> { if (entry.getValue() > 0) channels.setInteger(entry.getKey(), entry.getValue()); });
         settings.setInteger("main", main);
-        settings.setBoolean("mainExplicit", main != 1 || tags != null && tags.getBoolean("gtitHologramMainExplicit"));
+        settings.setBoolean("mainExplicit", main != 1);
         settings.setTag("channels", channels);
         return settings;
     }
@@ -499,6 +502,14 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
             this.nativeCount = nativeCount;
         }
 
+        /** Verify one remembered hatch against the freshly evaluated declaration and its actual facing mask. */
+        public boolean allowsRememberedHatch(int metaId, int direction) {
+            ItemStack material = new ItemStack(GregTechAPI.sBlockMachines, 1, metaId);
+            Integer choice = options.selectedByMaterial.get(new HologramBlueprintResources.ExactKey(material, null));
+            return choice != null && (direction == -1
+                || direction >= 0 && direction < 6 && (options.facingMasks[choice] & (1 << direction)) != 0);
+        }
+
         public List<ItemStack> candidates() {
             return options.stacks;
         }
@@ -713,6 +724,12 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
 
     private static int previewAnchorY(Object context) {
         return HologramBlockRendererPreview.required(context) ? HologramBlockRendererPreview.CONTROLLER_Y : 128;
+    }
+
+    public static int liveOrientation(TileEntity tile, int side) {
+        if (tile == null || tile.isInvalid()) return -1;
+        ExtendedFacing pose = facing(tile, HologramStructureDiscovery.context(tile), side);
+        return pose == null ? -1 : pose.ordinal();
     }
 
     private static ExtendedFacing facing(TileEntity tile, Object context, int side) {

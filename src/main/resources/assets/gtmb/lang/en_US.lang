@@ -905,3 +905,6 @@ gtmb.hologram.projector.library.placement_title=Place Blueprint
 gtmb.hologram.projector.library.placement_status_unavailable=Placement status unavailable
 gtmb.hologram.projector.library.placement_return=Return to World
 gtmb.hologram.projector.library.placement_background=Continue in Background
+gtmb.hologram.projector.stock.hud_preparing=Confirming placement
+gtmb.hologram.projector.stock.hud_stopping=Stopping placement
+gtmb.hologram.worldGuideStopPlacement=Shift + right-click: stop placement

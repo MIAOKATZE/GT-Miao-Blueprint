@@ -415,6 +415,19 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
     List<ItemStack> presetOffers(int x, int y, int z) {
         if (nativeHatchChooser == null) return Collections.emptyList();
         IStructureElement<?> element = elementAt(x, y, z);
+        var single = HologramHatchPolicy.singleNativePresetRole(element);
+        if (single != null) {
+            var offers = new ArrayList<ItemStack>();
+            for (ItemStack stack : items.catalog()) {
+                if (stack != null && !stack.hasTagCompound()
+                    && HologramCellPolicy.hatchTier(stack) != Integer.MAX_VALUE
+                    && HologramHatchPolicy.singleNativePresetMatches(
+                        single,
+                        gregtech.common.blocks.ItemMachines.getMetaTileEntity(stack)))
+                    offers.add(stack);
+            }
+            return offers;
+        }
         return nativeHatchChooser.offers(element, x, y, z, trigger);
     }
 

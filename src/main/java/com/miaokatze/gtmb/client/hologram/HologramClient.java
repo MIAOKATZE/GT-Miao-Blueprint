@@ -449,6 +449,7 @@ public final class HologramClient {
     private static void use(NBTTagCompound input) {
         Minecraft mc = Minecraft.getMinecraft();
         if (!projectorWorld() || !worldInputFocused()) return;
+        if (handlePlacementUse(mc)) return;
         if (!cameraPlacementClickAllowed()) return;
         if (HologramIsometricCamera.INSTANCE.blocksWorldInput()) {
             invalidCameraTarget();
@@ -708,7 +709,15 @@ public final class HologramClient {
             if (event.buttonstate) invalidCameraTarget();
             return;
         }
-        if (projectorWorld() && HologramBackgroundTasks.busy() && event.button >= 0) {
+        if (projectorWorld() && event.buttonstate
+            && event.button == 1
+            && handlePlacementUse(Minecraft.getMinecraft())) {
+            event.setCanceled(true);
+            return;
+        }
+        if (projectorWorld() && HologramBackgroundTasks.busy()
+            && !HologramBackgroundTasks.ownedPlacementTask()
+            && event.button >= 0) {
             event.setCanceled(true);
             if (event.buttonstate && event.button == 1 && usePressFence.consume()) HologramBackgroundTasks.reopen();
             return;
@@ -828,21 +837,39 @@ public final class HologramClient {
         localAreaPoint(event.button == 0 ? 1 : 2, anchor[0], anchor[1], anchor[2], areaSelectionMode(control, shift));
     }
 
+    private static boolean handlePlacementUse(Minecraft mc) {
+        var context = HologramClientStockNative.context(mc);
+        var structure = HologramClientStockNative.OWNER;
+        boolean structurePending = structure.pendingHere(context);
+        if (!structurePending && !HologramBackgroundTasks.ownedPlacementTask()) return false;
+        if (usePressFence.consume() && shiftHeld()) {
+            if (structurePending) structure.cancelHere(context, System.nanoTime());
+            else HologramBackgroundTasks.cancel();
+        }
+        return true;
+    }
+
     @SubscribeEvent
     public void areaGuide(RenderGameOverlayEvent.Text event) {
         HologramWorldGuide.clearRenderWitness();
         Minecraft mc = Minecraft.getMinecraft();
-        if (mc.currentScreen != null || mc.thePlayer == null || mc.theWorld == null || mc.gameSettings.hideGUI) return;
+        if (mc.thePlayer == null || mc.theWorld == null || mc.gameSettings.hideGUI) return;
         java.util.List<String> lines = new java.util.ArrayList<>();
-        HologramIsometricCamera.INSTANCE.guide(lines);
-        // Owned construction reuses the same top-world card even when the isometric guide would return early.
-        if (projectorWorld() && HologramBackgroundTasks.ownedPlacementVisible()) {
-            lines.add(HologramBackgroundTasks.ownedPlacementStatus());
-            if (!HologramIsometricCamera.INSTANCE.active())
-                lines.add(text("worldGuideBackground", "Right-click: return to the current task"));
+        var stockContext = HologramClientStockNative.context(mc);
+        var stock = HologramClientStockNative.OWNER;
+        String placement = stock.worldStatus(stockContext, System.nanoTime());
+        if (placement.isEmpty() && HologramBackgroundTasks.ownedPlacementVisible())
+            placement = HologramBackgroundTasks.ownedPlacementStatus();
+        if (!placement.isEmpty()) {
+            lines.add(placement);
+            if (mc.currentScreen == null && projectorWorld()
+                && (stock.pendingHere(stockContext) || HologramBackgroundTasks.ownedPlacementTask()))
+                lines.add(text("worldGuideStopPlacement", "Shift + right-click: stop placement"));
             HologramWorldGuide.draw(lines, event.resolution);
             return;
         }
+        if (mc.currentScreen != null) return;
+        HologramIsometricCamera.INSTANCE.guide(lines);
         if (HologramIsometricCamera.INSTANCE.active()) {
             cameraGuide(lines, event.resolution);
             return;
@@ -2236,7 +2263,6 @@ public final class HologramClient {
         }
         state = next;
         projectionLifetime.observe(state);
-        HologramUiConfiguration.observePresetSnapshot(next);
         HologramBackgroundTasks.snapshot(next);
         if ("blueprintPlacement".equals(nbt.getString("openPurpose"))) HologramScreen.rememberBlueprintPlacement(next);
         Minecraft mc = Minecraft.getMinecraft();
@@ -2449,7 +2475,7 @@ public final class HologramClient {
         if (mc.currentScreen instanceof HologramScreen
             && ownsNativeRenderSnapshot(((HologramScreen) mc.currentScreen).ui)) return;
         if (HologramCutClient.INSTANCE.render(event.partialTicks)) return;
-        HologramState localPreview = HologramLocalPlacement.INSTANCE.display();
+        HologramState localPreview = HologramLocalPlacement.INSTANCE.worldDisplay(System.nanoTime());
         if (localPreview != null) {
             HologramRenderer.world(localPreview, event.partialTicks);
             return;

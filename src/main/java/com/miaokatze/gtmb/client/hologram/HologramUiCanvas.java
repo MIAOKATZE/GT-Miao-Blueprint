@@ -327,7 +327,6 @@ final class HologramUiCanvas {
         if (id == 102) return "本格没有单独指定的朝向，无需恢复。";
         if (id == 106) return HologramUiText.reason(ui.session.state().data.getString("presetReason"));
         if (id == 107) return "当前没有启用整机仓室预设，无需撤销。";
-        if (id == 1715 || id == 1716) return "本机尚无经服务端成功确认的上次预设。";
         if (id == 103 || id == 104) return "已到达合法仓室等级边界。";
         if (id == 93 && ui.session.selectedCell() != null && ui.session.selectedCell().family.isEmpty())
             return "本格没有可安全识别的同类部件，请使用单格范围。";
@@ -488,9 +487,6 @@ final class HologramUiCanvas {
                 return "用服务端当前整套仓室目标覆盖所选本机搭配；名称保留。";
             case 1714:
                 return "删除所选本机仓室搭配；当前服务端规划保留。";
-            case 1715:
-            case 1716:
-                return "应用本机上次经服务端成功确认的预设；仍由服务端校验，不直接施工。";
             case 95:
                 return "主动查看本格可替换的方块或仓室；等级按钮始终保留当前部件和选区。";
             case 97:

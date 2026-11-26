@@ -691,12 +691,6 @@ final class HologramEditorConfigurationDialogs {
                 if (pages.getCurrentPageIndex() != page) pages.setPage(page);
             });
         content.child(pages);
-        content.child(
-            action(
-                1715,
-                () -> "使用上次仓室预设",
-                () -> editable() && ui.config.nativeLastPreset(true),
-                this::presetFileReason));
         Flow apply = row();
         apply.child(
             action(
@@ -715,9 +709,7 @@ final class HologramEditorConfigurationDialogs {
                 () -> "撤自动预设，保留现场仓室与手选目标。").width(100));
         content.child(apply);
         content.child(
-            note(
-                () -> ui.session.isTutorial() ? "演示不读写本机搭配；保存与上次配置不可用。"
-                    : ui.session.state().data.getString("presetReason")));
+            note(() -> ui.session.isTutorial() ? "演示不读写本机搭配。" : ui.session.state().data.getString("presetReason")));
         return dialog("presets", () -> "仓室预设 · 可选快捷搭配", content, () -> ui.router.activate(96), 368);
     }
 
@@ -741,12 +733,6 @@ final class HologramEditorConfigurationDialogs {
                 () -> "优先：" + names[Math.floorMod(ui.session.state().data.getInteger("materialPriority"), 3)],
                 ui.session::configurationEditable,
                 () -> "轮换主背包 → 容器 → ME 的优先次序。"));
-        rows.child(
-            action(
-                1716,
-                () -> "使用上次材料来源配置",
-                () -> ui.session.configurationEditable() && ui.config.nativeLastPreset(false),
-                this::presetFileReason));
         rows.child(note(() -> "ME 终端仍需已绑定、有电、范围内并符合网络权限。"));
         content.child(rows);
         return dialog("sources", () -> "材料来源", content, () -> ui.router.activate(88), 236);

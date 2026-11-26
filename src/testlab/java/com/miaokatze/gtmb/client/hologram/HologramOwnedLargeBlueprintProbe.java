@@ -249,6 +249,16 @@ final class HologramOwnedLargeBlueprintProbe {
             case 3 -> {
                 if (attempt == null) attempt = attempt();
                 if (attempt == null) return false;
+                if (!Boolean.TRUE.equals(evidence.get("manuallyClosedDuringConstruction"))) {
+                    require(
+                        mc.currentScreen instanceof HologramLibraryMaterialReviewScreen,
+                        "Construction automatically closed the normal confirmation UI");
+                    require(
+                        placement.worldDisplay(System.nanoTime()) != null,
+                        "Active construction did not retain its world projection");
+                    mc.displayGuiScreen(null);
+                    evidence.put("manuallyClosedDuringConstruction", true);
+                }
                 var result = attempt.result();
                 if (prefix > 0 && !cancellationSent
                     && result.placed >= prefix
@@ -271,6 +281,10 @@ final class HologramOwnedLargeBlueprintProbe {
             }
             case 4 -> {
                 if (!witnessedTerminal || !restored) return false;
+                require(
+                    placement.worldDisplay(System.nanoTime()) == null,
+                    "World projection survived the terminal placement receipt");
+                evidence.put("projectionClearedAtTerminal", true);
                 evidence.put("worldMatches", worldMatches);
                 evidence.put("worldSamples", catalog.witnesses.size());
                 evidence.put("firstObservedWriteNanos", witnessedFirst ? firstWorldNanos - confirming : null);

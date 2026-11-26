@@ -73,7 +73,7 @@ final class HologramExecutionEligibility {
 
     private static void validate(Block block, int metadata, ItemStack sample, int facing, boolean controller,
         NBTTagCompound tile, NBTTagCompound item, boolean saved, boolean cleared) throws IOException {
-        if (block == null || block == Blocks.air || metadata < 0 || metadata > 15 || sample == null)
+        if (block == null || block == Blocks.air || metadata < 0 || sample == null)
             throw new IOException("服务器无法识别施工方块或耗材");
         if (saved && tile != null
             && (tile.hasKey(HologramNetworkBindings.ORIGINAL) || tile.hasKey(HologramNetworkBindings.MODE))) {
@@ -122,8 +122,7 @@ final class HologramExecutionEligibility {
             throw new IOException("施工方块与实际付款物品不一致");
         int itemMetadata = sample.getItem()
             .getMetadata(sample.getItemDamage());
-        if (itemMetadata < 0 || itemMetadata > 15 || block.hasTileEntity(itemMetadata))
-            throw new IOException("实际付款材料的方块状态无效");
+        if (itemMetadata < 0 || block.hasTileEntity(itemMetadata)) throw new IOException("实际付款材料的方块状态无效");
         HologramPresets.validateMaterialVariant(block, metadata, sample);
     }
 

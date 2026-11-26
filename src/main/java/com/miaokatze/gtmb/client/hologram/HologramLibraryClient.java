@@ -682,6 +682,7 @@ final class HologramLibraryClient {
 
     void tick() {
         Minecraft mc = Minecraft.getMinecraft();
+        HologramClientStockNative.OWNER.tick(null, HologramClientStockNative.context(mc), System.nanoTime());
         HologramClientNativePlacement.tick(mc);
         HologramClientRemoteNativePlacement.tick(mc);
         String current = mc.theWorld == null ? ""
