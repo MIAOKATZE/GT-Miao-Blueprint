@@ -735,6 +735,109 @@ public final class HologramStockEbfConstructionRegression {
                 server,
                 replies,
                 alternateDefinition);
+            alternateDefinition[0] = com.gtnewhorizon.structurelib.structure.StructureDefinition.<Object>builder()
+                .addShape("main", new String[][] { { "~ABA" } })
+                .addElement(
+                    'A',
+                    com.gtnewhorizon.structurelib.structure.StructureUtility.ofBlock(Blocks.cobblestone, 0))
+                .addElement(
+                    'B',
+                    com.gtnewhorizon.structurelib.structure.StructureUtility.ofBlock(Blocks.brick_block, 0))
+                .build();
+            var grouped = new HologramStructureCursor(alternateDefinition[0].getStructureFor("main"), 0, 0, 0);
+            var groupedPositions = new ArrayList<HologramDeclaredNativeSelection.Offset>();
+            while (grouped.done() < grouped.total()) {
+                var point = grouped.declarationOffset(facing);
+                if (point != null && (point.x() != 0 || point.y() != 0 || point.z() != 0)) groupedPositions.add(point);
+            }
+            SimpleAssert.eq(3, groupedPositions.size(), "A/B/A fixture uses three actual coordinates");
+            var priorBlocks = new ArrayList<Block>();
+            var priorMeta = new ArrayList<Integer>();
+            var priorTiles = new ArrayList<TileEntity>();
+            for (var point : groupedPositions) {
+                int x = controller.xCoord + point.x(), y = controller.yCoord + point.y(),
+                    z = controller.zCoord + point.z();
+                priorBlocks.add(world.getBlock(x, y, z));
+                priorMeta.add(world.getBlockMetadata(x, y, z));
+                priorTiles.add(world.getTileEntity(x, y, z));
+                world.seed(x, y, z, Blocks.air, 0);
+                world.seedTile(x, y, z, null);
+            }
+            try {
+                player.capabilities.isCreativeMode = true;
+                var noStock = new HologramMaterials.Settings();
+                noStock.me = noStock.containers = noStock.main = false;
+                HologramMaterials.write(projector, noStock);
+                var blocker = groupedPositions.get(1);
+                world.seed(
+                    controller.xCoord + blocker.x(),
+                    controller.yCoord + blocker.y(),
+                    controller.zCoord + blocker.z(),
+                    Blocks.dirt,
+                    0);
+                world.writes()
+                    .clear();
+                world.observePlacement = () -> {
+                    var execution = HologramWorkspace.find(endpoint.actor);
+                    SimpleAssert.that(
+                        execution.capture == null && execution.pins.isEmpty() && execution.planTargets.isEmpty(),
+                        "formal declared placement does not rebuild a workbench plan for each block");
+                };
+                var batch = create.apply(23)
+                    .withSources(HologramProjectedMainPolicy.structurePlacementKey(noStock, true));
+                proveDeclared(server, endpoint, replies, batch);
+                var result = finishDeclared(server, endpoint, replies, batch.forGeneration(generation));
+                SimpleAssert.that(
+                    result.phase() == HologramStockNativeWire.Phase.STOPPED && result.placed() == 2
+                        && world.writes()
+                            .size() == 2,
+                    "A/A runs as one native declaration batch before the later B clash, not in coordinate order or after a whole-world pre-scan: "
+                        + result);
+                for (int j : new int[] { 0, 1, 2 }) {
+                    var point = groupedPositions.get(j);
+                    SimpleAssert.eq(
+                        j == 1 ? Blocks.dirt : Blocks.cobblestone,
+                        world.getBlock(
+                            controller.xCoord + point.x(),
+                            controller.yCoord + point.y(),
+                            controller.zCoord + point.z()),
+                        "native batch preserves the conflicting block, places only the earlier declaration group");
+                }
+                player.capabilities.isCreativeMode = false;
+                var inventoryOnly = new HologramMaterials.Settings();
+                inventoryOnly.me = inventoryOnly.containers = false;
+                HologramMaterials.write(projector, inventoryOnly);
+                inventory[1] = new ItemStack(Blocks.cobblestone, 2);
+                inventory[2] = null;
+                for (var point : groupedPositions) world.seed(
+                    controller.xCoord + point.x(),
+                    controller.yCoord + point.y(),
+                    controller.zCoord + point.z(),
+                    Blocks.air,
+                    0);
+                world.writes()
+                    .clear();
+                var paidBatch = create.apply(24);
+                proveDeclared(server, endpoint, replies, paidBatch);
+                var needsBrick = finishDeclared(server, endpoint, replies, paidBatch.forGeneration(generation));
+                SimpleAssert.that(
+                    needsBrick.phase() == HologramStockNativeWire.Phase.STOPPED && needsBrick.placed() == 2
+                        && world.writes()
+                            .size() == 2
+                        && inventory[1] == null
+                        && inventory[2] == null,
+                    "survival uses the same A/A batch; a later missing B must not pre-reject earlier paid writes: "
+                        + needsBrick);
+            } finally {
+                world.observePlacement = null;
+                for (int j = 0; j < groupedPositions.size(); j++) {
+                    var point = groupedPositions.get(j);
+                    int x = controller.xCoord + point.x(), y = controller.yCoord + point.y(),
+                        z = controller.zCoord + point.z();
+                    world.seed(x, y, z, priorBlocks.get(j), priorMeta.get(j));
+                    world.seedTile(x, y, z, priorTiles.get(j));
+                }
+            }
             System.out.println(
                 "GTMB_DECLARED_EBF_PROOF_AND_PLACEMENT survival=32 (+32 debit), creative=32 (0 debit), draft retained; mode drift and missing stock denied");
         } finally {
@@ -951,20 +1054,31 @@ public final class HologramStockEbfConstructionRegression {
             inventory[2] = null;
             var shortReply = local.run(12, true);
             SimpleAssert.that(
-                shortReply.phase() == HologramStockNativeWire.Phase.STOPPED && shortReply.placed() == 0
+                shortReply.phase() == HologramStockNativeWire.Phase.STOPPED && shortReply.placed() == 1
                     && world.writes()
-                        .isEmpty()
-                    && inventory[1].stackSize == 2,
-                "missing output prevents input debit and every physical write: " + shortReply);
+                        .size() == 1
+                    && inventory[1].stackSize == 1
+                    && inventory[2] == null,
+                "the funded input is placed and paid; a later missing output stops only the unfinished work: "
+                    + shortReply);
+            var first = offsets.get(0);
+            var existingInput = world.getTileEntity(
+                controller.xCoord + first.x(),
+                controller.yCoord + first.y(),
+                controller.zCoord + first.z());
             inventory[2] = new ItemStack(machines, 2, 61);
             var placed = local.run(13, true);
             SimpleAssert.that(
-                placed.phase() == HologramStockNativeWire.Phase.COMPLETE && placed.placed() == 2
+                placed.phase() == HologramStockNativeWire.Phase.COMPLETE && placed.placed() == 1
                     && world.writes()
                         .size() == 2
                     && inventory[1].stackSize == 1
-                    && inventory[2].stackSize == 1,
-                "first exact-hatch request places and pays for input and output: " + placed);
+                    && inventory[2].stackSize == 1
+                    && world.getTileEntity(
+                        controller.xCoord + first.x(),
+                        controller.yCoord + first.y(),
+                        controller.zCoord + first.z()) == existingInput,
+                "a repeat places and pays for the remaining output without reinstalling the input: " + placed);
             for (int index = 0; index < 2; index++) {
                 var pos = offsets.get(index);
                 var actual = world.getTileEntity(

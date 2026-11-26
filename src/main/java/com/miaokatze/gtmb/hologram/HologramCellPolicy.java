@@ -152,6 +152,7 @@ final class HologramCellPolicy {
     }
 
     static ItemStack targetFor(HologramSession s, HologramCapture.Cell c, int index) {
+        if (s.stockNativePrivate && c.declaredPlacementTarget != null) return c.declaredPlacementTarget;
         if (s.localPlanPending) return HologramEssentia.shellMaterial(draftTarget(s, c, index));
         if (index >= 0 && index < s.planTargets.size()) {
             ItemStack target = s.planTargets.get(index);
@@ -208,7 +209,8 @@ final class HologramCellPolicy {
     }
 
     static boolean explicitTarget(HologramSession s, HologramCapture.Cell c, int index) {
-        return s.pins.containsKey(index) || implicitBlueprintController(s, c) != null
+        return s.stockNativePrivate && c.declaredPlacementTarget != null || s.pins.containsKey(index)
+            || implicitBlueprintController(s, c) != null
             || (s.scope == 3 && s.pins.containsKey(s.selected)
                 && s.selected >= 0
                 && s.selected < s.capture.cells.size()

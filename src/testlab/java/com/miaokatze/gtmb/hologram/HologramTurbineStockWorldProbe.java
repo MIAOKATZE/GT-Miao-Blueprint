@@ -209,6 +209,13 @@ public final class HologramTurbineStockWorldProbe {
                 + " hatchEvidence="
                 + terminalHatchEvidence());
         if (stage == 1) {
+            long now = System.nanoTime() - submitted;
+            evidence.putIfAbsent("creativeCompleteReplyNanos", now);
+            // Observe the GT tile's normal mMachine update before scan/assertions or checkMachine.
+            if (machine.mMachine) evidence.putIfAbsent("creativeNaturallyFormedNanos", now);
+            long complete = (Long) evidence.get("creativeCompleteReplyNanos");
+            if (!machine.mMachine && now - complete < 10_000_000_000L) return;
+            evidence.put("creativeNaturallyFormed", machine.mMachine);
             require(last.placed() == solid.size(), "First build wrote " + last.placed() + ", expected " + solid.size());
             for (Offset p : solid) require(!air(p), "Missing required native solid " + p);
             // A very fast build can complete without an intermediate ACTIVE being observed.
@@ -228,7 +235,7 @@ public final class HologramTurbineStockWorldProbe {
             requireFormed();
             evidence.put("creativeActualPlaced", last.placed());
             if (BASIC) evidence.put("basicCreativeCommitted", realBasicWorld());
-            evidence.put("creativeCompleteAndFormedNanos", System.nanoTime() - submitted);
+            evidence.put("creativePostAssertionNanos", System.nanoTime() - submitted);
             oldHatches = new Object[] { tile(0), tile(1), tile(2) };
             if (BASIC) {
                 removeBasicHatchesAndStock();

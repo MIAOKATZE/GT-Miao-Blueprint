@@ -640,7 +640,7 @@ final class HologramWorldTransactions {
                 if (s.mode != 2 && decorDescriptor == null
                     && !voucherShell
                     && !HologramMaterialAccess.freeShell(s, c, HologramCellPolicy.targetFor(s, c, index))
-                    && (!empty || (s.virtual && s.virtualPreset.schema >= 2))
+                    && (!empty || scope != null && scope.declared || s.virtual && s.virtualPreset.schema >= 2)
                     && (!s.player.capabilities.isCreativeMode
                         || HologramRecovery.hasSeal(HologramCellPolicy.targetFor(s, c, index)))) {
                     ItemStack required = HologramEssentia.shellMaterial(HologramCellPolicy.targetFor(s, c, index));
@@ -649,7 +649,7 @@ final class HologramWorldTransactions {
                     if (reserved == null && !HologramMaterialAccess.fuzzyBlueprintShells(s, required)) {
                         rollbackMaterials(s, transaction, inventory, scope);
                         c.status = "missing";
-                        s.status = "替换材料不足，旧方块已保留";
+                        s.status = scope != null && scope.declared ? "所选材料来源不足，这格未放置" : "替换材料不足，旧方块已保留";
                         return false;
                     }
                 }
@@ -1012,7 +1012,9 @@ final class HologramWorldTransactions {
                     if (!HologramRecovery.restorePlaced(w, c.x, c.y, c.z, pin)
                         || (HologramRecovery.hasSeal(pin) && !HologramRecovery.matchesPlaced(w, c.x, c.y, c.z, pin)))
                         throw new IllegalStateException("stored device restore rejected");
-                    Integer direction = s.planFacings.get(index);
+                    Integer direction = scope != null && scope.declared && scope.declaredFacing >= 0
+                        ? Integer.valueOf(scope.declaredFacing)
+                        : s.planFacings.get(index);
                     TileEntity placedTile = w.getTileEntity(c.x, c.y, c.z);
                     if (s.virtual && placedTile instanceof IGregTechTileEntity) {
                         IGregTechTileEntity ownerHost = (IGregTechTileEntity) placedTile;
