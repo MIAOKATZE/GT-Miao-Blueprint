@@ -1258,6 +1258,8 @@ public final class HologramCapture {
         String role = "block";
         String family = "";
         String renderKind = "block";
+        // Server-only exact target from the native declaration executor; never published or serialized.
+        ItemStack declaredPlacementTarget;
         ItemStack actualStack;
         ItemStack previewStack;
         int previewFacing = -1;
