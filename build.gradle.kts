@@ -74,7 +74,23 @@ tasks.register<JavaExec>("runHologramTest") {
     doFirst { scratchDir.get().asFile.mkdirs() }
 }
 
-tasks.named("check") { dependsOn("runHologramTest") }
+// Real Backpack save API fixture; this dependency graph never enters the production jar or runtime.
+val backpackMaterialFixture = configurations.detachedConfiguration(
+    dependencies.create("com.github.GTNewHorizons:Minecraft-Backpack-Mod:2.6.18-GTNH:dev"),
+    dependencies.create("com.github.GTNewHorizons:inventory-tweaks:1.7.1:dev"),
+    dependencies.create("net.xonich.mc:NoHotbarNeeded:0.0.6:dev")
+).apply { isTransitive = false }
+tasks.register<JavaExec>("runBackpackMaterialTest") {
+    group = "verification"
+    dependsOn("compileTestJava")
+    mainClass = "com.miaokatze.gtmb.hologram.HologramBackpackMaterialRegression"
+    classpath = backpackMaterialFixture + hologramTestClasspath
+    val scratch = layout.buildDirectory.dir("backpack-material-test")
+    workingDir(scratch)
+    doFirst { scratch.get().asFile.mkdirs() }
+}
+
+tasks.named("check") { dependsOn("runHologramTest", "runBackpackMaterialTest") }
 
 mapOf(
     "runProjectorLocalizationTest" to "com.miaokatze.gtmb.client.hologram.HologramProjectorLocalizationRegression",
@@ -90,6 +106,7 @@ mapOf(
     "runMeOutputDisplayTest" to "com.miaokatze.gtmb.client.hologram.HologramMeOutputDisplayRegression",
     "runStockFacingDispatchTest" to "com.miaokatze.gtmb.client.hologram.HologramStockFacingDispatchRegression",
     "runLiveControllerSiteTest" to "com.miaokatze.gtmb.hologram.HologramLiveControllerSiteRegression",
+    "runCarriedMaterialTest" to "com.miaokatze.gtmb.hologram.HologramMaterialStockRegression",
     "runMaterialNamesTest" to "com.miaokatze.gtmb.client.hologram.HologramMaterialNamesRegression",
     "runNativeFirstSaveTest" to "com.miaokatze.gtmb.client.hologram.HologramNativeViewportRegression",
     "runNativeLibraryConversionTest" to "com.miaokatze.gtmb.client.hologram.HologramLibraryNativeConversionRegression",

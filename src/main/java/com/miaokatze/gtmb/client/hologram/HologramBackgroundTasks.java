@@ -430,13 +430,12 @@ public final class HologramBackgroundTasks {
     }
 
     static boolean commandAllowed(String op) {
+        if ("pause".equals(op) || "resume".equals(op)) return false;
         if (ownedPlacementTask()) return false;
         if (materialTask()) return "cancelMaterialOrder".equals(op) && !cancelling;
         if ("server".equals(OWNER.kind()) && controlPending()
             && ("cancel".equals(op) || "pause".equals(op) || "resume".equals(op))) return false;
         return !busy() || "cancel".equals(op)
-            || "pause".equals(op)
-            || "resume".equals(op)
             || "scan".equals(operation) && "dismissOperationReview".equals(op)
             || awaitingSourceReview() && !controlPending()
                 && ("importArea".equals(op) || "cancelSourceSwitch".equals(op))
@@ -786,16 +785,6 @@ public final class HologramBackgroundTasks {
         // Keep server ownership until its authoritative stopped receipt arrives.
     }
 
-    static boolean pauseAvailable() {
-        HologramState current = HologramClient.state;
-        return busy() && "server".equals(OWNER.kind())
-            && !cancelling
-            && !controlPending()
-            && current != null
-            && session.equals(current.session)
-            && (current.data.getInteger("job") == 1 || current.data.getInteger("job") == 2);
-    }
-
     private static boolean controlPending() {
         return controlPredecessors.containsKey(command) && !acceptedControls.contains(command);
     }
@@ -806,16 +795,6 @@ public final class HologramBackgroundTasks {
         return busy() && !cancelling
             && (!materialTask() || materialOrders.active() && context != null)
             && (!"server".equals(OWNER.kind()) || !controlPending());
-    }
-
-    static String pauseLabel() {
-        HologramState current = HologramClient.state;
-        return current != null && current.data.getInteger("job") == 2 ? "继续任务" : "暂停任务";
-    }
-
-    static void togglePause() {
-        if (!pauseAvailable()) return;
-        sendJobControl(HologramClient.state.data.getInteger("job") == 2 ? "resume" : "pause");
     }
 
     private static void sendJobControl(String op) {

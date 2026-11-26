@@ -549,6 +549,7 @@ public final class HologramClientSavedPlacementRegression {
                 SimpleAssert.that(
                     !HologramBackgroundTasks.busy() && !placement.active()
                         && sends.get() == 0
+                        && player.closedScreens == 1
                         && server.stock() == 0
                         && server.writes() == (satisfied ? 0 : 2)
                         && server.at(265, 65, 8, Blocks.stone)
@@ -611,6 +612,15 @@ public final class HologramClientSavedPlacementRegression {
     }
 
     private static final class HeadlessPlayer extends EntityClientPlayerMP {
+
+        int closedScreens;
+
+        @Override
+        public void closeScreen() {
+            closedScreens++;
+            Minecraft.getMinecraft()
+                .displayGuiScreen(null);
+        }
 
         int sounds;
         UUID fixtureId;

@@ -48,6 +48,7 @@ final class HologramMaterialConfirmationDialog {
     enum LocalAction {
         BACK,
         REFRESH,
+        ORDER,
         SUBMIT,
         VOUCHER,
         BIND_GROUP,
@@ -74,6 +75,14 @@ final class HologramMaterialConfirmationDialog {
 
         default String localSubmitBlocker() {
             return localSubmitAvailable() ? "" : projectorOr("native.ui.cannot_submit_now", "当前无法提交。");
+        }
+
+        default boolean localOrderAvailable() {
+            return false;
+        }
+
+        default String localOrderLabel() {
+            return projectorOr("stock.order_ae", "AE 缺料下单");
         }
 
         default boolean localHatchDelta() {
@@ -554,12 +563,22 @@ final class HologramMaterialConfirmationDialog {
             panel.child(
                 button(
                     247,
-                    () -> projectorOr("native.ui.refresh_local_inventory", "刷新本地背包"),
+                    () -> projectorOr("stock.refresh_sources", "刷新材料来源"),
                     338,
                     369,
                     132,
                     () -> localView.localAction(LocalAction.REFRESH),
                     () -> localFrame != null && localFrame.ready(),
+                    () -> 0));
+            panel.child(
+                button(
+                    253,
+                    localView::localOrderLabel,
+                    478,
+                    369,
+                    140,
+                    () -> { if (localView.localOrderAvailable()) localView.localAction(LocalAction.ORDER); },
+                    localView::localOrderAvailable,
                     () -> 0));
             panel.child(
                 button(

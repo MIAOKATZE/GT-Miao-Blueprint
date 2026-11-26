@@ -18,6 +18,7 @@ import net.minecraft.nbt.NBTTagList;
 import com.github.bsideup.jabel.Desugar;
 import com.miaokatze.gtmb.hologram.HologramControllerMaterialCounts;
 import com.miaokatze.gtmb.hologram.HologramMaterialQuote;
+import com.miaokatze.gtmb.hologram.HologramMaterials;
 
 /** Reads capture-time material contributions; only detached inventory comparison occurs in this pane. */
 final class HologramLocalMaterialReview {
@@ -83,10 +84,12 @@ final class HologramLocalMaterialReview {
         }
     }
 
+    private final HologramClientMaterialStock stock = new HologramClientMaterialStock();
     private boolean closed;
 
     void close() {
         closed = true;
+        stock.close();
     }
 
     boolean current(HologramState state, int layer) {
@@ -133,7 +136,14 @@ final class HologramLocalMaterialReview {
     }
 
     NBTTagCompound visible() {
-        return visible;
+        NBTTagCompound local = visible;
+        if (sourceSettings().containers || sourceSettings().me) {
+            local = (NBTTagCompound) visible.copy();
+            var rows = local.getTagList("rows", 10);
+            for (int i = 0; i < rows.tagCount(); i++) rows.getCompoundTagAt(i)
+                .setBoolean("availableKnown", false);
+        }
+        return stock.overlay(local);
     }
 
     String scopeLabel() {
@@ -162,6 +172,37 @@ final class HologramLocalMaterialReview {
 
     void tick(ItemStack[] inventory, int protectedSlot) {
         refresh(inventory, protectedSlot);
+        if (theory != null) stock.tick(theory, sourceSettings());
+    }
+
+    HologramMaterials.Settings sourceSettings() {
+        var selected = new HologramMaterials.Settings();
+        selected.main = !settings.hasKey("materialMain") || settings.getBoolean("materialMain");
+        selected.containers = !settings.hasKey("materialContainers") || settings.getBoolean("materialContainers");
+        selected.me = !settings.hasKey("materialMe") || settings.getBoolean("materialMe");
+        selected.priority = settings.getInteger("materialPriority");
+        selected.recoveryDestination = settings.getInteger("demolitionDestination");
+        return selected;
+    }
+
+    void refreshSources() {
+        stock.refresh();
+    }
+
+    boolean orderAvailable() {
+        return ready() && (sourceSettings().me || stock.ordering()) && stock.ready();
+    }
+
+    String orderLabel() {
+        return stock.orderLabel();
+    }
+
+    void order() {
+        if (orderAvailable()) stock.order(theory, sourceSettings());
+    }
+
+    String sourceNotice() {
+        return stock.message();
     }
 
     void refresh(ItemStack[] inventory, int protectedSlot) {

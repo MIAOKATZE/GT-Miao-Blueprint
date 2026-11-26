@@ -2261,12 +2261,18 @@ public final class HologramClient {
                 displayedBeforeInstall == null ? "" : displayedBeforeInstall.session,
                 displayedBeforeInstall == null ? -1 : displayedBeforeInstall.data.getLong("planRevision"));
         }
+        boolean constructionStarted = next.data.getInteger("job") == 1
+            && (state == null || !state.session.equals(next.session) || state.data.getInteger("job") != 1);
         state = next;
         projectionLifetime.observe(state);
         HologramBackgroundTasks.snapshot(next);
         if ("blueprintPlacement".equals(nbt.getString("openPurpose"))) HologramScreen.rememberBlueprintPlacement(next);
         Minecraft mc = Minecraft.getMinecraft();
         snapshotWorld = mc.theWorld;
+        if (constructionStarted && mc.thePlayer != null) {
+            mc.thePlayer.closeScreen();
+            return;
+        }
         if (HologramBackgroundTasks.detached()) return;
         if (mc.currentScreen instanceof HologramScreen screen && screen.localWorkspaceView() && opening != screen)
             return;

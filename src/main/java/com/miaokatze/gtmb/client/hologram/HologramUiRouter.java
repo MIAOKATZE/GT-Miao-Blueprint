@@ -653,16 +653,6 @@ final class HologramUiRouter {
         if (progress != null) HologramProgressView.draw(ui.host.font(), progress, 14, top + 3, 430, 5);
         else ui.canvas.text(HologramBackgroundTasks.status(), 14, top + 7, 430, 0xe5c488);
         ui.canvas.button(990, 451, top + 3, 70, 18, "后台继续", true, mx, my);
-        ui.canvas.button(
-            992,
-            525,
-            top + 3,
-            70,
-            18,
-            HologramBackgroundTasks.pauseLabel(),
-            HologramBackgroundTasks.pauseAvailable(),
-            mx,
-            my);
         ui.canvas.button(991, 599, top + 3, 70, 18, "取消任务", HologramBackgroundTasks.canCancel(), mx, my);
     }
 
@@ -1034,7 +1024,7 @@ final class HologramUiRouter {
         if (HologramBackgroundTasks.busy() && !ui.diagnostics.captureRenderSmokeAction()) {
             if (id == 990) closeRoot();
             else if (id == 991) HologramBackgroundTasks.cancel();
-            else if (id == 992) HologramBackgroundTasks.togglePause();
+
             else if (HologramBackgroundTasks.awaitingSourceReview()) {
                 if (id == 224) ui.library.confirmDiscard(id);
                 else if (id == 225) ui.library.cancelSwitchReview(id);

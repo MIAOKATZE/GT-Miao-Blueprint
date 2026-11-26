@@ -121,6 +121,21 @@ public final class HologramAeCraftingOrders {
         }
     }
 
+    /**
+     * Explicit item-crafting intent, equivalent to selecting items in a terminal. It is deliberately not a
+     * construction quote: no client missing counts, receipt or material-completeness claim is trusted.
+     * The server recomputes stock immediately; AE still enforces CRAFT, EXTRACT, INJECT, range, power and CPUs.
+     */
+    static String submitRequestedItems(EntityPlayerMP player, HologramMaterials.Settings settings, NBTTagList items) {
+        if (!settings.me) return "Enable AE materials before ordering";
+        var validated = HologramMaterialStockWire.requestedItems(items);
+        var stock = new HologramMaterials.Context(player, settings, player.inventory.currentItem);
+        NBTTagCompound quote = new NBTTagCompound();
+        quote.setTag("rows", HologramMaterialStockWire.quoteItems(validated, stock));
+        quote.setBoolean("complete", true); // Completeness of this explicit item request, not any build plan.
+        return submit(player, settings, quote);
+    }
+
     private static boolean canDeliver(IGrid grid, EntityPlayerMP player) {
         if (grid == null) return false;
         ISecurityGrid security = grid.getCache(ISecurityGrid.class);

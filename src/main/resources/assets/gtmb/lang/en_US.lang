@@ -1821,3 +1821,23 @@ gtmb.hologram.projector.native.preset.tier_policy_hint=If a required model does 
 # Native projector interface
 gtmb.hologram.projector.native.lesson.projection_preset_target=Presets update every replaceable casing position in the complete target and retain mandatory hatches. Manual choices and exact custom mixes are explicit targets.
 gtmb.hologram.projector.native.lesson.structure_preset_target=Base and custom presets update every replaceable casing position in the complete target and retain mandatory hatches. Manual choices and mixes explicitly select devices and quantities.
+
+gtmb.hologram.projector.stock.order_ae=Order missing items from AE
+gtmb.hologram.projector.stock.cancel_ae_order=Cancel AE order
+gtmb.hologram.projector.stock.refresh_sources=Refresh material sources
+gtmb.hologram.projector.stock.sources_unavailable=Material sources unavailable; check the server, backpacks and wireless terminal.
+gtmb.hologram.projector.stock.enable_ae=Enable AE materials before ordering.
+gtmb.hologram.projector.stock.ae_progress=AE %1$s: %2$s / %3$s
+gtmb.hologram.projector.stock.ae_received=AE order accepted; crafting continues in the background.
+gtmb.hologram.projector.stock.ae_running=An AE order is already running.
+gtmb.hologram.projector.stock.ae_unavailable=AE did not accept the order. Check missing items, terminal range, permissions, patterns and CPUs.
+gtmb.hologram.projector.stock.ae_planning=planning
+gtmb.hologram.projector.stock.ae_waiting_cpu=waiting for CPU
+gtmb.hologram.projector.stock.ae_crafting=crafting
+gtmb.hologram.projector.stock.ae_delivering=delivering
+gtmb.hologram.projector.stock.ae_complete=complete
+gtmb.hologram.projector.stock.ae_failed=failed; check AE and retained outputs
+gtmb.hologram.projector.stock.ae_cancelled=cancelled
+gtmb.hologram.projector.stock.cancel_construction=Cancel construction
+gtmb.hologram.projector.stock.sources_syncing=Synchronizing material sources. Please wait before submitting.
+gtmb.hologram.projector.stock.sources_busy=Cancel construction before changing material sources.

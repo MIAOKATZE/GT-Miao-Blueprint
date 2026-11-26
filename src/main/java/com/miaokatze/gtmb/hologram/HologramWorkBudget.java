@@ -9,7 +9,7 @@ final class HologramWorkBudget {
     static final long TICK_NANOS = 10_000_000L;
     static final long SLICE_NANOS = 5_000_000L;
     static final long TICK_WORK_TARGET_NANOS = 40_000_000L;
-    static final long MIN_PROGRESS_NANOS = 1_000_000L;
+    static final long MIN_PROGRESS_NANOS = 5_000_000L;
     private static Thread owner;
     private static long tickDeadline, quotaDeadline;
     private static java.util.function.LongSupplier clock;

@@ -78,7 +78,7 @@ public final class HologramBusinessWirePolicy {
                 "snapshotFlowGeneration:4",
                 "transportSequence:4",
                 "success:1") ? Intent.TRANSPORT_CONTROL : Intent.BLOCK;
-            case "pause", "resume", "cancel" -> construction(owner)
+            case "cancel" -> construction(owner)
                 && actionShape(
                     tag,
                     "op:8",

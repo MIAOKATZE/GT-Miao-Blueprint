@@ -670,7 +670,8 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
                 nativeObservationAt = 0;
                 if (visible.getAsBoolean()) refreshLocalController(null);
             },
-            exact);
+            exact,
+            () -> { if (visible.getAsBoolean()) minecraft().thePlayer.closeScreen(); });
         com.miaokatze.gtmb.hologram.HologramStockActionTrace.event("client.admitted", key, "operation=" + operation);
         return HologramClientStockNative.OWNER.submit(original, context, owner, System.nanoTime());
     }

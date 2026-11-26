@@ -113,9 +113,25 @@ public final class HologramStockNativeClientRegression {
         }
     }
 
+    private static final class FixturePlayer extends EntityClientPlayerMP {
+
+        int closedScreens;
+
+        private FixturePlayer() {
+            super(null, null, null, null, null);
+            throw new AssertionError("Unsafe-only fixture");
+        }
+
+        @Override
+        public void closeScreen() {
+            closedScreens++;
+            Minecraft.getMinecraft().currentScreen = null;
+        }
+    }
+
     private static void runPanel(sun.misc.Unsafe unsafe, Minecraft client) throws ReflectiveOperationException {
         var world = (CokeWorld) unsafe.allocateInstance(CokeWorld.class);
-        var player = (EntityClientPlayerMP) unsafe.allocateInstance(EntityClientPlayerMP.class);
+        var player = (FixturePlayer) unsafe.allocateInstance(FixturePlayer.class);
         var connection = (NetHandlerPlayClient) unsafe.allocateInstance(NetHandlerPlayClient.class);
         var other = (NetHandlerPlayClient) unsafe.allocateInstance(NetHandlerPlayClient.class);
         field(EntityClientPlayerMP.class, "sendQueue").set(player, connection);
@@ -354,7 +370,13 @@ public final class HologramStockNativeClientRegression {
                 recorded.sent.size() == 4 && command(recorded.sent.get(3)) == Command.BEGIN_AFTER_PROBE,
                 "second deliberate click is independently confirmed once");
             deliver(new Reply(accepted, Phase.ACCEPTED, 0, ""), connection);
+            SimpleAssert.that(
+                client.currentScreen == null && player.closedScreens == 1 && screen.stockNativePending(),
+                "real confirmation closes on authoritative acceptance and retains the live task");
+            HologramClientStockNative.OWNER.close(screen, HologramClientStockNative.context(client));
             deliver(new Reply(accepted, Phase.STOPPED, 0, ""), connection);
+            client.currentScreen = screen; // The player explicitly reopens the same workspace after it stopped.
+
             SimpleAssert
                 .that(ui.preview.activateControl(26) && recorded.sent.size() == 4, "warm reopening remains local");
             clickExistingSubmit(ui);
@@ -465,6 +487,65 @@ public final class HologramStockNativeClientRegression {
         recovery.onUpdate();
         SimpleAssert
             .eq(Interactable.Result.SUCCESS, recovery.onMousePressed(0), "real recovery control handles the click");
+    }
+
+    public static void acceptedConstructionClosesOnceAndStillCancels() {
+        var sent = new ArrayList<Command>();
+        var flow = new HologramClientStockNative.Flow(new HologramClientStockNative.Wire() {
+
+            public boolean probe(Confirmation value) {
+                sent.add(Command.PROBE);
+                return true;
+            }
+
+            public boolean begin(Confirmation value, boolean cold) {
+                sent.add(Command.BEGIN_AFTER_PROBE);
+                return true;
+            }
+
+            public boolean stop(Key key) {
+                sent.add(Command.STOP);
+                return true;
+            }
+        });
+        Object handler = new Object();
+        var context = new HologramClientStockNative.Context(handler, new Object(), new Object(), 0);
+        boolean[] visible = { true };
+        int[] exits = { 0 };
+        var receipts = new ArrayList<Reply>();
+        var owner = new HologramClientStockNative.Owner(
+            new Object(),
+            () -> true,
+            () -> visible[0],
+            text -> {},
+            receipts::add,
+            () -> true,
+            () -> {
+                exits[0]++;
+                visible[0] = false;
+            });
+        var confirmation = flowIntent(1);
+        SimpleAssert.that(
+            flow.submit(confirmation, context, owner, 0) && exits[0] == 0,
+            "clicking submit never closes before server acceptance");
+        var key = confirmation.forGeneration(32)
+            .key();
+        flow.receive(new Reply(key, Phase.CAPABLE, 0, ""), handler, context, 1);
+        SimpleAssert.eq(0, exits[0], "capability is not construction acceptance");
+        flow.receive(new Reply(key, Phase.ACCEPTED, 0, ""), handler, context, 2);
+        flow.close(owner.view(), context);
+        flow.receive(new Reply(key, Phase.ACCEPTED, 0, ""), handler, context, 3);
+        flow.receive(new Reply(key, Phase.ACTIVE, 1, ""), handler, context, 4);
+        SimpleAssert.that(
+            exits[0] == 1 && flow.pendingHere(context),
+            "authoritative acceptance exits once while construction ownership remains alive");
+        SimpleAssert.that(
+            flow.cancelHere(context, 5) && sent.get(sent.size() - 1) == Command.STOP,
+            "detached construction still sends its exact stop command");
+        flow.receive(new Reply(key, Phase.STOPPED, 1, "Cancelled"), handler, context, 6);
+        SimpleAssert.that(
+            !flow.pendingHere(context) && receipts.size() == 1 && exits[0] == 1,
+            "stopped receipt retires the same task without reopening or reclosing a GUI");
     }
 
     private static void detachedPlacementFlow() {

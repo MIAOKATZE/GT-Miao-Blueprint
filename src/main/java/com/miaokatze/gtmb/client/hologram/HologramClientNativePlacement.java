@@ -99,6 +99,11 @@ final class HologramClientNativePlacement {
         var result = job.attempt.result();
         if (result.sequence <= job.seen) return;
         job.seen = result.sequence;
+        if (!job.started && (result.phase == HologramNativeLocalConstruction.Phase.EXECUTING
+            || result.phase == HologramNativeLocalConstruction.Phase.COMPLETE)) {
+            job.started = true;
+            client.thePlayer.closeScreen();
+        }
         switch (result.phase) {
             case PREPARING -> HologramBackgroundTasks.observeOwnedPlacement(
                 job.ticket,
@@ -157,6 +162,7 @@ final class HologramClientNativePlacement {
         }
 
         long seen;
+        boolean started;
 
         Active(Attempt attempt, Ticket ticket, Object world, Object connection) {
             this.attempt = attempt;

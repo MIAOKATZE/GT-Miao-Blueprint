@@ -428,16 +428,6 @@ final class HologramUiConfiguration {
             mx,
             my);
         ui.canvas.button(
-            51,
-            594,
-            315,
-            37,
-            17,
-            job == 2 ? projectorOr("native.ui.resume", "继续") : projectorOr("native.ui.pause", "暂停"),
-            ui.session.pendingSequence() < 0 && (job == 1 || job == 2),
-            mx,
-            my);
-        ui.canvas.button(
             52,
             635,
             315,
@@ -445,7 +435,10 @@ final class HologramUiConfiguration {
             17,
             projectorOr("native.ui.cancel", "取消"),
             ui.session.pendingSequence() < 0
-                && (job == 1 || job == 2 || ui.session.state().data.getBoolean("capturePending")),
+                && (HologramBackgroundTasks.canCancel() || HologramClientStockNative.OWNER.pending(ui.host.parent())
+                    || job == 1
+                    || job == 2
+                    || ui.session.state().data.getBoolean("capturePending")),
             mx,
             my);
     }
@@ -638,7 +631,22 @@ final class HologramUiConfiguration {
     }
 
     boolean sourceEnabled(String key) {
+        if ((ui.session.localDocument() || ui.session.state().data.getBoolean("localWorkspace")) && ui.host != null
+            && ui.host.minecraft().thePlayer != null) {
+            var selected = com.miaokatze.gtmb.hologram.HologramMaterials
+                .read(ui.host.minecraft().thePlayer.getHeldItem());
+            return "materialMain".equals(key) ? selected.main
+                : "materialContainers".equals(key) ? selected.containers : selected.me;
+        }
         return !ui.session.state().data.hasKey(key) || ui.session.state().data.getBoolean(key);
+    }
+
+    private int sourcePriority() {
+        return (ui.session.localDocument() || ui.session.state().data.getBoolean("localWorkspace")) && ui.host != null
+            && ui.host.minecraft().thePlayer != null
+                ? com.miaokatze.gtmb.hologram.HologramMaterials
+                    .read(ui.host.minecraft().thePlayer.getHeldItem()).priority
+                : ui.session.state().data.getInteger("materialPriority");
     }
 
     List<String> hatchRoles() {
@@ -1081,10 +1089,10 @@ final class HologramUiConfiguration {
             230,
             21,
             labels[i] + (ui.config.sourceEnabled(keys[i]) ? " ✓" : " ×"),
-            ui.session.editable(),
+            ui.session.editable() && !HologramClientMaterialStock.preferencesPending(),
             mx,
             my);
-        int priority = Math.floorMod(ui.session.state().data.getInteger("materialPriority"), 3);
+        int priority = Math.floorMod(sourcePriority(), 3);
         ui.canvas.button(
             87,
             166,
@@ -1094,7 +1102,7 @@ final class HologramUiConfiguration {
             (projectorOr("native.ui.priority", "优先：") + " ") + new String[] {
                 projectorOr("native.ui.main_inventory_363", "主背包"), projectorOr("native.ui.item_containers", "物品容器"),
                 projectorOr("native.ui.me_terminal", "ME 终端") }[priority],
-            ui.session.editable(),
+            ui.session.editable() && !HologramClientMaterialStock.preferencesPending(),
             mx,
             my);
         ui.canvas.text(
@@ -1440,7 +1448,7 @@ final class HologramUiConfiguration {
         n.setBoolean("keepController", true);
         for (String key : new String[] { "materialMain", "materialContainers", "materialMe" })
             n.setBoolean(key, ui.config.sourceEnabled(key));
-        n.setInteger("materialPriority", ui.session.state().data.getInteger("materialPriority"));
+        n.setInteger("materialPriority", sourcePriority());
         n.setTag(
             "channels",
             ui.session.state().data.getCompoundTag("channels")
@@ -1796,8 +1804,7 @@ final class HologramUiConfiguration {
                 }
                 return true;
             case 87:
-                ui.config
-                    .configure("materialPriority", (ui.session.state().data.getInteger("materialPriority") + 1) % 3);
+                ui.config.configure("materialPriority", (sourcePriority() + 1) % 3);
                 return true;
             case 88:
                 this.sourceDrawer = false;

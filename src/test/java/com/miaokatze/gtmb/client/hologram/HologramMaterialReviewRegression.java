@@ -231,6 +231,8 @@ public final class HologramMaterialReviewRegression {
         config.setInteger("selected", -1);
         config.setIntArray("selectedIndices", new int[0]);
         config.setBoolean("materialMain", true);
+        config.setBoolean("materialContainers", false);
+        config.setBoolean("materialMe", false);
         HologramSelection selection = new HologramSelection();
         selection.bindMaterials(displayed);
         selection.load(new int[] { 0, 2, 3, 4 }, 2, displayed.cells.size());
@@ -593,9 +595,9 @@ public final class HologramMaterialReviewRegression {
                 .collect(java.util.stream.Collectors.toList());
             SimpleAssert.that(
                 controls.keySet()
-                    .equals(new java.util.HashSet<>(java.util.Arrays.asList(245, 247, 252, 54, 55)))
-                    && buttons.size() == 4,
-                "the single material view keeps voucher/refresh/back/submit with no base/detail switch or no-op AE order");
+                    .equals(new java.util.HashSet<>(java.util.Arrays.asList(245, 247, 252, 253, 54, 55)))
+                    && buttons.size() == 5,
+                "the single material view exposes the source refresh and a guarded AE order control");
             var recovery = (com.cleanroommc.modularui.widget.ParentWidget<?>) panel.getChildren()
                 .stream()
                 .filter(widget -> "material_recovery_destination".equals(widget.getName()))

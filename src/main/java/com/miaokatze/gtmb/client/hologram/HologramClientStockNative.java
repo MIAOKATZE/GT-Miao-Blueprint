@@ -58,7 +58,12 @@ public final class HologramClientStockNative {
 
     @Desugar
     record Owner(Object view, BooleanSupplier exactBeforeStart, BooleanSupplier visible, Consumer<String> notice,
-        Consumer<Reply> terminal, BooleanSupplier detachedBeforeStart) {
+        Consumer<Reply> terminal, BooleanSupplier detachedBeforeStart, Runnable started) {
+
+        Owner(Object view, BooleanSupplier exactBeforeStart, BooleanSupplier visible, Consumer<String> notice,
+            Consumer<Reply> terminal, BooleanSupplier detachedBeforeStart) {
+            this(view, exactBeforeStart, visible, notice, terminal, detachedBeforeStart, () -> {});
+        }
 
         Owner(Object view, BooleanSupplier exactBeforeStart, BooleanSupplier visible, Consumer<String> notice,
             Consumer<Reply> terminal) {
@@ -110,6 +115,8 @@ public final class HologramClientStockNative {
     }
 
     private static final class Attempt {
+
+        boolean started;
 
         final Confirmation original;
         final Context context;
@@ -303,6 +310,11 @@ public final class HologramClientStockNative {
                     generation = reply.key()
                         .generation();
                 }
+            if (!attempt.started && (reply.phase() == Phase.ACCEPTED || reply.phase() == Phase.ACTIVE
+                || reply.phase() == Phase.COMPLETE)) {
+                attempt.started = true;
+                attempt.owner.started.run();
+            }
             int previous = attempt.placed;
             attempt.placed = reply.placed();
             if (reply.phase() == Phase.ACCEPTED || reply.phase() == Phase.ACTIVE) {
@@ -407,6 +419,10 @@ public final class HologramClientStockNative {
             terminalContext = context;
             terminalHud = status;
             terminalAt = now;
+        }
+
+        void cancelCurrent() {
+            if (active != null && active.key != null) stopOnce(active);
         }
 
         boolean pending(Object view) {

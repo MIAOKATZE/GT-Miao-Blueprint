@@ -90,6 +90,7 @@ public final class HologramNetwork {
     static void clearServerQueues() {
         stockNativeServer.reset();
         HologramNativePresetStock.reset();
+        HologramMaterialStockWire.reset();
         HologramAttachmentUpload.clearServer();
         retiredPlacementGate.clear();
         // On an in-process reset keep the intent watermark; an old already-issued ticket is no longer usable.
@@ -1546,6 +1547,11 @@ public final class HologramNetwork {
 
         public IMessage onMessage(Action msg, MessageContext ctx) {
             // Retired control packets from older clients must never enter workspace command dispatch.
+            if (msg.tag.hasKey(HologramMaterialStockWire.MARKER)) {
+                if (ctx != null) HologramMaterialStockWire
+                    .enqueue(msg.tag, HologramWorkspace.captureActionEndpoint(ctx.getServerHandler()));
+                return null;
+            }
             if (msg.tag.hasKey(HologramNativePresetStock.MARKER)) {
                 if (ctx != null) HologramNativePresetStock
                     .enqueue(msg.tag, HologramWorkspace.captureActionEndpoint(ctx.getServerHandler()));
@@ -1736,6 +1742,10 @@ public final class HologramNetwork {
     public static final class ClientHandler implements IMessageHandler<State, IMessage> {
 
         public IMessage onMessage(State msg, MessageContext ctx) {
+            if (msg.tag.hasKey(HologramMaterialStockWire.MARKER)) {
+                if (ctx != null) HologramMaterialStockWire.receive(msg.tag, ctx.netHandler);
+                return null;
+            }
             if (msg.tag.hasKey(HologramNativePresetStock.MARKER)) {
                 if (ctx != null) HologramNativePresetStock.receive(msg.tag, ctx.netHandler);
                 return null;
