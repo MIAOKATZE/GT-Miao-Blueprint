@@ -44,7 +44,6 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     private HologramState localControllerTarget;
     private int localControllerSide;
     private HologramState localControllerPrevious;
-    private HologramLocalControllerGhost.Profile rememberedControllerPlacement;
     private HologramState localControllerBaseline;
     private HologramState.Cell localControllerInteractionCell;
     private net.minecraft.nbt.NBTTagList localControllerCapabilities;
@@ -147,7 +146,6 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             screen.localController = capture;
             screen.localControllerSide = side;
             screen.localControllerToolSettings = inheritedSettings;
-            screen.rememberedControllerPlacement = remembered;
             screen.rememberControllerContext(tile);
             return screen;
         } finally {
@@ -358,7 +356,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     void applyNativePreset(NBTTagCompound settings) {
         if (!localMaterialOwnerCurrent(ui) || !ui.session.editable() || localController == null) return;
         HologramState current = ui.session.state();
-        if (!sameLocalControllerTarget(current) || current.data.getInteger("mode") != 0
+        if (!sameLocalControllerTarget(current) || current.data.getInteger("mode") == 2
             || current.data.getBoolean("capturePending")
             || stockNativePending()) return;
         int tier = settings.getInteger("hatchTier");
@@ -484,8 +482,11 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             if (sample != null) overrides.put(index, sample.copy());
         }
         NBTTagCompound settings = new NBTTagCompound();
-        settings
-            .setInteger("hatchTier", current.data.hasKey("hatchTier", 3) ? current.data.getInteger("hatchTier") : tier);
+        settings.setInteger(
+            "hatchTier",
+            current.data.getBoolean("presetActive") && current.data.hasKey("hatchTier", 3)
+                ? current.data.getInteger("hatchTier")
+                : Math.max(0, tier));
         settings.setBoolean("hatchDowngrade", downgrade);
         return localController.captureNativeHatchProfile(overrides, settings);
     }
@@ -952,7 +953,6 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             localNativeChoices.clear();
             localPresetChoices.clear();
             nativePresetRequest = null;
-            restoreRememberedHatches();
             if (pendingControllerToolSettings != null) localControllerToolSettings = pendingControllerToolSettings;
             pendingControllerToolSettings = null;
             localControllerPreparation = null;
@@ -960,26 +960,6 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.LOCAL_CONTROLLER_PREPARE, preparation);
         }
         publishLocalController(localControllerTarget, HologramRuntimeMetrics.LoadStage.CLIENT_CONTROLLER_TARGET);
-    }
-
-    private void restoreRememberedHatches() {
-        var remembered = rememberedControllerPlacement;
-        rememberedControllerPlacement = null;
-        if (remembered == null) return;
-        try {
-            var choices = remembered.choices(localControllerTarget, localController);
-            if (choices.isEmpty()) return;
-            localControllerTarget = HologramLocalControllerEdits.replaceNativePreset(
-                localControllerTarget,
-                localControllerBaseline,
-                java.util.Collections.emptySet(),
-                choices,
-                remembered.tier(),
-                true);
-            for (var choice : choices) localPresetChoices.add(choice.index());
-        } catch (java.io.IOException | RuntimeException | LinkageError stale) {
-            // The cached channel selection can remain; incompatible hatch choices must never enter the new plan.
-        }
     }
 
     private NBTTagCompound localControllerCapabilityMetadata() {

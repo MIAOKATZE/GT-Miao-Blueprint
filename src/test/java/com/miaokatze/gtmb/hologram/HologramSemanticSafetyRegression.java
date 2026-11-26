@@ -294,7 +294,7 @@ final class HologramSemanticSafetyRegression {
             lookups[0]++;
             return Collections.singletonList(hatch);
         });
-        SimpleAssert.eq(1, lookups[0], "sparse native preset asks once for the same declaration");
+        SimpleAssert.eq(2, lookups[0], "an element identity alone does not prove sparse position candidates identical");
         SimpleAssert.that(
             Arrays.equals(new int[] { hatch.getItemDamage() }, prepared.stockIds()),
             "stock request contains the native model only");

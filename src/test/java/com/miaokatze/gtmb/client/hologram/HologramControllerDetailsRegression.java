@@ -403,6 +403,10 @@ public final class HologramControllerDetailsRegression {
                 0,
                 false);
             SimpleAssert.eq(5, kept.cells.get(0).targetFacing, "clear preset never overwrites a manual pin");
+            SimpleAssert.that(
+                !kept.data.getBoolean("presetActive") && !kept.data.getBoolean("nativePresetExact")
+                    && kept.data.getInteger("hatchTier") == -1,
+                "clearing a preset returns to the explicit unselected state");
             HologramState original = edit(turned, baseline, "restoreCell", "selected", 0);
             SimpleAssert.that(
                 original.cells.get(0).targetStack.getItem() == Item.getItemFromBlock(Blocks.stone)
