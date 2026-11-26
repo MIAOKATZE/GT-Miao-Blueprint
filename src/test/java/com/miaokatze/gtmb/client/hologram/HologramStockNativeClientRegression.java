@@ -18,6 +18,7 @@ import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.multiplayer.WorldClient;
 import net.minecraft.client.network.NetHandlerPlayClient;
 import net.minecraft.entity.player.InventoryPlayer;
+import net.minecraft.entity.player.PlayerCapabilities;
 import net.minecraft.init.Blocks;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
@@ -38,6 +39,7 @@ import com.miaokatze.gtmb.hologram.HologramStockNativeWire.Confirmation;
 import com.miaokatze.gtmb.hologram.HologramStockNativeWire.Key;
 import com.miaokatze.gtmb.hologram.HologramStockNativeWire.Phase;
 import com.miaokatze.gtmb.hologram.HologramStockNativeWire.Reply;
+import com.miaokatze.gtmb.testutil.MinecraftTestBootstrap;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
 import cpw.mods.fml.common.network.simpleimpl.IMessage;
@@ -54,6 +56,27 @@ import io.netty.buffer.Unpooled;
 public final class HologramStockNativeClientRegression {
 
     private HologramStockNativeClientRegression() {}
+
+    public static void main(String[] args) {
+        int status = 0;
+        try {
+            if (MinecraftTestBootstrap.enter(HologramStockNativeClientRegression.class, args)) {
+                com.miaokatze.gtmb.hologram.HologramNativeSavedWorldRegression.withOfflineRegistries(() -> {
+                    try {
+                        run();
+                    } catch (ReflectiveOperationException failure) {
+                        throw new IllegalStateException(failure);
+                    }
+                });
+                System.out.println("PASS stock native client panel, exact replies and detached completion");
+            }
+        } catch (Throwable failure) {
+            failure.printStackTrace(System.err);
+            status = 1;
+        }
+        // This separate JavaExec owns vanilla's lifetime non-daemon I/O threads.
+        System.exit(status);
+    }
 
     public static void run() throws ReflectiveOperationException {
         var unsafe = (sun.misc.Unsafe) field(sun.misc.Unsafe.class, "theUnsafe").get(null);
@@ -99,6 +122,7 @@ public final class HologramStockNativeClientRegression {
         var other = (NetHandlerPlayClient) unsafe.allocateInstance(NetHandlerPlayClient.class);
         field(EntityClientPlayerMP.class, "sendQueue").set(player, connection);
         player.inventory = new InventoryPlayer(player);
+        player.capabilities = new PlayerCapabilities();
         var projector = new ItemStack(new ItemNekoHologramProjector());
         var tag = new NBTTagCompound();
         tag.setString(
@@ -213,10 +237,14 @@ public final class HologramStockNativeClientRegression {
                 recorded.sent.size() == 1 && command(recorded.sent.get(0)) == Command.PROBE,
                 "actual existing material button emits exactly one cold proof request and no eager BEGIN");
             SimpleAssert.that(
-                ui.review.localFrame()
+                ui.review.localFrame() != null && ui.review.localFrame()
                     .status()
-                    .contains("等待服务器确认") && !ui.review.localSubmitAvailable(),
-                "the clicked pane remains visible and prevents duplicate send while pending");
+                    .equals(HologramUiText.projectorOr("stock.await_result", "正在等候本次施工结果。"))
+                    && screen.stockNativePending()
+                    && !ui.review.localSubmitAvailable(),
+                "the cold PROBE keeps its pane visible and blocks submission until the exact result");
+            clickExistingSubmit(ui, false);
+            SimpleAssert.eq(1, recorded.sent.size(), "a repeated actual footer click sends no duplicate cold PROBE");
             var hudOnly = new NBTTagCompound();
             hudOnly.setString("status", "fixture HUD update");
             field(HologramUiSession.class, "state").set(ui.session, displayed.withMetadata(hudOnly));
@@ -320,12 +348,13 @@ public final class HologramStockNativeClientRegression {
         var handler = new Object();
         var scope = new HologramClientStockNative.Context(handler, new Object(), new Object(), 0);
         boolean[] open = { true };
+        var receipts = new ArrayList<Reply>();
         var owner = new HologramClientStockNative.Owner(
             new Object(),
             () -> open[0],
             () -> open[0],
-            notice -> {},
-            reply -> { if (!open[0]) throw new AssertionError("Disposed screen received a callback"); },
+            notice -> { if (!open[0]) throw new AssertionError("Disposed screen received a UI notice"); },
+            receipts::add,
             () -> true);
         var first = flowIntent(1);
         SimpleAssert.that(flow.submit(first, scope, owner, 0), "submit cold construction");
@@ -342,6 +371,16 @@ public final class HologramStockNativeClientRegression {
                 .contains("2"),
             "detached construction exposes committed progress");
         flow.receive(new Reply(key, Phase.COMPLETE, 6, ""), handler, scope, 3);
+        flow.receive(new Reply(key, Phase.COMPLETE, 6, ""), handler, scope, 3);
+        SimpleAssert.that(
+            receipts.size() == 1 && receipts.get(0)
+                .key()
+                .equals(key)
+                && receipts.get(0)
+                    .phase() == Phase.COMPLETE
+                && receipts.get(0)
+                    .placed() == 6,
+            "detached completion delivers one exact receipt for non-UI bookkeeping");
         SimpleAssert
             .eq(java.util.Arrays.asList(Command.PROBE, Command.BEGIN_AFTER_PROBE), sent, "close never sends STOP");
         SimpleAssert.that(
@@ -494,9 +533,12 @@ public final class HologramStockNativeClientRegression {
     }
 
     private static void clickExistingSubmit(HologramUiModules ui) throws ReflectiveOperationException {
-        SimpleAssert.that(
-            ui.review.localSubmitAvailable(),
-            "existing real default SUBMIT is available for this exact local pane");
+        clickExistingSubmit(ui, true);
+    }
+
+    private static void clickExistingSubmit(HologramUiModules ui, boolean expectedAvailable)
+        throws ReflectiveOperationException {
+        SimpleAssert.eq(expectedAvailable, ui.review.localSubmitAvailable(), "exact local pane submit availability");
         var dialog = new HologramMaterialConfirmationDialog(new ModularPanel("gtmb_stock_button_fixture"), ui.review);
         var build = HologramMaterialConfirmationDialog.class.getDeclaredMethod("build");
         build.setAccessible(true);
@@ -505,8 +547,8 @@ public final class HologramStockNativeClientRegression {
         SimpleAssert.that(!dialog.controlEnabled(55), "headless material tree is neither opened nor drawn");
         var enabled = (Map<?, ?>) field(HologramMaterialConfirmationDialog.class, "enabledControls").get(dialog);
         SimpleAssert.that(
-            enabled.get(55) instanceof BooleanSupplier available && available.getAsBoolean(),
-            "real footer registered the enabled predicate for default control 55");
+            enabled.get(55) instanceof BooleanSupplier available && available.getAsBoolean() == expectedAvailable,
+            "real footer registered the current admission predicate for default control 55");
         SimpleAssert.that(
             !enabled.containsKey(248),
             "real native material footer no longer mounts an old compatibility button");

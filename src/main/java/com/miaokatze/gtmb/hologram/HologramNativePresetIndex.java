@@ -51,6 +51,11 @@ public final class HologramNativePresetIndex {
     interface Candidates {
 
         List<ItemStack> at(int index) throws IOException;
+
+        /** Capture-owned proof of identical automatic candidates, including the effective piece trigger. */
+        default Object sharedKey(int index) throws IOException {
+            return null;
+        }
     }
 
     private static final class Category {
@@ -248,33 +253,42 @@ public final class HologramNativePresetIndex {
         for (Map.Entry<Category, List<Slot>> group : free.entrySet()) {
             Category category = group.getKey();
             List<Slot> available = group.getValue();
-            List<Offer> options = new ArrayList<>();
-            Set<Integer> seen = new HashSet<>();
-            for (ItemStack stack : (gtsrBasic ? gtsrCatalog : candidates).at(
-                available.get(0)
-                    .index())) {
-                int id = hatchId(stack);
-                if (id == 0 || stack.hasTagCompound() || !seen.add(id)) continue;
-                Offer candidate = gtsrBasic ? gtsrOffer(id, category, true) : offer(id, category, roleNames);
-                if (candidate.roles()
-                    .isEmpty()) continue;
-                if (custom) {
-                    boolean matches = false;
-                    for (ProfileUnit unit : profile) if (unit.id() == id && candidate.profileRole()
-                        .equals(unit.role())) {
-                            matches = true;
-                            break;
-                        }
-                    if (!matches) continue;
-                } else if (candidate.tier() != tier && (!downgrade || candidate.tier() > tier)) continue;
-                options.add(candidate);
-                planStock.putIfAbsent(id, planStock.size());
-                if (planStock.size() > MAX_IDS) return Prepared.unavailable("仓室型号过多，请指定更窄的电压级。");
+            Map<Object, List<Offer>> shared = new LinkedHashMap<>();
+            Candidates source = gtsrBasic ? gtsrCatalog : candidates;
+            for (Slot slot : available) {
+                Object key = source.sharedKey(slot.index());
+                List<Offer> cached = key == null ? null : shared.get(key);
+                if (cached != null) {
+                    if (!cached.isEmpty()) positions.add(new Position(slot, category, cached));
+                    continue;
+                }
+                List<Offer> options = new ArrayList<>();
+                Set<Integer> seen = new HashSet<>();
+                for (ItemStack stack : source.at(slot.index())) {
+                    int id = hatchId(stack);
+                    if (id == 0 || stack.hasTagCompound() || !seen.add(id)) continue;
+                    Offer candidate = gtsrBasic ? gtsrOffer(id, category, true) : offer(id, category, roleNames);
+                    if (candidate.roles()
+                        .isEmpty()) continue;
+                    if (custom) {
+                        boolean matches = false;
+                        for (ProfileUnit unit : profile) if (unit.id() == id && candidate.profileRole()
+                            .equals(unit.role())) {
+                                matches = true;
+                                break;
+                            }
+                        if (!matches) continue;
+                    } else if (candidate.tier() != tier && (!downgrade || candidate.tier() > tier)) continue;
+                    options.add(candidate);
+                    planStock.putIfAbsent(id, planStock.size());
+                    if (planStock.size() > MAX_IDS) return Prepared.unavailable("仓室型号过多，请指定更窄的电压级。");
+                }
+                options.sort(
+                    Comparator.comparingInt(Offer::tier)
+                        .reversed());
+                if (key != null) shared.put(key, options);
+                if (!options.isEmpty()) positions.add(new Position(slot, category, options));
             }
-            options.sort(
-                Comparator.comparingInt(Offer::tier)
-                    .reversed());
-            if (!options.isEmpty()) for (Slot slot : available) positions.add(new Position(slot, category, options));
         }
         int[] ids = new int[planStock.size()];
         planStock.forEach((id, index) -> ids[index] = id);
@@ -369,6 +383,7 @@ public final class HologramNativePresetIndex {
         private final List<Position> positions;
         private final List<ProfileUnit> profile;
         private final String unavailable;
+        private java.util.function.Supplier<String> validity = () -> null;
 
         private Prepared(int[] ids, List<Position> positions, int[] needed, List<ProfileUnit> profile,
             String unavailable) {
@@ -387,8 +402,15 @@ public final class HologramNativePresetIndex {
             return ids.clone();
         }
 
+        Prepared guarded(java.util.function.Supplier<String> guard) {
+            validity = guard;
+            return this;
+        }
+
         public Outcome resolve(int[] counts, boolean creative) {
             if (!unavailable.isEmpty()) return failure(unavailable);
+            String invalid = validity.get();
+            if (invalid != null) return failure(invalid);
             if (!creative && (counts == null || counts.length != ids.length)) return failure("库存回执不完整。");
             Map<Integer, Integer> stock = new LinkedHashMap<>();
             for (int i = 0; i < ids.length; i++)
@@ -399,9 +421,11 @@ public final class HologramNativePresetIndex {
                 String reason = resolveProfile(stock, remaining, choices);
                 if (!reason.isEmpty()) return failure(reason);
             } else {
-                Map<Category, java.util.ArrayDeque<Position>> groups = new LinkedHashMap<>();
+                // Only lists produced under the same explicit sharing proof represent an entire queue.
+                // Unproved/position-dependent candidates get independent lists during prepare.
+                Map<List<Offer>, java.util.ArrayDeque<Position>> groups = new LinkedHashMap<>();
                 for (Position position : positions)
-                    groups.computeIfAbsent(position.category(), unused -> new java.util.ArrayDeque<>())
+                    groups.computeIfAbsent(position.offers(), unused -> new java.util.ArrayDeque<>())
                         .add(position);
                 while (!fulfilled(remaining)) {
                     int bestRole = -1, bestCount = Integer.MAX_VALUE;

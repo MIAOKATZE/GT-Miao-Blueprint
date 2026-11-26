@@ -54,7 +54,7 @@ final class HologramUiConfiguration {
 
     private int hatchFilterTier = -1;
 
-    private int presetTier = 1;
+    private int presetTier = -1;
 
     private boolean presetDowngrade;
 
@@ -700,7 +700,7 @@ final class HologramUiConfiguration {
             ui.canvas.button(1714, 322, 208, 74, 19, "删除所选", selectedPresetAvailable(), mx, my);
         } else {
             ui.canvas.button(105, 165, 186, 231, 19, presetDowngrade ? "缺料时允许降级 ✓" : "缺料时严格保持等级", true, mx, my);
-            ui.canvas.text("保留现场仓室；不选择预设也可确认构建", 165, 213, 231, 0x94afb4);
+            ui.canvas.text(presetTier < 0 ? "未选择预设；先选择等级才可生成目标" : "保留现场仓室；不选择预设也可确认构建", 165, 213, 231, 0x94afb4);
         }
         ui.canvas.button(
             106,
@@ -710,7 +710,7 @@ final class HologramUiConfiguration {
             20,
             customPresets ? "应用所选搭配" : "生成预设目标",
             ui.session.editable() && ui.session.state().data.getBoolean("supported")
-                && (customPresets ? selectedPresetAvailable() : basicPresetActionAvailable()),
+                && (customPresets ? customPresetActionAvailable() : basicPresetActionAvailable()),
             mx,
             my);
         ui.canvas.button(
@@ -727,6 +727,7 @@ final class HologramUiConfiguration {
 
     private void applyHatchProfile(NBTTagCompound profile, boolean basic) {
         if (!ui.session.editable() || profile == null) return;
+        if (basic ? !basicPresetActionAvailable() : !customPresetActionAvailable()) return;
         NBTTagCompound config = configuration();
         config.setInteger("hatchTier", profile.getInteger("tier"));
         config.setBoolean("hatchDowngrade", profile.getBoolean("downgrade"));
@@ -1270,7 +1271,10 @@ final class HologramUiConfiguration {
                 if (ui.session.editable()) ui.session.send("refreshMaterialChoices", null, false);
                 return true;
             case 94:
-                this.presetTier = ui.session.state().data.getInteger("hatchTier");
+                NBTTagCompound presetState = ui.session.state().data;
+                this.presetTier = presetState.getBoolean("presetActive") && presetState.hasKey("hatchTier", 3)
+                    ? presetState.getInteger("hatchTier")
+                    : -1;
                 this.presetDowngrade = ui.session.state().data.getBoolean("hatchDowngrade");
                 this.presetDrawer = true;
                 this.presetOffset = customPresets ? 0 : Math.max(0, this.presetTier - 2);
@@ -1700,12 +1704,21 @@ final class HologramUiConfiguration {
 
     /** This allows an explicit server check, not a promise that the local preview knows the quota. */
     boolean basicPresetActionAvailable() {
+        return presetTier >= 0 && presetTier <= ui.session.state().data.getInteger("hatchTierMax")
+            && presetActionAvailable();
+    }
+
+    boolean customPresetActionAvailable() {
         NBTTagCompound state = ui.session.state().data;
-        return state.getBoolean("presetAvailable")
-            || state.getBoolean("localStandardController") && state.getBoolean("supported")
-                && !state.getBoolean("virtual")
-                && state.getInteger("mode") != 2
-                && !state.getBoolean("capturePending");
+        return selectedPresetAvailable() && state.getInteger("mode") != 2 && !state.getBoolean("capturePending");
+    }
+
+    private boolean presetActionAvailable() {
+        NBTTagCompound state = ui.session.state().data;
+        return state.getInteger("mode") != 2 && !state.getBoolean("capturePending")
+            && (state.getBoolean("presetAvailable")
+                || state.getBoolean("localStandardController") && state.getBoolean("supported")
+                    && !state.getBoolean("virtual"));
     }
 
     int nativePresetCount() {
@@ -1837,7 +1850,7 @@ final class HologramUiConfiguration {
         hatchOffset = Math.max(0, state.getInteger("hatchOffset"));
         hatchRole = Math.max(0, state.getInteger("hatchRole"));
         hatchFilterTier = state.getInteger("hatchFilterTier");
-        presetTier = state.getInteger("presetTier");
+        presetTier = state.hasKey("presetTier", 3) ? state.getInteger("presetTier") : -1;
         presetOffset = Math.max(0, state.getInteger("presetOffset"));
         drawerOffset = Math.max(0, state.getInteger("drawerOffset"));
         selectedHatchPreset = state.getString("selectedHatchPreset");

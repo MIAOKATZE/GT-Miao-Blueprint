@@ -45,6 +45,7 @@ import io.netty.channel.embedded.EmbeddedChannel;
 public final class HologramStockEbfConstructionRegression {
 
     private static Block registeredFixtureMachines;
+    private static Block registeredFixtureFrame;
 
     private HologramStockEbfConstructionRegression() {}
 
@@ -948,6 +949,18 @@ public final class HologramStockEbfConstructionRegression {
                 tiles,
                 exhaust,
                 coil);
+            // This authenticated server keeps one monotonic request sequence for all declared contracts.
+            // Run 30/31 only after the existing hatch/group/EBF cases have consumed 10 through 28.
+            preciseAssemblerMaterials(
+                unsafe,
+                world,
+                controller,
+                facing,
+                endpoint,
+                server,
+                replies,
+                alternateDefinition,
+                scoped);
             System.out.println(
                 "GTMB_DECLARED_EBF_PROOF_AND_PLACEMENT unprojected muffler ignored, selected shortages prevent debits, explicit muffler placed, draft retained");
         } finally {
@@ -1146,6 +1159,193 @@ public final class HologramStockEbfConstructionRegression {
     }
 
     /** Genuine GT input bus/output hatch leaves and ItemMachines, not seeded products or assertions on the preview. */
+    /**
+     * Exact .265 factories used by MTEPreciseAssembler, with isolated block identities and callback tripwires.
+     * This exercises the formal server endpoint, not the complete assembler or its formation checks.
+     */
+    private static void preciseAssemblerMaterials(sun.misc.Unsafe unsafe, RawWorld world, BaseMetaTileEntity controller,
+        ExtendedFacing facing, HologramWorkspace.ActionEndpoint endpoint, HologramStockNativeServer server,
+        List<HologramStockNativeWire.Reply> replies,
+        com.gtnewhorizon.structurelib.structure.IStructureDefinition<?>[] definitions,
+        java.util.function.BiFunction<Long, HologramDeclaredNativeSelection, HologramStockNativeWire.Confirmation> confirm)
+        throws ReflectiveOperationException {
+        var glassListField = gregtech.api.util.GlassTier.class.getDeclaredField("glassList");
+        glassListField.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        var glassList = (List<org.apache.commons.lang3.tuple.Pair<Block, Integer>>) glassListField.get(null);
+        var previousGlass = new ArrayList<>(glassList);
+        Block previousFrame = GregTechAPI.sBlockFrames;
+        var tungstenSteel = gregtech.api.enums.Materials.TungstenSteel;
+        var mapConstructor = Class.forName("gregtech.api.enums.MaterialsIDMap")
+            .getDeclaredConstructor();
+        mapConstructor.setAccessible(true);
+        var materialIds = (java.util.Map<?, ?>) mapConstructor.newInstance();
+        int materialId = materialIds.entrySet()
+            .stream()
+            .filter(entry -> entry.getValue() == tungstenSteel)
+            .mapToInt(entry -> (Integer) entry.getKey())
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("native TungstenSteel material ID is registered"));
+        int previousId = tungstenSteel.mMetaItemSubID;
+        var previousMaterial = GregTechAPI.sGeneratedMaterials[materialId];
+        var unifiedFrames = gregtech.api.util.GTOreDictUnificator.getName2StackMap();
+        String frameOre = gregtech.api.enums.OrePrefixes.frameGt.get(tungstenSteel)
+            .toString();
+        var previousUnifiedFrame = unifiedFrames.get(frameOre);
+        var inventory = endpoint.player.inventory.mainInventory;
+        var oldInventory = inventory.clone();
+        var offsets = new ArrayList<HologramDeclaredNativeSelection.Offset>();
+        var oldBlocks = new ArrayList<Block>();
+        var oldMetadata = new ArrayList<Integer>();
+        var oldTiles = new ArrayList<TileEntity>();
+        var oldDefinition = definitions[0];
+        try {
+            glassList.clear();
+            glassList.add(org.apache.commons.lang3.tuple.Pair.of(Blocks.stained_glass, 0));
+            glassList.add(org.apache.commons.lang3.tuple.Pair.of(Blocks.stained_glass, 5));
+            glassList.add(org.apache.commons.lang3.tuple.Pair.of(Blocks.stained_glass, 9));
+            tungstenSteel.mMetaItemSubID = materialId;
+            GregTechAPI.sGeneratedMaterials[materialId] = tungstenSteel;
+            GregTechAPI.sBlockFrames = fixtureFrame(unsafe, previousFrame);
+            // Normal GT ore registration is absent in this isolated JVM; preserve the native lookup path.
+            unifiedFrames.put(frameOre, new ItemStack(GregTechAPI.sBlockFrames, 1, materialId));
+            var unitHints = Arrays.asList(
+                org.apache.commons.lang3.tuple.Pair.of(Blocks.wool, 0),
+                org.apache.commons.lang3.tuple.Pair.of(Blocks.wool, 1),
+                org.apache.commons.lang3.tuple.Pair.of(Blocks.wool, 2));
+            var unit = gregtech.common.misc.GTStructureChannels.PRASS_UNIT_CASING.use(
+                com.gtnewhorizon.structurelib.structure.StructureUtility.onElementPass(
+                    (Object ignored) -> { throw new AssertionError("unit casing callback executed"); },
+                    com.gtnewhorizon.structurelib.structure.StructureUtility.<Object, Integer>ofBlocksTiered(
+                        (block, meta) -> { throw new AssertionError("unit tier converter executed"); },
+                        unitHints,
+                        -3,
+                        (ignored, tier) -> { throw new AssertionError("unit tier setter executed"); },
+                        ignored -> { throw new AssertionError("unit tier getter executed"); })));
+            var machine = gregtech.common.misc.GTStructureChannels.TIER_MACHINE_CASING.use(
+                com.gtnewhorizon.structurelib.structure.StructureUtility.<Object, Integer>ofBlocksTiered(
+                    (block, meta) -> { throw new AssertionError("machine tier converter executed"); },
+                    java.util.stream.IntStream.range(0, 10)
+                        .mapToObj(meta -> org.apache.commons.lang3.tuple.Pair.of(GregTechAPI.sBlockCasings1, meta))
+                        .collect(java.util.stream.Collectors.toList()),
+                    -1,
+                    (ignored, tier) -> { throw new AssertionError("machine tier setter executed"); },
+                    ignored -> { throw new AssertionError("machine tier getter executed"); }));
+            var glass = gregtech.api.util.GTStructureUtility.<Object>chainAllGlasses(
+                -1,
+                (ignored, tier) -> { throw new AssertionError("glass tier setter executed"); },
+                ignored -> { throw new AssertionError("glass tier getter executed"); });
+            // The headless JVM has no late mixins: invoke the exact production RETURN registration hook.
+            HologramGregTechDeclarations.glass(glass);
+            var frame = gregtech.api.util.GTStructureUtility.<Object>ofFrame(tungstenSteel);
+            definitions[0] = com.gtnewhorizon.structurelib.structure.StructureDefinition.<Object>builder()
+                .addShape("main", new String[][] { { "~UMGF" } })
+                .addElement('U', unit)
+                .addElement('M', machine)
+                .addElement('G', glass)
+                .addElement('F', frame)
+                .build();
+            var elements = definitions[0].getStructureFor("main");
+            var cursor = new HologramStructureCursor(elements, 0, 0, 0);
+            var expected = new ArrayList<ItemStack>();
+            while (cursor.done() < cursor.total()) {
+                int index = cursor.done();
+                var position = cursor.declarationOffset(facing);
+                if (position == null || position.x() == 0 && position.y() == 0 && position.z() == 0) continue;
+                offsets.add(position);
+                var element = elements[index];
+                expected.add(
+                    element == unit ? new ItemStack(Blocks.wool, 1, 1)
+                        : element == machine ? new ItemStack(GregTechAPI.sBlockCasings1, 1, 3)
+                            : element == glass ? new ItemStack(Blocks.stained_glass, 1, 9)
+                                : new ItemStack(GregTechAPI.sBlockFrames, 1, materialId));
+                int x = controller.xCoord + position.x(), y = controller.yCoord + position.y(),
+                    z = controller.zCoord + position.z();
+                oldBlocks.add(world.getBlock(x, y, z));
+                oldMetadata.add(world.getBlockMetadata(x, y, z));
+                oldTiles.add(world.getTileEntity(x, y, z));
+                world.seed(x, y, z, Blocks.air, 0);
+                world.seedTile(x, y, z, null);
+            }
+            SimpleAssert.eq(4, offsets.size(), "all precise assembler material factories have real target coordinates");
+            for (int i = 1; i < inventory.length; i++) inventory[i] = null;
+            for (int i = 0; i < expected.size(); i++) {
+                inventory[i + 1] = expected.get(i)
+                    .copy();
+                inventory[i + 1].stackSize = 2;
+            }
+            var channels = new java.util.LinkedHashMap<String, Integer>();
+            channels.put("unit_casing", 2);
+            channels.put("machine_casing", 4);
+            channels.put("glass", 3);
+            var selection = new HologramDeclaredNativeSelection(
+                1000,
+                channels,
+                0,
+                0,
+                java.util.Collections.emptyList(),
+                java.util.Collections.emptyList());
+            endpoint.player.capabilities.isCreativeMode = false;
+            var stock = new HologramMaterials.Settings();
+            stock.me = stock.containers = false;
+            HologramMaterials.write(inventory[0], stock);
+            for (long sequence = 30; sequence <= 31; sequence++) {
+                world.writes()
+                    .clear();
+                var request = confirm.apply(sequence, selection);
+                proveDeclared(server, endpoint, replies, request);
+                var result = finishDeclared(
+                    server,
+                    endpoint,
+                    replies,
+                    request.forGeneration(endpoint.constructionScope.generation));
+                SimpleAssert.that(
+                    result.phase() == HologramStockNativeWire.Phase.COMPLETE
+                        && result.placed() == (sequence == 30 ? 4 : 0),
+                    "native precise material defaults build once then repair without rewriting: " + result);
+                SimpleAssert.eq(
+                    sequence == 30 ? 4 : 0,
+                    world.writes()
+                        .size(),
+                    "one world write per new material");
+                for (int i = 0; i < offsets.size(); i++) {
+                    var position = offsets.get(i);
+                    var item = expected.get(i);
+                    SimpleAssert.that(
+                        world.getBlock(
+                            controller.xCoord + position.x(),
+                            controller.yCoord + position.y(),
+                            controller.zCoord + position.z()) == Block.getBlockFromItem(item.getItem())
+                            && world.getBlockMetadata(
+                                controller.xCoord + position.x(),
+                                controller.yCoord + position.y(),
+                                controller.zCoord + position.z()) == item.getItemDamage()
+                            && inventory[i + 1].stackSize == 1,
+                        "server uses the exact subchannel material and debits it only once");
+                }
+            }
+        } finally {
+            for (int i = 0; i < offsets.size(); i++) {
+                var position = offsets.get(i);
+                int x = controller.xCoord + position.x(), y = controller.yCoord + position.y(),
+                    z = controller.zCoord + position.z();
+                world.seed(x, y, z, oldBlocks.get(i), oldMetadata.get(i));
+                world.seedTile(x, y, z, oldTiles.get(i));
+            }
+            definitions[0] = oldDefinition;
+            System.arraycopy(oldInventory, 0, inventory, 0, inventory.length);
+            glassList.clear();
+            glassList.addAll(previousGlass);
+            GregTechAPI.sBlockFrames = previousFrame;
+            tungstenSteel.mMetaItemSubID = previousId;
+            GregTechAPI.sGeneratedMaterials[materialId] = previousMaterial;
+            if (previousUnifiedFrame == null) unifiedFrames.remove(frameOre);
+            else unifiedFrames.put(frameOre, previousUnifiedFrame);
+            world.writes()
+                .clear();
+        }
+    }
+
     private static void ordinaryNativeHatches(sun.misc.Unsafe unsafe, RawWorld world, BaseMetaTileEntity controller,
         ExtendedFacing facing, HologramWorkspace.ActionEndpoint endpoint, String id, HologramStockNativeServer server,
         List<HologramStockNativeWire.Reply> replies,
@@ -1540,11 +1740,14 @@ public final class HologramStockEbfConstructionRegression {
         if (original != null && original.getClass() == gregtech.common.blocks.BlockFrameBox.class
             && net.minecraft.item.Item.getItemFromBlock(original) instanceof gregtech.common.blocks.ItemFrames)
             return original;
+        // Headless FML prefixes the textual name with its active minecraft owner. Keep the actual registered
+        // identity so another material contract reuses this frame rather than looking up an unqualified alias.
+        if (registeredFixtureFrame != null) return registeredFixtureFrame;
         String name = "gtmb_test:tiered_steel_frame";
         Object held = Block.blockRegistry.getObject(name);
         if (held instanceof gregtech.common.blocks.BlockFrameBox block
             && net.minecraft.item.Item.getItemFromBlock(block) instanceof gregtech.common.blocks.ItemFrames)
-            return block;
+            return registeredFixtureFrame = block;
         var frame = (gregtech.common.blocks.BlockFrameBox) unsafe
             .allocateInstance(gregtech.common.blocks.BlockFrameBox.class);
         var delegate = Block.class.getDeclaredField("delegate");
@@ -1560,7 +1763,7 @@ public final class HologramStockEbfConstructionRegression {
         SimpleAssert.that(id >= 3728, "paired frame fixture registry ID available");
         Block.blockRegistry.addObject(id, name, frame);
         net.minecraft.item.Item.itemRegistry.addObject(id, name, new gregtech.common.blocks.ItemFrames(frame));
-        return frame;
+        return registeredFixtureFrame = frame;
     }
 
     private static void proveDeclared(HologramStockNativeServer server, HologramWorkspace.ActionEndpoint endpoint,

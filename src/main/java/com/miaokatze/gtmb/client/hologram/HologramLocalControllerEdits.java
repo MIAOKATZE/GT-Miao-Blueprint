@@ -195,7 +195,7 @@ final class HologramLocalControllerEdits {
         metadata.setBoolean("presetActive", enabled);
         metadata.setBoolean("nativePresetExact", enabled);
         metadata.setBoolean("nativeBuildSatisfied", false);
-        if (enabled) metadata.setInteger("hatchTier", tier);
+        metadata.setInteger("hatchTier", enabled ? tier : -1);
         return result.withMetadata(metadata);
     }
 
