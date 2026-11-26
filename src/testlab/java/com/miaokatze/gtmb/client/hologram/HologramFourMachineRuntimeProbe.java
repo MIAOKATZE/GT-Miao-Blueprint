@@ -150,6 +150,11 @@ final class HologramFourMachineRuntimeProbe {
         if (fixture.isClosed() || fixture.preparationBlocked()) return;
         if (!initialStageAttempted) {
             if (fullMatrix && !fixture.bankReady()) return;
+            if (!fixture.settleControllerReward()) return;
+            report.put(
+                "controllerRewardPreparation",
+                fixture.rewardPreparationReceipt()
+                    .toString());
             initialStageAttempted = true;
             fixture.stageController(current().spec, current().facing);
             List<ItemStack> hatches = new ArrayList<>();
