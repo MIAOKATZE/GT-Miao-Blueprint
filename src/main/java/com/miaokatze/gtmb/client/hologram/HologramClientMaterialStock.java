@@ -34,6 +34,12 @@ final class HologramClientMaterialStock {
         });
     }
 
+    static void reset() {
+        sourceChange = null;
+        for (var owner : pending.values()) owner.close();
+        pending.clear();
+    }
+
     private static final class SourceChange {
 
         final long id = sequence.incrementAndGet(), deadline = System.nanoTime() + 5_000_000_000L;
@@ -124,6 +130,9 @@ final class HologramClientMaterialStock {
         closed = true;
         pending.remove(request, this);
         inbox.set(null);
+        world = connection = player = null;
+        observed = null;
+        tool = null;
     }
 
     void tick(NBTTagCompound theory, HologramMaterials.Settings settings) {

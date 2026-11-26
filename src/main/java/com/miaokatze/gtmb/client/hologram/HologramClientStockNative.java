@@ -422,7 +422,7 @@ public final class HologramClientStockNative {
         }
 
         void cancelCurrent() {
-            if (active != null && active.key != null) stopOnce(active);
+            if (active != null) cancelHere(active.context, System.nanoTime());
         }
 
         boolean pending(Object view) {

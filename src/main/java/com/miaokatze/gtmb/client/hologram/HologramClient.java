@@ -1865,6 +1865,7 @@ public final class HologramClient {
             pauseUnsubmittedLocalAreaFinish();
         }
         if (localDraftWorld != world || localDraftConnection != connection) rememberLocalDocument(null);
+        HologramClientMaterialStock.reset();
         HologramClientProgress.clear();
         pendingPositionLock.clear();
         snapshotInbox.clear();

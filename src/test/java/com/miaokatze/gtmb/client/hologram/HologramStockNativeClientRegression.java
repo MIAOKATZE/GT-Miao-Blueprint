@@ -546,6 +546,40 @@ public final class HologramStockNativeClientRegression {
         SimpleAssert.that(
             !flow.pendingHere(context) && receipts.size() == 1 && exits[0] == 1,
             "stopped receipt retires the same task without reopening or reclosing a GUI");
+        int[] coldBegins = { 0 };
+        var preparing = new HologramClientStockNative.Flow(new HologramClientStockNative.Wire() {
+
+            public boolean probe(Confirmation value) {
+                return true;
+            }
+
+            public boolean begin(Confirmation value, boolean cold) {
+                coldBegins[0]++;
+                return true;
+            }
+
+            public boolean stop(Key key) {
+                throw new AssertionError("Unstarted work has no server stop key");
+            }
+        });
+        var coldOwner = new HologramClientStockNative.Owner(new Object(), () -> true, () -> true, text -> {}, () -> {});
+        var waiting = flowIntent(9);
+        SimpleAssert.that(preparing.submit(waiting, context, coldOwner, 0), "cold confirmation is pending capability");
+        preparing.cancelCurrent(); // Same entry as the actual footer Cancel button, before any BEGIN.
+        preparing.receive(
+            new Reply(
+                waiting.forGeneration(32)
+                    .key(),
+                Phase.CAPABLE,
+                0,
+                ""),
+            handler,
+            context,
+            1);
+        SimpleAssert.that(
+            !preparing.pendingHere(context) && coldBegins[0] == 0,
+            "cancelling preparation prevents a late capability reply from starting construction");
+
     }
 
     private static void detachedPlacementFlow() {
