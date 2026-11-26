@@ -1366,6 +1366,10 @@ final class HologramFourMachineRuntimeProbe {
                 click("control.84");
                 return false;
             }
+            if (screen.ui.config.sourceEnabled("materialContainers")) {
+                click("control.85");
+                return false;
+            }
             require(!screen.ui.config.sourceEnabled("materialContainers"), "Unreviewed container source enabled");
             require(
                 screen.ui.session.state().data.getInteger("materialPriority") == 0,
