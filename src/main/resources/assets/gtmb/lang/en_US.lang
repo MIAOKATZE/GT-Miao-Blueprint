@@ -1230,7 +1230,7 @@ gtmb.hologram.projector.native.reason.the_native_structure_tool_or_recovery_stat
 gtmb.hologram.projector.native.reason.the_native_target_has_no_payable_item_identity=The native target has no payable item identity.
 gtmb.hologram.projector.native.reason.the_native_world_or_configuration_could_not_be=The native world or configuration could not be verified; construction did not start.
 gtmb.hologram.projector.native.reason.the_projector_identity_is_not_synchronized_reopen_the=The projector identity is not synchronized. Reopen the structure.
-gtmb.hologram.projector.native.reason.the_selected_hatch_configuration_failed_the_controller_s=The selected hatch configuration failed the controller's native structure check.
+gtmb.hologram.projector.native.reason.the_selected_hatch_configuration_failed_the_controller_s=The hatch configuration failed the native structure check. Check channels and mandatory hatch tiers; allow lower tiers or use an exact custom mix.
 gtmb.hologram.projector.native.reason.the_selected_hotbar_slot_changed=The selected hotbar slot changed.
 gtmb.hologram.projector.native.reason.the_server_could_not_rebuild_the_native_target=The server could not rebuild the native target.
 gtmb.hologram.projector.native.reason.the_task_permit_changed=The task permit changed.
@@ -1811,3 +1811,9 @@ gtmb.hologram.projector.native.channel.main=Main signal (fallback for unset chan
 gtmb.hologram.projector.native.channel.off=Off
 gtmb.hologram.projector.native.channel.raw_integer=%1$s (raw integer)
 gtmb.hologram.projector.native.channel.restore_default=Restore default
+
+# Native projector interface
+gtmb.hologram.projector.native.preset.allow_lower_tiers=Allow lower tier hatches ✓
+gtmb.hologram.projector.native.preset.complete_target_note=Updates all replaceable casing positions in the complete target. Unconfigured optional positions use casings; mandatory hatches remain.
+gtmb.hologram.projector.native.preset.selected_tier_only=Use selected tier only
+gtmb.hologram.projector.native.preset.tier_policy_hint=If a required model does not exist at the selected tier, allow lower tiers or use an exact custom mix. Construction always checks materials against the projected model.

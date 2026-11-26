@@ -883,7 +883,8 @@ final class HologramUiConfiguration {
     void drawPreset(int mx, int my) {
         drawRect(157, 59, 405, 291, 0xff172f36);
         ui.canvas.text(
-            customPresets ? projectorOr("native.ui.hatch_presets_keep_manual_and_installed_hatches", "仓室预设 · 保留手选及实体仓室")
+            customPresets && !ui.session.state().data.getBoolean("localStandardController")
+                ? projectorOr("native.ui.hatch_presets_keep_manual_and_installed_hatches", "仓室预设 · 保留手选及实体仓室")
                 : projectorOr("native.ui.hatch_presets_optional_shortcuts", "仓室预设 · 可选快捷搭配"),
             165,
             65,
@@ -972,16 +973,20 @@ final class HologramUiConfiguration {
                 186,
                 231,
                 19,
-                presetDowngrade ? projectorOr("native.ui.allow_downgrade_on_shortage_452", "缺料时允许降级 ✓")
-                    : projectorOr("native.ui.keep_exact_tier_on_shortage_453", "缺料时严格保持等级"),
+                ui.session.state().data.getBoolean("localStandardController")
+                    ? HologramNativeUiText.presetTierPolicy(presetDowngrade)
+                    : presetDowngrade ? projectorOr("native.ui.allow_downgrade_on_shortage_452", "缺料时允许降级 ✓")
+                        : projectorOr("native.ui.keep_exact_tier_on_shortage_453", "缺料时严格保持等级"),
                 true,
                 mx,
                 my);
             ui.canvas.text(
-                presetTier < 0 ? projectorOr("native.ui.no_preset_selected_choose_a_tier_before", "未选择预设；先选择等级才可生成目标")
-                    : projectorOr(
-                        "native.ui.keep_installed_hatches_construction_does_not_require",
-                        "保留现场仓室；不选择预设也可确认构建"),
+                ui.session.state().data.getBoolean("localStandardController") ? HologramNativeUiText.presetTargetNote()
+                    : presetTier < 0
+                        ? projectorOr("native.ui.no_preset_selected_choose_a_tier_before", "未选择预设；先选择等级才可生成目标")
+                        : projectorOr(
+                            "native.ui.keep_installed_hatches_construction_does_not_require",
+                            "保留现场仓室；不选择预设也可确认构建"),
                 165,
                 213,
                 231,

@@ -1231,7 +1231,7 @@ gtmb.hologram.projector.native.reason.the_native_structure_tool_or_recovery_stat
 gtmb.hologram.projector.native.reason.the_native_target_has_no_payable_item_identity=原生目标没有可支付的物品身份。
 gtmb.hologram.projector.native.reason.the_native_world_or_configuration_could_not_be=原生现场或配置无法核对；未开始施工。
 gtmb.hologram.projector.native.reason.the_projector_identity_is_not_synchronized_reopen_the=投影仪身份未同步，请重新打开结构。
-gtmb.hologram.projector.native.reason.the_selected_hatch_configuration_failed_the_controller_s=所选仓室配置未通过控制器的原生结构检查。
+gtmb.hologram.projector.native.reason.the_selected_hatch_configuration_failed_the_controller_s=所选仓室配置未通过原生结构检查。请核对信道和必需仓室等级，可允许较低等级或使用自定义精确混搭。
 gtmb.hologram.projector.native.reason.the_selected_hotbar_slot_changed=手持栏已变化。
 gtmb.hologram.projector.native.reason.the_server_could_not_rebuild_the_native_target=服务器无法重建原生目标。
 gtmb.hologram.projector.native.reason.the_task_permit_changed=任务许可已变化。
@@ -1812,3 +1812,9 @@ gtmb.hologram.projector.native.channel.main=主信号（未设子信道时回退
 gtmb.hologram.projector.native.channel.off=关闭
 gtmb.hologram.projector.native.channel.raw_integer=%1$s（原始整数）
 gtmb.hologram.projector.native.channel.restore_default=恢复默认
+
+# Native projector interface
+gtmb.hologram.projector.native.preset.allow_lower_tiers=允许较低等级仓室 ✓
+gtmb.hologram.projector.native.preset.complete_target_note=更新完整结构中所有可替换外壳目标；未配置的可选位置使用机壳，声明必需仓室保留。
+gtmb.hologram.projector.native.preset.selected_tier_only=仅使用所选等级
+gtmb.hologram.projector.native.preset.tier_policy_hint=若必需型号没有所选等级，可允许较低等级，或使用自定义精确混搭。实际施工始终按投影中的型号核对材料。

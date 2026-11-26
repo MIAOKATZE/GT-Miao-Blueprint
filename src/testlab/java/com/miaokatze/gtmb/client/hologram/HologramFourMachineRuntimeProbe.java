@@ -471,10 +471,15 @@ final class HologramFourMachineRuntimeProbe {
                 next();
             }
             case 21 -> {
+                rejectFailedNativeTarget("MV preset replacement");
                 if (!targetReady("FORMED") || !screen.ui.session.state().data.getBoolean("presetActive")
                     || screen.ui.session.state().data.getInteger("hatchTier") != 2) return false;
+                require(
+                    screen.ui.session.state().data.getBoolean("hatchDowngrade"),
+                    "MV preset lost allowed downgrade");
                 if (aeRecoveryReplace() && !sources(false)) return false;
                 target = freeze();
+                requireMixedMvHatches(target);
                 require(
                     !targetTag(previous).equals(targetTag(target)),
                     "Main/channel/MV preset change did not change rendered target");
@@ -679,13 +684,20 @@ final class HologramFourMachineRuntimeProbe {
             }
             case 37 -> {
                 if (!present("control.106")) return false;
+                if (!allowPresetDowngrade()) return false;
                 click("control.106");
                 next();
             }
             case 38 -> {
+                rejectFailedNativeTarget("Reapplied MV preset");
                 if (!screen.ui.session.state().data.getBoolean("presetActive") || !targetReady("UNFORMED"))
                     return false;
+                require(
+                    screen.ui.session.state().data.getInteger("hatchTier") == 2
+                        && screen.ui.session.state().data.getBoolean("hatchDowngrade"),
+                    "Reapplied MV preset lost tier or allowed downgrade");
                 target = freeze();
+                requireMixedMvHatches(target);
                 long hatches = target.stream()
                     .filter(Target::hatch)
                     .count();
@@ -903,7 +915,7 @@ final class HologramFourMachineRuntimeProbe {
                 "Extruder fixture did not physically exercise both native A/C casing backgrounds");
     }
 
-    private Map<NBTTagCompound, Long> prepareDelta(List<Target> old, List<Target> next) {
+    private Map<NBTTagCompound, Long> prepareDelta(List<Target> old, List<Target> next) throws Exception {
         Map<String, Target> previous = new LinkedHashMap<>();
         for (Target cell : old) previous.put(cell.key(), cell);
         Map<NBTTagCompound, Long> result = new LinkedHashMap<>();
@@ -1586,12 +1598,46 @@ final class HologramFourMachineRuntimeProbe {
                 return false;
             case 8:
                 if (!present("control.106")) return false;
+                if (!allowPresetDowngrade()) return false;
                 click("control.106");
                 editPhase++;
                 return false;
             default:
                 return !screen.ui.shell.hasModalPanel();
         }
+    }
+
+    private boolean allowPresetDowngrade() throws Exception {
+        if (!screen.ui.config.nativePresetDowngrade()) {
+            click("control.105");
+            return false;
+        }
+        require(screen.ui.config.nativePresetDowngrade(), "Native preset downgrade toggle did not remain enabled");
+        record("mv-preset-ui-downgrade", "tier=2; actual native preset UI downgrade=true; normal control.106 follows");
+        return true;
+    }
+
+    private void rejectFailedNativeTarget(String operation) {
+        NBTTagCompound state = screen.ui.session.state().data;
+        String reason = state.getString("nativeTargetReason");
+        require(
+            state.getBoolean("capturePending") || state.getBoolean("nativeTargetReady") || reason.isEmpty(),
+            operation + " target rejected by native validation: " + reason);
+    }
+
+    private void requireMixedMvHatches(List<Target> targets) {
+        boolean maintenance = false;
+        for (Target cell : targets) if (cell.hatch()) {
+            int id = cell.item.getItemDamage();
+            int tier = ((MTEHatch) GregTechAPI.METATILEENTITIES[id]).mTier;
+            if (id == 90) {
+                require(tier == 1, "Native maintenance90 is not the reviewed fixed LV device");
+                maintenance = true;
+            } else require(
+                tier == 2 && (id == 42 || id == 52 || id == 62 || id == 72 || id == 82 || id == 92),
+                "Allowed downgrade selected a non-MV standard hatch instead of fixed LV maintenance: " + id);
+        }
+        require(maintenance, "MV mixed native target omitted required maintenance90");
     }
 
     private static Map<NBTTagCompound, Long> readCounts(NBTTagList rows) {

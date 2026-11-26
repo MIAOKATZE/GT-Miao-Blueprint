@@ -254,6 +254,24 @@ public final class HologramProjectorLocalizationRegression {
             "captured channel inheritance option is translated");
         capability.setString("label", "custom source label");
         SimpleAssert.eq(
+            "Allow lower tier hatches ✓",
+            HologramNativeUiText.presetTierPolicy(true),
+            "native preset relaxation describes model tiers rather than missing stock");
+        SimpleAssert.eq(
+            "Use selected tier only",
+            HologramNativeUiText.presetTierPolicy(false),
+            "native strict preset describes exact model tiers");
+        SimpleAssert.that(
+            HologramNativeUiText.presetTierPolicyHint()
+                .contains("projected model")
+                && HologramNativeUiText.presetTargetNote()
+                    .contains("Unconfigured optional positions use casings"),
+            "native preset hints explain projected material payment and complete optional casing defaults");
+        SimpleAssert.that(
+            HologramNativeUiText.reason("所选仓室配置未通过控制器的原生结构检查。")
+                .contains("Check channels and mandatory hatch tiers"),
+            "native structure-check refusal provides a generic actionable tier and channel hint");
+        SimpleAssert.eq(
             "custom source label",
             HologramNativeUiText.capabilityLabel(capability),
             "unknown machine-specific channel labels are preserved");
