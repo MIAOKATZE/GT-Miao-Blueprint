@@ -262,6 +262,10 @@ public final class HologramTutorialIssue95Probe {
             throw new IllegalStateException("Cannot publish tutorial diagnostic receipt", failure);
         }
         // The existing profile retains its own unchanged assertions and separate receipt.
-        HologramTestLabUiProfile.install();
+        boolean passed = "PASS".equals(outcome) && "PASS".equals(receipt.get("outcome"));
+        if (passed && HologramRawExportParityProbe.install(output)) return;
+        String combinedFailure = passed ? "Combined profile requires the RAW/export probe"
+            : "Issue95 playback failed: " + receipt.get("detail");
+        if (!HologramRenderParityProbe.completeCombined(output, combinedFailure)) HologramTestLabUiProfile.install();
     }
 }
