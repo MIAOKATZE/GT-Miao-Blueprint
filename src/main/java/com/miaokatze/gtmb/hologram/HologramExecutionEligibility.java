@@ -37,9 +37,13 @@ final class HologramExecutionEligibility {
             "mWorks",
             "mTexture",
             "texture",
+            "texturePage",
+            "textureIndex",
             "mStoredEnergy",
             "mStoredSteam",
             "gt.covers",
+            "Inventory",
+            HologramNativeConfiguration.TAG,
             HologramNetworkBindings.GROUP,
             HologramNetworkBindings.ROLE,
             HologramNetworkBindings.HINT));
@@ -137,6 +141,12 @@ final class HologramExecutionEligibility {
         boolean pipe = HologramBlockTransforms.isPipe(sample);
         if (tile || tag.hasKey("id") || tag.hasKey("mID")) HologramPresets
             .validateGtPayload(tag, sample.getItemDamage(), pipe ? "BaseMetaPipeEntity" : "BaseMetaTileEntity");
+        if (tile && project) HologramNativeConfiguration.project(tag, sample);
+        if (tag.hasKey(HologramNativeConfiguration.TAG)) {
+            if (!tile || pipe) throw new IOException("原生配置只能随 GT 机器状态放置");
+            HologramNativeConfiguration.validate(tag, sample);
+        }
+        HologramNativeConfiguration.validateHatchTexture(tag, sample);
         for (Object raw : new ArrayList<>(tag.func_150296_c())) {
             String key = (String) raw;
             if (project && (GT_CAPTURE_FIELDS.contains(key) || !GT_FIELDS.contains(key) && empty(tag.getTag(key)))) {
@@ -152,6 +162,13 @@ final class HologramExecutionEligibility {
                 }
             } else if (key.equals("gt.covers")) {
                 if (!tile || !tag.hasKey(key, 9)) throw new IOException("覆盖板只能随设备状态放置");
+            } else if (key.equals("Inventory")) {
+                if (!tile || !tag.hasKey(key, 9)) throw new IOException("GT 库存只能随设备状态恢复");
+                NBTTagList inventory = tag.getTagList(key, 10);
+                if (inventory.tagCount() > 512 || inventory.tagCount() != ((NBTTagList) tag.getTag(key)).tagCount())
+                    throw new IOException("GT 库存格式无效");
+                // The existing resource codec owns exact stacks/quantities; configuration copying grants no credit.
+                HologramBlueprintResources.plan(tag);
             } else if (key.equals("mConnections") || key.equals("mStrongRedstone")) {
                 if (!smallNumber(tag, key, -128, 255)) throw new IOException("GT 连接状态无效");
             } else if (key.equals("mInputDisabled") || key.equals("mOutputDisabled") || key.equals("mWorks")) {

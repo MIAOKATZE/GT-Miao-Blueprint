@@ -12,6 +12,7 @@ import java.util.UUID;
 
 import net.minecraft.block.Block;
 import net.minecraft.entity.item.EntityItemFrame;
+import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.init.Blocks;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
@@ -27,6 +28,7 @@ public final class HologramLocalAreaCapture implements AutoCloseable {
 
     private final Thread owner = Thread.currentThread();
     private final World world;
+    private final EntityPlayer player;
     private final int dimension;
     private final int minX, minY, minZ;
     private final HologramAreaBlockCursor cursor;
@@ -40,8 +42,14 @@ public final class HologramLocalAreaCapture implements AutoCloseable {
     private int shown;
 
     public HologramLocalAreaCapture(World world, int dimension, HologramAreaSelection selection) throws IOException {
+        this(world, dimension, selection, null);
+    }
+
+    public HologramLocalAreaCapture(World world, int dimension, HologramAreaSelection selection, EntityPlayer player)
+        throws IOException {
         if (world == null || !world.isRemote) throw new IllegalArgumentException("Client world required");
         this.world = world;
+        this.player = player;
         this.dimension = dimension;
         int[] bounds = selection.bounds();
         minX = bounds[0];
@@ -137,7 +145,7 @@ public final class HologramLocalAreaCapture implements AutoCloseable {
         if (block == Blocks.air) return;
         int meta = chunk.getBlockMetadata(x & 15, y, z & 15);
         TileEntity tile = world.getTileEntity(x, y, z);
-        writer.append(draft, block, meta, tile, x - minX, y - minY, z - minZ);
+        writer.append(draft, block, meta, tile, x - minX, y - minY, z - minZ, player);
     }
 
     private static boolean slice(int work, int budget, long deadline) {

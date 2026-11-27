@@ -69,6 +69,7 @@ public final class HologramProjectorLocalizationRegression {
             HologramPlacementConfirmation.localStructureReviewBlocker(new HologramState(data)),
             "native eligibility blocker uses English");
         nativeWorkflowLabels();
+        constructionDiagnostics();
         expect("Construction complete. 12 cells placed.", "stock.done_placement", "Construction", 12);
         expect(
             "The selected material sources do not have enough stock. Placement did not start.",
@@ -275,6 +276,45 @@ public final class HologramProjectorLocalizationRegression {
             "custom source label",
             HologramNativeUiText.capabilityLabel(capability),
             "unknown machine-specific channel labels are preserved");
+    }
+
+    private static void constructionDiagnostics() {
+        SimpleAssert.eq(
+            "Claim or mod protection cancelled placement. This cell was restored.",
+            HologramNativeUiText.reason("领地或模组保护取消放置，本格已还原。"),
+            "the shared native engine status is readable in English");
+        SimpleAssert.eq(
+            "The placed block identity, facing or configuration does not match the target.",
+            HologramNativeUiText.reason("原生放置后的身份、朝向或配置与目标不符。"),
+            "native target validation diagnostics retain their specific meaning");
+        SimpleAssert.eq(
+            "Native construction returned an invalid result: -3",
+            HologramNativeUiText.reason("LOCAL_NATIVE_PREVIEW_RESULT:-3"),
+            "native runner diagnostics preserve the actual return code");
+        SimpleAssert.eq(
+            "The native target has no payable item identity at Offset[x=3, y=-4, z=5]",
+            HologramNativeUiText.reason("原生目标没有可支付的物品身份：Offset[x=3, y=-4, z=5]"),
+            "unpayable material diagnostics preserve the exact coordinate");
+        SimpleAssert.eq(
+            "The server lacks registered construction material: fixture:block / fixture:item (no item)",
+            HologramNativeUiText.reason("服务端缺少注册的施工材料：fixture:block / fixture:item（无物品）"),
+            "missing material diagnostics translate the explanation and keep registry identities");
+        SimpleAssert.eq(
+            "Native blueprint construction complete.",
+            HologramNativeUiText.reason("原生蓝图施工完成"),
+            "saved native blueprint terminal status has an English presentation");
+        SimpleAssert.that(
+            HologramNativeUiText.reason("施工结果待核定，原世界与付款凭据已保留；请联系管理员 /gtmb recovery")
+                .endsWith("/gtmb recovery."),
+            "recovery diagnostics preserve the usable recovery command");
+        for (String raw : new String[] { "LOCAL_NATIVE_PREVIEW_UNSTABLE", "LOCAL_NATIVE_PREVIEW_INCOMPLETE",
+            "LOCAL_NATIVE_PREVIEW_CELL_LIMIT", "LOCAL_NATIVE_PREVIEW_EMPTY", "施工受阻或缺料，已停止", "所选仓室未被该位置的原生建造流程接受。" }) {
+            String translated = HologramNativeUiText.reason(raw);
+            SimpleAssert.that(
+                !translated.equals(raw) && translated.codePoints()
+                    .noneMatch(c -> Character.UnicodeScript.of(c) == Character.UnicodeScript.HAN),
+                "native generation and terminal reasons are translated: " + raw);
+        }
     }
 
     private static void expect(String expected, String key, Object... args) {

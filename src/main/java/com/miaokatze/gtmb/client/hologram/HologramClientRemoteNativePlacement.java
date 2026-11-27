@@ -78,7 +78,8 @@ public final class HologramClientRemoteNativePlacement {
         var receipt = source.source().nativeReceipt;
         req.sha = receipt.physicalHash;
         Task task = new Task(owner, req, client.getNetHandler(), client.theWorld);
-        task.ticket = HologramBackgroundTasks.beginOwnedPlacement(req.id, "原生蓝图施工", task::cancel);
+        task.ticket = HologramBackgroundTasks
+            .beginOwnedPlacement(req.id, HologramNativeUiText.reason("原生蓝图施工"), task::cancel);
         if (task.ticket == null) return false;
         HologramPlacementTiming.clientRequest("blueprint", req.id);
         active = task;
@@ -244,7 +245,7 @@ public final class HologramClientRemoteNativePlacement {
                             m.placed,
                             m.satisfied,
                             m.total),
-                        m.message);
+                        HologramNativeUiText.reason(m.message));
                     if (accepted) HologramLocalPlacement.INSTANCE.clear();
                     else HologramLocalPlacement.INSTANCE.retry();
                     retire();
@@ -261,7 +262,14 @@ public final class HologramClientRemoteNativePlacement {
 
         void finish(Outcome outcome, int placed, int satisfied, int total, String why) {
             if (active != this || retired) return;
-            HologramBackgroundTasks.finishOwnedPlacement(ticket, seen + 1, outcome, placed, satisfied, total, why);
+            HologramBackgroundTasks.finishOwnedPlacement(
+                ticket,
+                seen + 1,
+                outcome,
+                placed,
+                satisfied,
+                total,
+                HologramNativeUiText.reason(why));
             HologramLocalPlacement.INSTANCE.retry();
             retire();
         }

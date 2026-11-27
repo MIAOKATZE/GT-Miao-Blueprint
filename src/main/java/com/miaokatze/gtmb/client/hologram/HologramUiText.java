@@ -44,6 +44,8 @@ final class HologramUiText {
     }
 
     static String nbtMeaning(String key) {
+        if ("gtmbNativeConfiguration".equals(key))
+            return projectorOr("native.configuration.description", "原生可复制的机器设置，包括支持的模式、并行和数据复制配置；不授权复制物品、流体或网络身份。");
         String lower = key.toLowerCase(Locale.ROOT);
         if ("Aspect".equals(key)) return "源质罐中的源质类型；与 Amount 数量一起构成实际源质资源。";
         if ("Amount".equals(key)) return "资源数量字段；源质罐中表示源质单位数，流体记录中表示流体数量，具体以所属设备格式为准。";

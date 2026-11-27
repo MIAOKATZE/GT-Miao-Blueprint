@@ -77,216 +77,6 @@ final class HologramWorldTransactions {
         return operate(s, c, index, scope);
     }
 
-    /** Fresh native projection material only. No saved-blueprint payload or declaration adapter is consulted. */
-    static boolean placeNativeProjection(HologramSession s, HologramNativeTargetPlan.Cell target,
-        BooleanSupplier authority) {
-        World world = s.player.worldObj;
-        int x = s.x + target.dx(), y = s.y + target.dy(), z = s.z + target.dz();
-        var cell = new HologramCapture.Cell(null, x, y, z);
-        ItemStack material = target.material() == null ? null
-            : target.material()
-                .copy();
-        if (material == null || !(material.getItem() instanceof ItemBlock)
-            || !authority.getAsBoolean()
-            || !world.blockExists(x, y, z)
-            || world.getBlock(x, y, z) != Blocks.air
-            || world.getTileEntity(x, y, z) != null
-            || !world.canMineBlock(s.player, x, y, z)
-            || !s.player.canPlayerEdit(x, y, z, 1, s.player.getHeldItem())) {
-            s.status = "原生施工目标、权限或空位已变化。";
-            return false;
-        }
-        material.stackSize = 1;
-        var inventory = HologramMaterialAccess.copyInventory(s.player, s.slot);
-        var context = s.materialContext;
-        var transaction = context.begin();
-        transaction.scopedJournal(
-            HologramConstructionJournal.begin(s.player, x, y, z, Blocks.air, 0, null, inventory, s.slot));
-        net.minecraft.tileentity.TileEntity candidate = null;
-        boolean attempted = false;
-        ItemStack[] paidInventory = null;
-        try {
-            if (!s.player.capabilities.isCreativeMode && !transaction.takeOne(material, false))
-                throw new java.io.IOException("所选材料来源不足，本格未放置。");
-            paidInventory = HologramMaterialAccess.copyInventory(s.player, s.slot);
-            if (!authority.getAsBoolean() || world.getBlock(x, y, z) != Blocks.air
-                || world.getTileEntity(x, y, z) != null) throw new java.io.IOException("付款期间原生施工条件已变化。");
-            var escrow = new HologramMaterialSources.ReservedSource(material);
-            transaction.beforeWorldMutation();
-            attempted = true;
-            PlaceResult result;
-            try (var events = HologramNativePlacementEvents.open(world, s.player, x, y, z)) {
-                result = StructureUtility.survivalPlaceBlock(
-                    material,
-                    ItemStackPredicate.NBTMode.EXACT,
-                    null,
-                    false,
-                    world,
-                    x,
-                    y,
-                    z,
-                    escrow,
-                    s.player,
-                    s.player::addChatMessage);
-                candidate = world.getTileEntity(x, y, z);
-                if (events.cancelled() || !escrow.used || result != PlaceResult.ACCEPT)
-                    throw new java.io.IOException("原生物品放置或保护事件拒绝了本格。");
-            }
-            if (!nativeProjectionIdentity(world, x, y, z, target))
-                throw new java.io.IOException("原生物品初始化的方块或设备身份与目标不符。");
-            applyNativeProjectionState(world, x, y, z, target);
-            var snapshot = new BlockSnapshot(world, x, y, z, Blocks.air, 0, null);
-            if (MinecraftForge.EVENT_BUS.post(new BlockEvent.PlaceEvent(snapshot, Blocks.air, s.player))
-                || !authority.getAsBoolean()
-                || world.getTileEntity(x, y, z) != candidate
-                || !nativeProjectionStateMatches(world, x, y, z, target)
-                || !nativeProjectionInventory(s, paidInventory)) throw new java.io.IOException("原生施工权限、付款库存或目标在提交前变化。");
-            transaction.commit();
-            return true;
-        } catch (java.io.IOException | RuntimeException | LinkageError failure) {
-            if (transaction.commitStarted() || transaction.uncertain()
-                || s.player.worldObj != world
-                || paidInventory != null && !nativeProjectionInventory(s, paidInventory)) {
-                HologramConstructionJournal.suspend(s, transaction, failure);
-                return false;
-            }
-            boolean empty = world.getBlock(x, y, z) == Blocks.air && world.getTileEntity(x, y, z) == null;
-            if (attempted && !empty) {
-                if (!nativeProjectionIdentity(world, x, y, z, target) || world.getTileEntity(x, y, z) != candidate) {
-                    HologramConstructionJournal.suspend(s, transaction, failure);
-                    return false;
-                }
-                if (!restoreCell(s, transaction, () -> {
-                    if (!world.setBlockToAir(x, y, z) || world.getTileEntity(x, y, z) != null)
-                        throw new IllegalStateException("native candidate rollback failed");
-                })) return false;
-            }
-            rollbackMaterials(s, transaction, inventory);
-            s.status = failure.getMessage() == null ? "原生放置未提交。" : failure.getMessage();
-            return false;
-        }
-    }
-
-    static boolean nativeProjectionIdentity(World world, int x, int y, int z, HologramNativeTargetPlan.Cell target) {
-        if (world.getBlock(x, y, z) != target.block() || world.getBlockMetadata(x, y, z) != target.metadata())
-            return false;
-        ItemStack material = target.material();
-        if (material == null || !(material.getItem() instanceof ItemMachines)) return true;
-        var prototype = ItemMachines.getMetaTileEntity(material);
-        return prototype != null && world.getTileEntity(x, y, z) instanceof IGregTechTileEntity gt
-            && gt.getMetaTileID() == material.getItemDamage()
-            && gt.getMetaTileEntity() != null
-            && gt.getMetaTileEntity()
-                .getClass() == prototype.getClass()
-            && gt.getMetaTileEntity()
-                .getBaseMetaTileEntity() == gt;
-    }
-
-    private static boolean nativeProjectionInventory(HologramSession session, ItemStack[] expected) {
-        var actual = session.player.inventory.mainInventory;
-        if (expected == null || expected.length != actual.length) return false;
-        for (int i = 0; i < actual.length; i++)
-            if (i != session.slot && !ItemStack.areItemStacksEqual(expected[i], actual[i])) return false;
-        return true;
-    }
-
-    static boolean nativeProjectionStateMatches(World world, int x, int y, int z,
-        HologramNativeTargetPlan.Cell target) {
-        if (!nativeProjectionIdentity(world, x, y, z, target)) return false;
-        if (!(world.getTileEntity(x, y, z) instanceof IGregTechTileEntity gt)) return true;
-        if (target.facing() >= 0 && gt.getFrontFacing()
-            .ordinal() != target.facing()) return false;
-        var expected = target.tileData();
-        if (gt.getMetaTileEntity() instanceof gregtech.api.metatileentity.implementations.MTEHatch hatch
-            && expected != null
-            && expected.hasKey("texturePage", 3)
-            && expected.hasKey("textureIndex", 3)) {
-            var state = new NBTTagCompound();
-            hatch.saveNBTData(state);
-            return state.getInteger("texturePage") == expected.getInteger("texturePage")
-                && state.getInteger("textureIndex") == expected.getInteger("textureIndex");
-        }
-        return true;
-    }
-
-    static boolean synchronizeNativeProjection(HologramSession s, HologramNativeTargetPlan.Cell target,
-        BooleanSupplier authority) {
-        World world = s.player.worldObj;
-        int x = s.x + target.dx(), y = s.y + target.dy(), z = s.z + target.dz();
-        TileEntity original = world.getTileEntity(x, y, z);
-        if (!(original instanceof IGregTechTileEntity) || !authority.getAsBoolean()
-            || !nativeProjectionIdentity(world, x, y, z, target)
-            || !world.canMineBlock(s.player, x, y, z)
-            || !s.player.canPlayerEdit(x, y, z, 1, s.player.getHeldItem())
-            || MinecraftForge.EVENT_BUS
-                .post(new BlockEvent.BreakEvent(x, y, z, world, target.block(), target.metadata(), s.player))
-            || !authority.getAsBoolean()
-            || world.getTileEntity(x, y, z) != original) return false;
-        var old = new NBTTagCompound();
-        original.writeToNBT(old);
-        var transaction = s.materialContext.begin();
-        transaction.scopedJournal(
-            HologramConstructionJournal.begin(
-                s.player,
-                x,
-                y,
-                z,
-                target.block(),
-                target.metadata(),
-                old,
-                HologramMaterialAccess.copyInventory(s.player, s.slot),
-                s.slot));
-        try {
-            transaction.beforeWorldMutation();
-            applyNativeProjectionState(world, x, y, z, target);
-            if (!authority.getAsBoolean() || world.getTileEntity(x, y, z) != original
-                || !nativeProjectionStateMatches(world, x, y, z, target))
-                throw new java.io.IOException("设备原位同步后身份或施工权限已变化。");
-            transaction.commit();
-            return true;
-        } catch (java.io.IOException | RuntimeException | LinkageError failure) {
-            HologramConstructionJournal.suspend(s, transaction, failure);
-            return false;
-        }
-    }
-
-    /** Only native placement-authored orientation and GT casing appearance are synchronized, never asset NBT. */
-    static void applyNativeProjectionState(World world, int x, int y, int z, HologramNativeTargetPlan.Cell target)
-        throws java.io.IOException {
-        TileEntity tile = world.getTileEntity(x, y, z);
-        if (tile instanceof IGregTechTileEntity gt) {
-            if (target.facing() >= 0 && gt.getFrontFacing()
-                .ordinal() != target.facing()) {
-                var direction = ForgeDirection.getOrientation(target.facing());
-                if (gt.getMetaTileEntity() == null || !gt.getMetaTileEntity()
-                    .isFacingValid(direction)) throw new java.io.IOException("原生设备不接受目标朝向。");
-                gt.setFrontFacing(direction);
-                if (gt.getFrontFacing() != direction) throw new java.io.IOException("原生设备未接受目标朝向。");
-            }
-            var expected = target.tileData();
-            if (gt.getMetaTileEntity() instanceof gregtech.api.metatileentity.implementations.MTEHatch hatch
-                && expected != null
-                && expected.hasKey("texturePage", 3)
-                && expected.hasKey("textureIndex", 3))
-                hatch.updateTexture((expected.getInteger("texturePage") << 7) | expected.getInteger("textureIndex"));
-            tile.markDirty();
-            gt.issueTileUpdate();
-            world.markBlockForUpdate(x, y, z);
-        }
-    }
-
-    /** Saved native state uses the same resource, Forge, ownership and recovery logic as reviewed legacy plans. */
-    static boolean operateSavedNative(HologramSession s, HologramCapture.Cell c, int index, boolean stateful,
-        BooleanSupplier authority) {
-        PlacementScope scope = new PlacementScope(s, c, Objects.requireNonNull(authority), null);
-        scope.selectedSources = true;
-        scope.allowVoucher = s.jobVoucherRequested;
-        scope.savedNative = true;
-        scope.stateful = stateful;
-        if (c.savedPlacementTarget == null) return scopedRejected(s, c);
-        return operate(s, c, index, scope);
-    }
-
     private static final class PlacementScope {
 
         final BooleanSupplier authority, livePrecommit;
@@ -1564,24 +1354,48 @@ final class HologramWorldTransactions {
                 retainScopedJournal(s, transaction, scope, "scoped-unpaid-receipt-not-clearable");
             return;
         }
+        rollbackMaterialState(s, transaction, inventory, null, null);
+    }
+
+    static boolean rollbackNativeMaterials(HologramSession s, HologramMaterials.Transaction transaction,
+        ItemStack[] inventory, BooleanSupplier binding, World original) {
+        return rollbackMaterialState(s, transaction, inventory, binding, original);
+    }
+
+    private static boolean rollbackBinding(HologramSession s, HologramMaterials.Transaction transaction,
+        BooleanSupplier binding, World original) {
+        if (binding == null || binding.getAsBoolean()) return true;
+        HologramConstructionJournal
+            .retainScopedUncertainty(s.player, transaction.journalReceipt(), original, "native-refund-owner-changed");
+        s.job = 4;
+        s.stopTick = true;
+        s.status = "施工退款上下文已变化，原凭据已保留；请联系管理员 /gtmb recovery";
+        return false;
+    }
+
+    private static boolean rollbackMaterialState(HologramSession s, HologramMaterials.Transaction transaction,
+        ItemStack[] inventory, BooleanSupplier binding, World original) {
+        if (!rollbackBinding(s, transaction, binding, original)) return false;
         if (!transaction.hasJournal()) {
             try {
                 transaction.rollbackExternal();
             } finally {
-                HologramMaterialAccess.restoreInventory(s, inventory);
-                HologramMaterialAccess.materialSource(s)
-                    .afterInventoryRestore();
+                if (rollbackBinding(s, transaction, binding, original)) {
+                    HologramMaterialAccess.restoreInventory(s, inventory);
+                    HologramMaterialAccess.materialSource(s)
+                        .afterInventoryRestore();
+                }
             }
-            return;
+            return true;
         }
         if (transaction.uncertain()) {
             HologramConstructionJournal
                 .suspend(s, transaction, new IllegalStateException("Native extraction outcome unknown"));
-            return;
+            return false;
         }
         transaction.checkpoint();
-        NBTTagCompound journal = HologramConstructionJournal.owner(s.player)
-            .getCompoundTag(HologramConstructionJournal.KEY);
+        if (!rollbackBinding(s, transaction, binding, original)) return false;
+        NBTTagCompound journal = transaction.journalReceipt();
         journal.setTag(
             "settlementPayment",
             journal.getCompoundTag("payment")
@@ -1590,12 +1404,17 @@ final class HologramWorldTransactions {
         if (journal.getBoolean("durable")) HologramConstructionJournal.persist(s.player, journal);
         try {
             transaction.rollbackExternal();
+            if (!rollbackBinding(s, transaction, binding, original)) return false;
             HologramMaterialAccess.restoreInventory(s, inventory);
             HologramMaterialAccess.materialSource(s)
                 .afterInventoryRestore();
+            if (!rollbackBinding(s, transaction, binding, original)) return false;
             HologramConstructionJournal.clear(s.player);
+            return true;
         } catch (RuntimeException | LinkageError failure) {
-            HologramConstructionJournal.suspend(s, transaction, failure);
+            if (rollbackBinding(s, transaction, binding, original))
+                HologramConstructionJournal.suspend(s, transaction, failure);
+            return false;
         }
     }
 }

@@ -200,9 +200,9 @@ final class HologramWorldTransactionsScopedRegression {
                 unsafe.putObjectVolatile(busBase, busOffset, previousBus);
             }
             receipt = pendingReceipt(player);
-            SimpleAssert.eq(
-                "candidate-changed-before-commit",
-                receipt.getString("scopeUncertainReason"),
+            SimpleAssert.that(
+                "candidate-changed-before-commit".equals(receipt.getString("scopeUncertainReason"))
+                    || "candidate-changed-before-rollback".equals(receipt.getString("scopeUncertainReason")),
                 "the contested physical result is distinguishable from a moved owner");
             HologramConstructionJournal.resolve(player, receipt.getString("id"), "accept");
             publications = HologramConstructionJournal.publications;

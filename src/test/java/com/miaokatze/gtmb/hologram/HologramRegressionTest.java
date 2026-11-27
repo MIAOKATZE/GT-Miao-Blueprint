@@ -91,6 +91,13 @@ public final class HologramRegressionTest {
             "native_structure_projection_reads_hatch_chain_without_callbacks",
             HologramProjectionChainRegression::run);
         cases.put("native_constructable_provider_falls_through", HologramStructureDiscoveryRegression::run);
+        cases.put("native_gt_configuration_and_retained_assets", () -> {
+            try {
+                HologramNativeConfigurationRegression.run();
+            } catch (Exception failure) {
+                throw new IllegalStateException(failure);
+            }
+        });
         cases.put(
             "native_structure_preview_converges_and_preserves_latest_elements",
             HologramStructureDiscoveryRegression::runNativePreview);

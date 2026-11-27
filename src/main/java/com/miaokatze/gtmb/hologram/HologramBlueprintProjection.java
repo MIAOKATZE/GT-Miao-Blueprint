@@ -136,6 +136,7 @@ final class HologramBlueprintProjection {
                 s.player.worldObj.getBlock(cell.x, cell.y, cell.z),
                 s.player.worldObj.getBlockMetadata(cell.x, cell.y, cell.z)))) {
                 NBTTagCompound data = HologramNativeCapture.capture(actual);
+                HologramNativeConfiguration.capture(actual, s.player, data);
                 saved.tileNbt = HologramAeBlueprint.NativeAdapter.recognizes(cell.block, data)
                     ? HologramBlueprintNbt.encodeCanonical(cell.block, data)
                     : HologramBlueprintNbt.encodeCaptured(cell.block, data);

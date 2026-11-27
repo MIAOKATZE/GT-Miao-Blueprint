@@ -29,13 +29,13 @@ final class HologramNativePreviewItems implements IItemSource {
     private final NBTTagCompound nativeConfig;
     private final java.util.Set<String> mandatory;
     private final java.util.function.Supplier<Map<Integer, Integer>> installed;
-    private final Map<String, ItemStack> supplied = new java.util.LinkedHashMap<>();
-    private final Map<String, ItemStack> approved = new java.util.LinkedHashMap<>();
+    private ItemStack approved;
     private final Map<String, Integer> pinned = new java.util.LinkedHashMap<>();
     private final Map<String, Integer> pinnedFacings = new java.util.LinkedHashMap<>();
     private final Map<Integer, Integer> profile = new java.util.LinkedHashMap<>();
     private final Map<String, Integer> mandatoryModels = new java.util.LinkedHashMap<>();
     private String position = "";
+    private HologramNativePreviewWorld world;
 
     HologramNativePreviewItems() {
         this(null, Collections.emptySet(), Collections::emptyMap);
@@ -75,13 +75,16 @@ final class HologramNativePreviewItems implements IItemSource {
         }
     }
 
-    void position(String value) {
-        position = value;
+    void bind(HologramNativePreviewWorld world) {
+        this.world = world;
     }
 
-    ItemStack materialAt(String value) {
-        ItemStack stack = supplied.get(value);
-        return stack == null ? null : stack.copy();
+    private void selected(ItemStack stack, boolean simulate) {
+        if (world != null) world.materialSelected(stack, simulate);
+    }
+
+    void position(String value) {
+        position = value;
     }
 
     @Override
@@ -91,8 +94,8 @@ final class HologramNativePreviewItems implements IItemSource {
             for (ItemStack stack : catalog()) {
                 ItemStack sample = match(predicate, stack);
                 if (sample != null && nativeAllows(sample)) {
-                    approved.put(position, sample.copy());
-                    if (!simulate) supplied.put(position, sample.copy());
+                    selected(sample, simulate);
+                    approved = simulate ? sample.copy() : null;
                     return Collections.singletonMap(sample, count);
                 }
             }
@@ -100,12 +103,16 @@ final class HologramNativePreviewItems implements IItemSource {
         }
         for (ItemStack stack : preferred) {
             ItemStack sample = match(predicate, stack);
-            if (sample != null) return Collections.singletonMap(sample, Integer.MAX_VALUE);
+            if (sample != null) {
+                selected(sample, simulate);
+                return Collections.singletonMap(sample, Integer.MAX_VALUE);
+            }
         }
         for (ItemStack stack : catalog()) {
             ItemStack sample = match(predicate, stack);
             if (sample == null) continue;
             preferred.add(stack);
+            selected(sample, simulate);
             return Collections.singletonMap(sample, Integer.MAX_VALUE);
         }
         return Collections.emptyMap();
@@ -114,12 +121,10 @@ final class HologramNativePreviewItems implements IItemSource {
     @Override
     public boolean takeOne(ItemStack stack, boolean simulate) {
         boolean accepted = stack != null && stack.getItem() != null
-            && (nativeConfig == null
-                || !simulate && approved.containsKey(position)
-                    && ItemStack.areItemStacksEqual(approved.get(position), stack)
+            && (nativeConfig == null || !simulate && approved != null && ItemStack.areItemStacksEqual(approved, stack)
                 || nativeAllows(stack));
-        if (accepted && nativeConfig != null && simulate) approved.put(position, stack.copy());
-        if (accepted && nativeConfig != null && !simulate) supplied.put(position, stack.copy());
+        if (accepted) selected(stack, simulate);
+        if (accepted && nativeConfig != null) approved = simulate ? stack.copy() : null;
         return accepted;
     }
 
@@ -138,7 +143,6 @@ final class HologramNativePreviewItems implements IItemSource {
                 readRegistry(catalog, nativeConfig != null);
             }
             if (nativeConfig != null) {
-                catalog.removeIf(stack -> stack.hasTagCompound());
                 catalog.sort(java.util.Comparator.comparingInt((ItemStack stack) -> {
                     int tier = HologramCellPolicy.hatchTier(stack);
                     return nativeConfig.getBoolean("presetActive") && tier != Integer.MAX_VALUE ? -tier : tier;

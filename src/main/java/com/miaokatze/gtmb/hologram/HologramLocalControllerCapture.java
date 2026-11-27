@@ -123,7 +123,10 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
         controllerMeta = controllerBlock == Blocks.air ? 0 : world.getBlockMetadata(x, y, z);
         controllerId = tile instanceof IGregTechTileEntity gt ? gt.getMetaTileID() : -1;
         nativeWorkflow = !alreadyDetached && controllerId >= 0
-            && liveContext instanceof com.gtnewhorizon.structurelib.alignment.constructable.ISurvivalConstructable;
+            && HologramStructureDiscovery.constructable(
+                tile,
+                liveContext,
+                side) instanceof com.gtnewhorizon.structurelib.alignment.constructable.ISurvivalConstructable;
         this.trigger = nativeWorkflow
             ? HologramNativeTargetPlan
                 .canonicalTrigger(this.settings.getInteger("main"), this.settings.getCompoundTag("channels"))
@@ -1257,7 +1260,6 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
     }
 
     private int facingMask(HologramCapture.Cell cell, ItemStack sample) {
-        if (cell.element == null) return 0;
         if (nativeTarget != null) {
             var target = nativeTargetCell(
                 cell.x - detachedTile.xCoord,
@@ -1267,6 +1269,7 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
                 return 1 << target.facing();
             return 0; // A different model gets its facing from the next complete native replay.
         }
+        if (cell.element == null) return 0;
         Map<HologramBlueprintResources.ExactKey, Integer> masks = facingMasks
             .computeIfAbsent(cell.element, ignored -> new HashMap<>());
         Integer present = masks.get(HologramBlueprintResources.ExactKey.borrowed(sample));

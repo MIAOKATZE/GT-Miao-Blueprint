@@ -4,10 +4,8 @@
 package com.miaokatze.gtmb.hologram;
 
 import java.io.IOException;
-import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -16,24 +14,58 @@ import java.util.function.Supplier;
 
 import net.minecraft.item.ItemStack;
 
-import com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor;
 import com.gtnewhorizon.structurelib.structure.IStructureElement;
-import com.gtnewhorizon.structurelib.structure.IStructureElementChain;
-import com.gtnewhorizon.structurelib.structure.StructureUtility;
 
 /** Additional manual chooser offers, following the native browser's unfilled-controller item query. */
 final class HologramNativeHatchChooser {
 
-    private static final int MAX_OPTIONS = 128, MAX_DECLARATIONS = 128, MAX_CATALOG_ROWS = 65_536;
-    private static final int MAX_QUERIES = 64, MAX_SKIPPED = 256;
+    private static final int MAX_OPTIONS = 128, MAX_CATALOG_ROWS = 65_536;
     private final Supplier<List<ItemStack>> catalog;
     private final QueryFactory factory;
-    private final Map<IStructureElement<?>, List<ItemStack>> offers = new IdentityHashMap<>();
-    private final Map<IStructureElement<?>, Boolean> skipped = new IdentityHashMap<>();
-    private ItemStack previousTrigger;
     private Query query;
     private boolean queryUnavailable;
-    private int queries;
+    private final Map<QueryKey, List<ItemStack>> cached = new LinkedHashMap<>();
+
+    private static final class QueryKey {
+
+        final IStructureElement<?> element;
+        final int x, y, z, count;
+        final HologramBlueprintResources.ExactKey signal;
+        final long policy = HologramHatchPolicy.automaticGeneration();
+        final long adapters = HologramDeclarationAdapters.generation();
+
+        QueryKey(IStructureElement<?> element, int x, int y, int z, ItemStack trigger) {
+            this.element = element;
+            this.x = x;
+            this.y = y;
+            this.z = z;
+            count = trigger.stackSize;
+            signal = HologramValues.stackKey(trigger);
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            return other instanceof QueryKey key && element == key.element
+                && x == key.x
+                && y == key.y
+                && z == key.z
+                && count == key.count
+                && signal.equals(key.signal)
+                && policy == key.policy
+                && adapters == key.adapters;
+        }
+
+        @Override
+        public int hashCode() {
+            return java.util.Objects.hash(System.identityHashCode(element), x, y, z, count, signal, policy, adapters);
+        }
+    }
+
+    private static List<ItemStack> copies(List<ItemStack> values) {
+        List<ItemStack> result = new ArrayList<>(values.size());
+        for (ItemStack stack : values) result.add(stack.copy());
+        return result;
+    }
 
     HologramNativeHatchChooser(Supplier<List<ItemStack>> catalog, QueryFactory factory) {
         this.catalog = catalog;
@@ -41,78 +73,21 @@ final class HologramNativeHatchChooser {
     }
 
     List<ItemStack> offers(IStructureElement<?> root, int x, int y, int z, ItemStack trigger) {
-        if (queryUnavailable) return Collections.emptyList();
-        if (previousTrigger == null || !ItemStack.areItemStacksEqual(previousTrigger, trigger)) {
-            previousTrigger = trigger.copy();
-            offers.clear();
-            skipped.clear();
-        }
-        List<ItemStack> memo = offers.get(root);
-        if (memo != null) return memo;
-        if (queries >= MAX_QUERIES || skipped.containsKey(root)) return Collections.emptyList();
-
-        // One chooser is scoped to one captured geometry/trigger. Only plain atLeast queries are cached:
-        // their builder callback consumes controller counts and the item, not coordinates or the passed world.
-        int before = queries;
+        if (queryUnavailable || root == null || trigger == null) return Collections.emptyList();
+        QueryKey key = new QueryKey(root, x, y, z, trigger);
+        List<ItemStack> previous = cached.get(key);
+        if (previous != null) return copies(previous);
+        // The public query owns contextual/channel/chain semantics. A reviewed factory name is
+        // supplementary role evidence, never permission to ask an ordinary native element.
         Map<HologramBlueprintResources.ExactKey, ItemStack> result = new LinkedHashMap<>();
-        collect(root, x, y, z, trigger, 0, new IdentityHashMap<>(), new int[] { MAX_DECLARATIONS }, result);
-        List<ItemStack> options = result.isEmpty() ? Collections.emptyList() : new ArrayList<>(result.values());
-        if (queries > before) offers.put(root, options);
-        else if (skipped.size() < MAX_SKIPPED) skipped.put(root, Boolean.TRUE);
-        return options;
-    }
-
-    private void collect(IStructureElement<?> element, int x, int y, int z, ItemStack trigger, int depth,
-        IdentityHashMap<IStructureElement<?>, Boolean> path, int[] remaining,
-        Map<HologramBlueprintResources.ExactKey, ItemStack> result) {
-        if (element == null || depth > 8
-            || remaining[0]-- <= 0
-            || result.size() >= MAX_OPTIONS
-            || queries >= MAX_QUERIES
-            || path.put(element, Boolean.TRUE) != null) return;
         try {
-            if (HologramDeclarationAdapters.declaration(element) != null) return;
-            if (HologramHatchPolicy.nativeBrowseAtLeast(element)) {
-                read(element, x, y, z, trigger, result);
-            } else if (element instanceof IStructureElementChain<?>chain) {
-                IStructureElement<?>[] children = HologramDeclarationWrappers.nativeChainChildren(chain);
-                if (children != null && children.length <= 64) for (IStructureElement<?> child : children)
-                    collect(child, x, y, z, trigger, depth + 1, path, remaining, result);
-            } else {
-                Method method = HologramDeclarationWrappers.factory(element.getClass());
-                if (method == null || method.getDeclaringClass() != StructureUtility.class) return;
-                switch (method.getName()) {
-                    case "withChannel" -> {
-                        String name = HologramDeclarationWrappers.channel(element);
-                        if (name != null) collect(
-                            HologramDeclarationWrappers.nativeBacking(element),
-                            x,
-                            y,
-                            z,
-                            ChannelDataAccessor.withChannel(trigger, name),
-                            depth + 1,
-                            path,
-                            remaining,
-                            result);
-                    }
-                    case "onElementPass", "onElementFail", "withDescription" -> collect(
-                        HologramDeclarationWrappers.nativeBacking(element),
-                        x,
-                        y,
-                        z,
-                        trigger,
-                        depth + 1,
-                        path,
-                        remaining,
-                        result);
-                    default -> {}
-                }
-            }
-        } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
-            // Keep the exact positives of independent branches. Do not reconstruct an opaque predicate.
-        } finally {
-            path.remove(element);
+            read(root, x, y, z, trigger, result);
+        } catch (RuntimeException | LinkageError unavailable) {
+            // A chooser failure supplies no candidate; full configured native replay is still required.
         }
+        List<ItemStack> values = new ArrayList<>(result.values());
+        if (cached.size() < 128) cached.put(key, values);
+        return copies(values);
     }
 
     private void read(IStructureElement<?> element, int x, int y, int z, ItemStack trigger,
@@ -124,9 +99,22 @@ final class HologramNativeHatchChooser {
             queryUnavailable = true;
             return;
         }
-        queries++;
         IStructureElement.BlocksToPlace blocks = query.get(element, x, y, z, trigger.copy());
-        Predicate<ItemStack> predicate = blocks == null ? null : blocks.getPredicate();
+        if (blocks == null) return;
+        Iterable<ItemStack> listed = blocks.getStacks();
+        if (listed != null) {
+            int listedRows = 0;
+            for (ItemStack stack : listed) {
+                if (++listedRows > MAX_OPTIONS) break;
+                if (stack == null || stack.getItem() == null
+                    || HologramCellPolicy.hatchTier(stack) == Integer.MAX_VALUE) continue;
+                ItemStack copy = stack.copy();
+                copy.stackSize = 1;
+                result.putIfAbsent(HologramValues.stackKey(copy), copy);
+            }
+        }
+        if (listed != null && !HologramNativeStructurePreview.isChain(element)) return;
+        Predicate<ItemStack> predicate = blocks.getPredicate();
         if (predicate == null) return;
         int rows = 0, failures = 0;
         for (ItemStack candidate : catalog.get()) {
@@ -143,9 +131,8 @@ final class HologramNativeHatchChooser {
     }
 
     void clear() {
-        offers.clear();
-        skipped.clear();
-        previousTrigger = null;
+        cached.clear();
+        queryUnavailable = false;
         query = null;
     }
 

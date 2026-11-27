@@ -19,6 +19,7 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.world.World;
 
 import com.google.gson.JsonObject;
+import com.gtnewhorizon.gtnhlib.util.CoordinatePacker;
 import com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector;
 import com.miaokatze.gtmb.hologram.HologramConstructionTaskGate.End;
 import com.miaokatze.gtmb.hologram.HologramConstructionTaskGate.Permit;
@@ -115,26 +116,6 @@ public final class HologramNativeLocalConstruction {
                 PENDING.remove(this);
                 release();
             }
-        }
-    }
-
-    @com.github.bsideup.jabel.Desugar
-    private record Target(Block block, ItemStack sample, int metadata, int facing, String tile, String item,
-        boolean controller, boolean stateful, String blockId, String itemId) {
-
-        Target(Block block, ItemStack sample, int metadata, int facing, String tile, String item, boolean controller,
-            boolean stateful) {
-            this(
-                block,
-                sample,
-                metadata,
-                facing,
-                tile,
-                item,
-                controller,
-                stateful,
-                Block.blockRegistry.getNameForObject(block),
-                net.minecraft.item.Item.itemRegistry.getNameForObject(sample.getItem()));
         }
     }
 
@@ -341,7 +322,7 @@ public final class HologramNativeLocalConstruction {
         // No real material source, wireless terminal, container or voucher is opened for creative construction.
         if (creative) scope.main = scope.containers = scope.me = false;
         var tx = new HologramSession(player, anchor[0], anchor[1], anchor[2], false, 1);
-        if (!toolId.equals(toolId(player.getHeldItem())) || !configured.configuredMatches(tx.materialSettings))
+        if (!toolId.equals(toolId(player.getHeldItem())) || !configured.configuredToolMatches(player.getHeldItem()))
             throw new IOException("材料来源或投影仪已变化");
         tx.materialSettings = scope;
         tx.jobVoucherRequested = !creative && voucher;
@@ -358,8 +339,7 @@ public final class HologramNativeLocalConstruction {
             || player.capabilities.isCreativeMode != creative
             || !toolId.equals(toolId(player.getHeldItem()))
             || player.dimension != dimension
-            || !configured.configuredMatches(HologramMaterials.read(player.getHeldItem())))
-            throw new IOException("原生施工上下文已变化");
+            || !configured.configuredToolMatches(player.getHeldItem())) throw new IOException("原生施工上下文已变化");
         var intent = new HologramConstructionTaskGate.Request(
             attempt.id,
             attempt.intent,
@@ -391,8 +371,8 @@ public final class HologramNativeLocalConstruction {
         attempt.publish(Phase.PREPARING, 0, 0, prepared.total, "正在核对原生施工目标");
     }
 
-    private static Target resolve(Prepared prepared, HologramSession tx, long descriptor, JsonObject wrapper,
-        int[] recipe, int[] bindingSlots) throws IOException {
+    private static HologramNativeConstruction.Prepared resolve(Prepared prepared, HologramSession tx, long descriptor,
+        JsonObject wrapper, int[] recipe, int[] bindingSlots) throws IOException {
         var cell = prepared.draft.executionCell(descriptor, wrapper);
         Block block = cell.block();
         ItemStack sample = cell.stack();
@@ -418,17 +398,6 @@ public final class HologramNativeLocalConstruction {
         if (HologramAeBlueprint.supports(block, tile)
             && HologramAeBlueprint.analyze(block, cell.metadata, tile).blocking)
             throw new IOException("AE 附件存在未处理的净化问题");
-        if (sample.getItem() instanceof gregtech.common.blocks.ItemMachines)
-            tile = HologramExecutionEligibility.gtState(tile, sample, true, true);
-        HologramExecutionEligibility.validateSaved(
-            block,
-            cell.metadata,
-            sample,
-            cell.facing,
-            cell.controller,
-            tile,
-            item,
-            HologramBlueprintProcessing.quantumCleared(tx.virtualPreset));
         int group = HologramSavedBindingChoices.requiredGroup(tile);
         if (group != 0 && !tx.networkBindings.holds("q" + group)) {
             int slot = HologramSavedBindingChoices.slot(bindingSlots, group);
@@ -442,17 +411,15 @@ public final class HologramNativeLocalConstruction {
         }
         boolean aliasedItem = HologramLittleTilesMaterialAliases.applyItem(block, item);
         if (item != null) sample.setTagCompound(HologramBlueprintNbt.nativePayload(item));
-        return new Target(
+        return HologramNativeConstruction.saved(
+            tx,
             block,
-            sample,
             cell.metadata,
+            sample,
             cell.facing,
             tile == null ? "" : HologramBlueprintNbt.encodeCanonical(block, tile),
             aliasedItem ? HologramBlueprintNbt.encodeCanonical(item) : cell.itemNbt,
-            cell.controller,
-            block.hasTileEntity(cell.metadata) || tile != null
-                || item != null
-                || HologramDecorMaterials.supports(block));
+            HologramNativeConstruction.geometry(sample, cell.facing, tile));
     }
 
     private static int boundedOffset(long coordinate, int origin) throws IOException {
@@ -500,9 +467,12 @@ public final class HologramNativeLocalConstruction {
         final int[] anchor;
         final HologramPreviewPose pose;
         final NativeBlueprintSpatialView.Cursor cursor;
+        NativeBlueprintSpatialView.Cursor assetCursor;
+        LongOpenHashSet assetPositions;
+        boolean assetsPrepared;
         final int frameX, frameY, frameZ;
         final int[] rotated = new int[3];
-        final Map<Long, Target> samples = new HashMap<>();
+        final Map<Long, HologramNativeConstruction.Prepared> samples = new HashMap<>();
         final Iterator<Map.Entry<Long, JsonObject>> unresolved;
         final int[] recipe, bindingSlots;
         final HologramPlacementTiming trace;
@@ -510,7 +480,7 @@ public final class HologramNativeLocalConstruction {
         final World world;
         final boolean creative;
         long activeDescriptor = Long.MIN_VALUE;
-        Target activeTarget;
+        HologramNativeConstruction.Prepared activeTarget;
         int placed, satisfied;
         boolean uncertain, ready;
 
@@ -555,7 +525,7 @@ public final class HologramNativeLocalConstruction {
                 && toolId.equals(toolId(player.getHeldItem()))
                 && tx.tool == player.getHeldItem()
                     .getItem()
-                && configured.configuredMatches(HologramMaterials.read(player.getHeldItem()));
+                && configured.configuredToolMatches(player.getHeldItem());
         }
 
         boolean step(long deadline) {
@@ -580,6 +550,32 @@ public final class HologramNativeLocalConstruction {
                             resolve(prepared, tx, row.getKey(), row.getValue(), recipe, bindingSlots));
                     }
                     if (unresolved.hasNext()) return false;
+                    if (!assetsPrepared) {
+                        if (assetCursor == null && !creative) {
+                            for (var target : samples.values()) if (!target.assets.isEmpty()) {
+                                assetCursor = prepared.source.cursor();
+                                assetPositions = new LongOpenHashSet();
+                                break;
+                            }
+                        }
+                        if (assetCursor != null) {
+                            while (assetCursor.hasNext() && System.nanoTime() < deadline) {
+                                if (!current()) return stop(Phase.CANCELLED, "施工已取消，未扣料");
+                                assetCursor.advance();
+                                var target = samples.get(assetCursor.descriptor());
+                                if (target == null || target.assets.isEmpty()) continue;
+                                position(assetCursor.x(), assetCursor.y(), assetCursor.z());
+                                int x = rotated[0], y = rotated[1], z = rotated[2];
+                                // Unknown/unloaded cells conservatively keep their budget; execution never loads them.
+                                if (!world.blockExists(x, y, z)
+                                    || !HologramNativeConstruction.matches(tx, target, x, y, z))
+                                    addAssetBudget(CoordinatePacker.pack(x, y, z), target);
+                            }
+                            if (assetCursor.hasNext()) return false;
+                            assetCursor = null;
+                        }
+                        assetsPrepared = true;
+                    }
                     if (!current()) return stop(Phase.CANCELLED, "施工已取消，未扣料");
                     if (!prepared.currentVersion.getAsBoolean()) return stop(Phase.FAILED, "蓝图已更新，请重新打开材料页");
                     ready = true;
@@ -598,7 +594,7 @@ public final class HologramNativeLocalConstruction {
                     }
                     if (activeTarget != null && !place(cursor.x(), cursor.y(), cursor.z(), activeTarget)) return stop(
                         attempt.cancelled.get() ? Phase.CANCELLED : Phase.FAILED,
-                        uncertain ? "施工结果待核定，已停止" : "施工受阻或缺料，已停止");
+                        uncertain ? "施工结果待核定，已停止" : tx.status.isEmpty() ? "施工受阻或缺料，已停止" : tx.status);
                 }
             } catch (IOException | RuntimeException | LinkageError invalid) {
                 if (!ready && invalid instanceof IOException) return stop(Phase.FAILED, invalid.getMessage());
@@ -610,45 +606,59 @@ public final class HologramNativeLocalConstruction {
             return false;
         }
 
-        boolean place(int baseX, int baseY, int baseZ, Target target) {
+        private void position(int baseX, int baseY, int baseZ) {
             pose.apply(
                 Math.subtractExact(baseX, frameX),
                 Math.subtractExact(baseY, frameY),
                 Math.subtractExact(baseZ, frameZ),
                 rotated);
-            int x = Math.addExact(anchor[0], rotated[0]), y = Math.addExact(anchor[1], rotated[1]),
-                z = Math.addExact(anchor[2], rotated[2]);
+            for (int axis = 0; axis < 3; axis++) rotated[axis] = Math.addExact(anchor[axis], rotated[axis]);
+        }
+
+        private void addAssetBudget(long position, HologramNativeConstruction.Prepared target) {
+            if (!assetPositions.add(position)) return;
+            for (var cost : target.assets.entrySet())
+                tx.pendingAssetBudget.merge(cost.getKey(), cost.getValue(), (a, b) -> Math.addExact(a, b));
+        }
+
+        private void completeAssetBudget(long position, HologramNativeConstruction.Prepared target) {
+            if (assetPositions == null || !assetPositions.remove(position)) return;
+            for (var cost : target.assets.entrySet()) {
+                long remaining = tx.pendingAssetBudget.getOrDefault(cost.getKey(), 0L) - cost.getValue();
+                if (remaining <= 0) tx.pendingAssetBudget.remove(cost.getKey());
+                else tx.pendingAssetBudget.put(cost.getKey(), remaining);
+            }
+            stock.assetsCommitted(target.assets);
+        }
+
+        boolean place(int baseX, int baseY, int baseZ, HologramNativeConstruction.Prepared target) throws IOException {
+            position(baseX, baseY, baseZ);
+            int x = rotated[0], y = rotated[1], z = rotated[2];
             if (!HologramWorldFlow.worldPosition(x, y, z, world.getHeight()) || !world.blockExists(x, y, z))
                 return false;
+            long assetPosition = 0;
+            if (!creative && !target.assets.isEmpty()) {
+                assetPosition = CoordinatePacker.pack(x, y, z);
+                // A once-satisfied cell can change after preflight. Rebuild stock pools before charging it.
+                if (!assetPositions.contains(assetPosition)
+                    && !HologramNativeConstruction.matches(tx, target, x, y, z)) {
+                    addAssetBudget(assetPosition, target);
+                    stock.resetAssetReservations();
+                }
+            }
             Permit permit = gate.beginTransaction(lease);
             if (permit == null) return false;
             boolean settled = false;
             try {
-                // Only a position-scoped mutation record; no fabricated capture, selection or plan.
-                var cell = new HologramCapture.Cell(null, x, y, z, null, true);
-                cell.block = target.block;
-                cell.meta = target.metadata;
-                cell.blueprintBlock = target.blockId;
-                cell.blueprintItem = target.itemId;
-                cell.blueprintDamage = target.sample.getItemDamage();
-                cell.tileNbt = target.tile;
-                cell.itemNbt = target.item;
-                cell.userPosition = true;
-                cell.role = target.controller ? "templateController" : "prefab";
-                // A placement callback may mutate its working item. Keep the descriptor prototype unexposed.
-                cell.savedPlacementTarget = target.sample.copy();
-                cell.savedPlacementFacing = target.facing;
                 tx.materialContext = stock;
-                boolean applied = HologramWorldTransactions.operateSavedNative(
-                    tx,
-                    cell,
-                    0,
-                    target.stateful,
-                    () -> current() && gate.transactionCurrent(permit));
+                var outcome = HologramNativeConstruction
+                    .place(tx, target, x, y, z, () -> current() && gate.transactionCurrent(permit));
                 if (tx.job == 4 || HologramConstructionJournal.pending(player)) return false;
-                boolean committed = applied && "placed".equals(cell.status);
-                boolean wasSatisfied = applied && "satisfied".equals(cell.status);
+                boolean committed = outcome == HologramNativeConstruction.Outcome.PLACED;
+                boolean wasSatisfied = outcome == HologramNativeConstruction.Outcome.SATISFIED;
                 settled = gate.settle(permit, committed ? Settlement.COMMITTED : Settlement.ROLLED_BACK);
+                if (settled && (committed || wasSatisfied) && !creative && !target.assets.isEmpty())
+                    completeAssetBudget(assetPosition, target);
                 if (settled && committed) {
                     placed++;
                     if (trace != null) trace.written();

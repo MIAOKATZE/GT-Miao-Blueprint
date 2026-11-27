@@ -8,6 +8,7 @@ import java.util.Iterator;
 import net.minecraft.block.Block;
 import net.minecraft.entity.Entity;
 import net.minecraft.init.Blocks;
+import net.minecraft.item.ItemStack;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraft.util.AxisAlignedBB;
 import net.minecraft.world.World;
@@ -27,10 +28,14 @@ final class HologramNativePreviewWorld extends HologramResourceWorld {
     private static final int CHUNK_LIMIT = 30_000_000 >> 4;
     private final Thread owner = Thread.currentThread();
     private final Long2ObjectLinkedOpenHashMap<Placement> placements = new Long2ObjectLinkedOpenHashMap<>();
+    private final java.util.Map<Long, ItemStack> materials = new java.util.LinkedHashMap<>();
+    private final java.util.Set<Long> selectedWrites = new java.util.LinkedHashSet<>();
+    private ItemStack selected;
     private final long anchor;
     private final Block controllerBlock;
     private final int controllerMeta;
     private boolean recording = true;
+    private boolean hintsOnly;
     // The browser counts creation of the detached controller as the first world write.
     private boolean changed = true;
 
@@ -57,9 +62,46 @@ final class HologramNativePreviewWorld extends HologramResourceWorld {
     Iterator<Placement> placements() {
         if (Thread.currentThread() != owner) throw new IllegalStateException("LOCAL_NATIVE_PREVIEW_SCOPE");
         // Iterate the finished footprint even when candidate queries call back into the world.
-        recording = false;
+        freeze();
         return placements.values()
             .iterator();
+    }
+
+    void freeze() {
+        if (Thread.currentThread() != owner) throw new IllegalStateException("LOCAL_NATIVE_PREVIEW_SCOPE");
+        recording = false;
+        selected = null;
+        selectedWrites.clear();
+    }
+
+    /** Read-only iteration during generation; unlike the finished iterator, it does not freeze writes. */
+    Iterator<Placement> currentPlacements() {
+        return placements.values()
+            .iterator();
+    }
+
+    void materialSelected(ItemStack stack, boolean simulate) {
+        if (Thread.currentThread() != owner) throw new IllegalStateException("LOCAL_NATIVE_PREVIEW_SCOPE");
+        // Finished native candidate queries may inspect the synthetic inventory without editing its snapshot.
+        if (!recording) return;
+        ItemStack copy = stack.copy();
+        copy.stackSize = 1;
+        if (simulate) {
+            selected = copy;
+            selectedWrites.clear();
+        } else {
+            // StructureLib pays after placement. Bind only writes made during that exact selected item
+            // operation, rather than the last visited element (custom constructors need no visits).
+            if (selected != null && ItemStack.areItemStacksEqual(selected, copy))
+                for (long position : selectedWrites) materials.put(position, copy.copy());
+            selected = null;
+            selectedWrites.clear();
+        }
+    }
+
+    ItemStack materialAt(int x, int y, int z) {
+        ItemStack value = materials.get(CoordinatePacker.pack(x, y, z));
+        return value == null ? null : value.copy();
     }
 
     int recordedPlacementCount() {
@@ -133,20 +175,31 @@ final class HologramNativePreviewWorld extends HologramResourceWorld {
         return placement == null ? null : placement.tile;
     }
 
+    void hintsOnly(boolean value) {
+        hintsOnly = value;
+    }
+
     @Override
     public boolean setBlock(int x, int y, int z, Block block, int metadata, int flags) {
+        if (hintsOnly) return false;
         long position = writable(x, y, z);
         if (position == anchor) return false;
         Placement previous = placements.get(position);
         if (block == Blocks.air) {
             if (previous == null) return false;
             placements.remove(position);
+            materials.remove(position);
+            selectedWrites.remove(position);
             changed = true;
             return true;
         }
-        if (previous != null && previous.block == block && previous.meta == metadata) return true;
+        if (previous != null && previous.block == block && previous.meta == metadata) {
+            if (selected != null && Block.getBlockFromItem(selected.getItem()) == block) selectedWrites.add(position);
+            return true;
+        }
         if (previous == null && placements.size() >= HologramBlueprintLimits.MAX_CELLS - 1)
             throw new IllegalStateException("LOCAL_NATIVE_PREVIEW_CELL_LIMIT");
+        materials.remove(position);
         TileEntity next = block.hasTileEntity(metadata) ? block.createTileEntity(this, metadata) : null;
         put(position, x, y, z, block, metadata, next);
         return true;
@@ -154,6 +207,7 @@ final class HologramNativePreviewWorld extends HologramResourceWorld {
 
     @Override
     public boolean setBlockMetadataWithNotify(int x, int y, int z, int metadata, int flags) {
+        if (hintsOnly) return false;
         long position = writable(x, y, z);
         Placement old = placements.get(position);
         if (old == null) return false;
@@ -163,6 +217,7 @@ final class HologramNativePreviewWorld extends HologramResourceWorld {
 
     @Override
     public void setTileEntity(int x, int y, int z, TileEntity next) {
+        if (hintsOnly) return;
         long position = writable(x, y, z);
         Placement old = placements.get(position);
         if (old != null && old.tile != next) put(position, x, y, z, old.block, old.meta, next);
@@ -197,6 +252,9 @@ final class HologramNativePreviewWorld extends HologramResourceWorld {
             next.blockMetadata = metadata;
         }
         placements.put(position, new Placement(x, y, z, block, metadata, next));
+        // Preserve identity only for the matching ItemBlock. Side-effect blocks have their own material.
+        if (selected != null && Block.getBlockFromItem(selected.getItem()) == block) selectedWrites.add(position);
+        else if (!materials.containsKey(position)) selectedWrites.remove(position);
         changed = true;
     }
 }

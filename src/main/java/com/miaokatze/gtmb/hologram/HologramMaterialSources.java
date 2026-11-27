@@ -8,15 +8,69 @@ import java.util.List;
 import java.util.Map;
 
 import net.minecraft.block.Block;
+import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.init.Blocks;
 import net.minecraft.item.ItemStack;
 
+import com.gtnewhorizon.structurelib.SortedRegistry;
 import com.gtnewhorizon.structurelib.structure.IItemSource;
+import com.gtnewhorizon.structurelib.util.InventoryIterable;
+import com.gtnewhorizon.structurelib.util.InventoryUtility;
+import com.gtnewhorizon.structurelib.util.InventoryUtility.InventoryProvider;
 
 /** StructureLib item-source adapters used by the authoritative transaction boundary. */
 final class HologramMaterialSources {
 
     private HologramMaterialSources() {}
+
+    /** Read the native player order without changing StructureLib's global preferences. */
+    static List<InventoryProvider<?>> inventoryProviders(EntityPlayerMP player) {
+        // Ensure SL has installed its built-in providers before looking up the named registry.
+        InventoryUtility.getStackExtractors(player);
+        SortedRegistry<?> registry = SortedRegistry.getRegistry("inventoryProviders");
+        if (registry == null) throw new IllegalStateException("Native inventory provider registry unavailable");
+        List<InventoryProvider<?>> result = new java.util.ArrayList<>();
+        for (Object value : registry.getPlayerOrdering(player)) {
+            if (!(value instanceof InventoryProvider<?>))
+                throw new IllegalStateException("Invalid native inventory provider");
+            result.add((InventoryProvider<?>) value);
+        }
+        return result;
+    }
+
+    static boolean mainInventoryEnabled(EntityPlayerMP player) {
+        InventoryUtility.getStackExtractors(player);
+        SortedRegistry<?> registry = SortedRegistry.getRegistry("inventoryProviders");
+        if (registry == null) throw new IllegalStateException("Native inventory provider registry unavailable");
+        Object main = registry.get("5000-main-inventory");
+        for (Object provider : registry.getPlayerOrdering(player)) if (provider == main) return true;
+        return false;
+    }
+
+    static final class NativeInventory {
+
+        final InventoryProvider<Iterable<ItemStack>> provider;
+        final Iterable<ItemStack> inventory;
+        final boolean main;
+
+        @SuppressWarnings("unchecked")
+        NativeInventory(InventoryProvider<?> provider, EntityPlayerMP player) {
+            this.provider = (InventoryProvider<Iterable<ItemStack>>) provider;
+            inventory = this.provider.getInventory(player);
+            main = inventory instanceof InventoryIterable<?>
+                && ((InventoryIterable<?>) inventory).getInventory() == player.inventory;
+        }
+
+        boolean contains(EntityPlayerMP player, ItemStack source) {
+            Iterable<ItemStack> current = provider.getInventory(player);
+            if (current != null) for (ItemStack stack : current) if (stack == source) return true;
+            return false;
+        }
+
+        void markDirty() {
+            provider.markDirty(inventory);
+        }
+    }
 
     static final class FilteredSource implements IItemSource {
 

@@ -858,6 +858,12 @@ final class HologramCellPolicy {
         throws java.io.IOException {
         ItemStack target = targetFor(s, cell, index);
         if (!HologramRecovery.hasSeal(target)) return null;
+        return sealedPlacementTarget(s, target, HologramBlueprintNbt.decode(cell.tileNbt), cell.x, cell.y, cell.z);
+    }
+
+    /** Descriptor preparation shares seal validation without inventing a capture cell or preset index. */
+    static ItemStack sealedPlacementTarget(HologramSession s, ItemStack target, NBTTagCompound descriptor, int x, int y,
+        int z) throws java.io.IOException {
         Block block = Block.getBlockFromItem(target.getItem());
         if (!HologramRecovery.validItem(target, block)
             || !(target.getItem() instanceof ItemMachines || block instanceof BlockFrameBox))
@@ -874,7 +880,6 @@ final class HologramCellPolicy {
             || stored.hasKey(HologramNetworkBindings.GROUP))
             throw new java.io.IOException("封存设备包含无法安全合并的外部网络状态；请先解除原网络绑定，未扣材料");
         HologramBlueprintCovers.materials(HologramBlueprintNbt.encodeCanonical(stored)); // Validate paid covers once.
-        NBTTagCompound descriptor = HologramBlueprintNbt.decode(cell.tileNbt);
         if (descriptor != null && descriptor.hasKey(HologramNetworkBindings.GROUP)) {
             if (!"join".equals(descriptor.getString(HologramNetworkBindings.ROLE)))
                 throw new java.io.IOException("封存设备不能合并此量子节点角色，未扣材料");
@@ -884,9 +889,7 @@ final class HologramCellPolicy {
         NBTTagCompound copy = (NBTTagCompound) target.getTagCompound()
             .copy();
         NBTTagCompound seal = copy.getCompoundTag(HologramRecovery.TAG);
-        seal.setTag(
-            "tile",
-            sealedActorTile(stored, s.player.getUniqueID(), s.player.getCommandSenderName(), cell.x, cell.y, cell.z));
+        seal.setTag("tile", sealedActorTile(stored, s.player.getUniqueID(), s.player.getCommandSenderName(), x, y, z));
         placed.setTagCompound(copy);
         return placed;
     }

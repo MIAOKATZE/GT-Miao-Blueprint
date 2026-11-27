@@ -698,6 +698,9 @@ public final class HologramBlueprintResources {
             String key = (String) raw;
             if (claimedRoots.contains(key)) continue;
             if (HologramFullPreservation.TAG.equals(key)) continue;
+            // Native IDataCopyable templates are not inventories. apply() proves the native paste
+            // leaves the separately restored/priced assets unchanged before committing it.
+            if (HologramNativeConfiguration.TAG.equals(key)) continue;
             if (HologramNativeHubData.fluidKey(key) || HologramNativeHubData.bindingKey(key)) continue;
             if (HologramEssentia.isJar(selectedPayload) && (key.equals("Aspect") || key.equals("Amount"))) continue;
             if (craftingHatch && key.equals("gtmbCraftingResourceCosts")) {

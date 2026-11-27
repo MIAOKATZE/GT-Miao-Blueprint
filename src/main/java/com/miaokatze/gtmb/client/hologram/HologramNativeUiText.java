@@ -54,6 +54,25 @@ final class HologramNativeUiText {
 
     static String reason(String raw) {
         if (raw == null || raw.isEmpty()) return "";
+        if (raw.startsWith("GT alignment index is invalid: ")) return projectorOr(
+            "native.reason.alignment.invalid_index",
+            "GT 对齐参数无效：%1$s",
+            raw.substring("GT alignment index is invalid: ".length()));
+        if (raw.startsWith("原生目标没有可支付的物品身份：")) return projectorOr(
+            "native.reason.target.unpayable_at",
+            "原生目标没有可支付的物品身份：%1$s",
+            raw.substring("原生目标没有可支付的物品身份：".length()));
+        if (raw.startsWith("LOCAL_NATIVE_PREVIEW_RESULT:")) return projectorOr(
+            "native.reason.preview.invalid_result",
+            "原生构造返回了无效结果：%1$s",
+            raw.substring("LOCAL_NATIVE_PREVIEW_RESULT:".length()));
+        if (raw.startsWith("服务端缺少注册的施工材料：")) return projectorOr(
+            "native.reason.local.missing_registered_material",
+            "服务端缺少注册的施工材料：%1$s",
+            raw.substring("服务端缺少注册的施工材料：".length())
+                .replace("（无方块）", projectorOr("native.reason.local.no_block", "（无方块）"))
+                .replace("（无物品）", projectorOr("native.reason.local.no_item", "（无物品）"))
+                .replace("（无设备子型）", projectorOr("native.reason.local.no_subtype", "（无设备子型）")));
         if (raw.startsWith("当前结构状态不能执行此操作："))
             return projectorOr("native.reason.this_operation_is_unavailable_in_the_current_structure", "当前结构状态不能执行此操作：")
                 + " "
@@ -66,6 +85,150 @@ final class HologramNativeUiText {
                 + " "
                 + raw.substring(16);
         return switch (raw) {
+            case "GT alignment front has an invalid type" -> projectorOr(
+                "native.reason.alignment.front_type",
+                "GT 朝向数据类型无效。");
+            case "GT alignment front differs from target geometry" -> projectorOr(
+                "native.reason.alignment.front_mismatch",
+                "GT 朝向数据与目标几何不一致。");
+            case "GT alignment is missing a valid target front" -> projectorOr(
+                "native.reason.alignment.front_missing",
+                "GT 对齐缺少有效的目标朝向。");
+            case "GT target does not support the requested native alignment", "原生设备不接受目标对齐。" -> projectorOr(
+                "native.reason.alignment.unsupported",
+                "原生设备不接受目标对齐。");
+            case "GT alignment target is missing" -> projectorOr(
+                "native.reason.alignment.target_missing",
+                "GT 对齐目标设备不存在。");
+            case "原生设备未完整应用目标对齐。" -> projectorOr("native.reason.alignment.incomplete", "原生设备未完整应用目标对齐。");
+            case "GT native setter changed retained assets, ownership or network binding" -> projectorOr(
+                "native.reason.alignment.protected_state_changed",
+                "原生设置改变了受保护的资产、所有权或网络绑定。");
+            case "原生仓室搭配含无效型号或数量。" -> projectorOr("native.reason.preview.invalid_hatch_profile", "原生仓室搭配含无效型号或数量。");
+            case "原生仓室搭配为空。" -> projectorOr("native.reason.preview.empty_hatch_profile", "原生仓室搭配为空。");
+            case "所选仓室方向与原生放置结果不同。" -> projectorOr("native.reason.preview.hatch_facing_mismatch", "所选仓室方向与原生放置结果不同。");
+            case "所选仓室未被该位置的原生建造流程接受。" -> projectorOr("native.reason.preview.hatch_rejected", "所选仓室未被该位置的原生建造流程接受。");
+            case "所选仓室搭配未被完整放入原生目标。" -> projectorOr(
+                "native.reason.preview.hatch_profile_incomplete",
+                "所选仓室搭配未被完整放入原生目标。");
+            case "原生目标没有施工材料。" -> projectorOr("native.reason.construction.no_material", "原生目标没有施工材料。");
+            case "装饰形状需要保留已登记的设备 NBT。" -> projectorOr("native.reason.construction.decor_nbt", "装饰形状需要保留已登记的设备 NBT。");
+            case "原生组合方块需要保留设备 NBT。" -> projectorOr("native.reason.construction.composite_nbt", "原生组合方块需要保留设备 NBT。");
+            case "封存设备必须提供完整原件，本格未施工。" -> projectorOr(
+                "native.reason.construction.original_required",
+                "封存设备必须提供完整原件，本格未施工。");
+            case "装饰抵用券不足，本格未施工。" -> projectorOr("native.reason.construction.voucher_missing", "装饰抵用券不足，本格未施工。");
+            case "装饰材料不足，本格未施工。" -> projectorOr("native.reason.construction.decor_missing", "装饰材料不足，本格未施工。");
+            case "所选材料来源不足，本格未施工。" -> projectorOr("native.reason.construction.material_missing", "所选材料来源不足，本格未施工。");
+            case "覆盖板材料不足，本格未施工。" -> projectorOr("native.reason.construction.cover_missing", "覆盖板材料不足，本格未施工。");
+            case "设备资产材料不足，本格未施工。" -> projectorOr("native.reason.construction.assets_missing", "设备资产材料不足，本格未施工。");
+            case "设备源质不足，本格未施工。" -> projectorOr("native.reason.construction.essentia_missing", "设备源质不足，本格未施工。");
+            case "付款期间施工条件已变化。" -> projectorOr("native.reason.construction.payment_changed", "付款期间施工条件已变化。");
+            case "原生放置后的身份、朝向或配置与目标不符。" -> projectorOr(
+                "native.reason.construction.target_mismatch",
+                "原生放置后的身份、朝向或配置与目标不符。");
+            case "原生放置未提供世界变更凭据。" -> projectorOr("native.reason.construction.no_world_receipt", "原生放置未提供世界变更凭据。");
+            case "保护事件已改变施工现场，结果待核定。" -> projectorOr(
+                "native.reason.construction.protection_changed",
+                "保护事件已改变施工现场，结果待核定。");
+            case "领地或模组保护取消放置，本格已还原。" -> projectorOr(
+                "native.reason.construction.protection_cancelled",
+                "领地或模组保护取消放置，本格已还原。");
+            case "保护事件后施工权限或付款库存已变化。" -> projectorOr(
+                "native.reason.construction.authority_changed",
+                "保护事件后施工权限或付款库存已变化。");
+            case "原生通知后施工条件已变化。" -> projectorOr("native.reason.construction.notification_changed", "原生通知后施工条件已变化。");
+            case "原生放置未提交。" -> projectorOr("native.reason.construction.not_committed", "原生放置未提交。");
+            case "施工结果待核定，原世界与付款凭据已保留；请联系管理员 /gtmb recovery" -> projectorOr(
+                "native.reason.construction.recovery_review",
+                "施工结果待核定，原世界与付款凭据已保留；请联系管理员 /gtmb recovery");
+            case "原生组合方块拒绝施工。" -> projectorOr("native.reason.construction.composite_rejected", "原生组合方块拒绝施工。");
+            case "原生碰撞检查拒绝施工。" -> projectorOr("native.reason.construction.collision_rejected", "原生碰撞检查拒绝施工。");
+            case "原生物品拒绝放置。" -> projectorOr("native.reason.construction.item_rejected", "原生物品拒绝放置。");
+            case "该原生目标没有可用的物品放置接口。" -> projectorOr("native.reason.construction.no_placement_api", "该原生目标没有可用的物品放置接口。");
+            case "封存设备没有完整恢复能力。" -> projectorOr("native.reason.construction.no_full_restore", "封存设备没有完整恢复能力。");
+            case "付费设备状态恢复失败。" -> projectorOr("native.reason.construction.restore_failed", "付费设备状态恢复失败。");
+            case "原生物品未初始化目标设备。" -> projectorOr("native.reason.construction.tile_not_initialized", "原生物品未初始化目标设备。");
+            case "原生设备不接受目标朝向。" -> projectorOr("native.reason.construction.facing_rejected", "原生设备不接受目标朝向。");
+            case "施工退款上下文已变化，原凭据已保留；请联系管理员 /gtmb recovery" -> projectorOr(
+                "native.reason.construction.refund_context_changed",
+                "施工退款上下文已变化，原凭据已保留；请联系管理员 /gtmb recovery");
+            case "控制器未提供独立的原生投影实例。" -> projectorOr("native.reason.target.no_detached_instance", "控制器未提供独立的原生投影实例。");
+            case "原生控制器未提供独立实例。" -> projectorOr("native.reason.target.no_independent_controller", "原生控制器未提供独立实例。");
+            case "原生投影参数无效。" -> projectorOr("native.reason.target.invalid_signal", "原生投影参数无效。");
+            case "原生蓝图施工" -> projectorOr("native.reason.local.title", "原生蓝图施工");
+            case "原生蓝图版本或语义不可用于施工" -> projectorOr("native.reason.local.invalid_version", "原生蓝图版本或语义不可用于施工");
+            case "原生蓝图语义不可用于施工" -> projectorOr("native.reason.local.invalid_semantics", "原生蓝图语义不可用于施工");
+            case "此原生蓝图含当前原生施工不支持的整图规则；未放置或扣料" -> projectorOr(
+                "native.reason.local.whole_rules",
+                "此原生蓝图含当前原生施工不支持的整图规则；未放置或扣料");
+            case "原生蓝图包含无方块身份或数量不正确的目标" -> projectorOr("native.reason.local.invalid_target", "原生蓝图包含无方块身份或数量不正确的目标");
+            case "此蓝图没有可施工目标" -> projectorOr("native.reason.local.no_targets", "此蓝图没有可施工目标");
+            case "AE 蓝图仍有未处理的净化问题；请修正对应标记后保存" -> projectorOr(
+                "native.reason.local.ae_cleanup",
+                "AE 蓝图仍有未处理的净化问题；请修正对应标记后保存");
+            case "原生施工上下文已变化" -> projectorOr("native.reason.local.context_changed", "原生施工上下文已变化");
+            case "请手持确认施工时的投影仪" -> projectorOr("native.reason.local.tool_changed", "请手持确认施工时的投影仪");
+            case "施工锚点超出世界边界" -> projectorOr("native.reason.local.anchor_bounds", "施工锚点超出世界边界");
+            case "施工锚点所在区块未加载" -> projectorOr("native.reason.local.anchor_unloaded", "施工锚点所在区块未加载");
+            case "离施工锚点太远" -> projectorOr("native.reason.local.anchor_far", "离施工锚点太远");
+            case "无效施工方向" -> projectorOr("native.reason.local.invalid_facing", "无效施工方向");
+            case "原生蓝图施工范围超出世界边界" -> projectorOr("native.reason.local.blueprint_bounds", "原生蓝图施工范围超出世界边界");
+            case "施工权限或材料来源不可用" -> projectorOr("native.reason.local.sources_unavailable", "施工权限或材料来源不可用");
+            case "材料来源或投影仪已变化" -> projectorOr("native.reason.local.sources_changed", "材料来源或投影仪已变化");
+            case "装饰抵用券不可用，未开始施工" -> projectorOr("native.reason.local.voucher_unavailable", "装饰抵用券不可用，未开始施工");
+            case "蓝图已更新，请重新打开材料页" -> projectorOr("native.reason.local.version_changed", "蓝图已更新，请重新打开材料页");
+            case "已有施工或待核定结果" -> projectorOr("native.reason.local.pending_task", "已有施工或待核定结果");
+            case "该原生组合方块的跨坐标旋转尚未核对，请保存为目标方向后施工" -> projectorOr(
+                "native.reason.local.composite_rotation",
+                "该原生组合方块的跨坐标旋转尚未核对，请保存为目标方向后施工");
+            case "0 级蓝图包含其他玩家所有权；请先完成去标识" -> projectorOr("native.reason.local.foreign_owner", "0 级蓝图包含其他玩家所有权；请先完成去标识");
+            case "AE 附件存在未处理的净化问题" -> projectorOr("native.reason.local.ae_attachment_cleanup", "AE 附件存在未处理的净化问题");
+            case "原生蓝图超出此施工方式的坐标范围" -> projectorOr("native.reason.local.coordinate_range", "原生蓝图超出此施工方式的坐标范围");
+            case "无法开始原生蓝图施工" -> projectorOr("native.reason.local.cannot_start", "无法开始原生蓝图施工");
+            case "施工已取消" -> projectorOr("native.reason.local.cancelled", "施工已取消");
+            case "没有需要放置的方块" -> projectorOr("native.reason.local.no_work", "没有需要放置的方块");
+            case "开始原生蓝图施工" -> projectorOr("native.reason.local.started", "开始原生蓝图施工");
+            case "正在核对原生施工目标" -> projectorOr("native.reason.local.checking", "正在核对原生施工目标");
+            case "原生蓝图施工完成" -> projectorOr("native.reason.local.complete", "原生蓝图施工完成");
+            case "原生蓝图施工中" -> projectorOr("native.reason.local.running", "原生蓝图施工中");
+            case "施工结果待核定，已停止" -> projectorOr("native.reason.local.uncertain", "施工结果待核定，已停止");
+            case "施工受阻或缺料，已停止" -> projectorOr("native.reason.local.blocked", "施工受阻或缺料，已停止");
+            case "读取或执行原生蓝图失败，已停止" -> projectorOr("native.reason.local.read_failed", "读取或执行原生蓝图失败，已停止");
+            case "施工结果不能确认" -> projectorOr("native.reason.local.cannot_confirm", "施工结果不能确认");
+            case "LOCAL_NATIVE_PREVIEW_UNSTABLE" -> projectorOr(
+                "native.reason.preview.unstable",
+                "Native structure generation did not finish within the pass limit.");
+            case "LOCAL_NATIVE_PREVIEW_INCOMPLETE" -> projectorOr(
+                "native.reason.preview.incomplete",
+                "The native process did not provide a complete structure target.");
+            case "LOCAL_NATIVE_PREVIEW_CELL_LIMIT" -> projectorOr(
+                "native.reason.preview.cell_limit",
+                "The native structure exceeds the cell limit.");
+            case "LOCAL_NATIVE_PREVIEW_EMPTY" -> projectorOr(
+                "native.reason.preview.empty",
+                "The native process produced no structure geometry.");
+            case "LOCAL_NATIVE_PREVIEW_COMPLETION_SCOPE" -> projectorOr(
+                "native.reason.preview.completion_scope",
+                "The native completion process did not provide an independent controller and world.");
+            case "LOCAL_NATIVE_PREVIEW_DECLARATION_UNAVAILABLE" -> projectorOr(
+                "native.reason.preview.no_declaration",
+                "Native construction is unavailable on the independent controller.");
+            case "LOCAL_NATIVE_PREVIEW_SCOPE" -> projectorOr(
+                "native.reason.preview.scope",
+                "The native structure capture scope is no longer valid.");
+            case "LOCAL_NATIVE_PREVIEW_OUT_OF_BOUNDS" -> projectorOr(
+                "native.reason.preview.out_of_bounds",
+                "Native construction tried to write outside the preview world bounds.");
+            case "LOCAL_NATIVE_PREVIEW_FOREIGN_TILE" -> projectorOr(
+                "native.reason.preview.foreign_tile",
+                "Native construction supplied a device belonging to another world.");
+            case "LOCAL_NATIVE_PREVIEW_REQUIRES_DETACHED_CONTROLLER" -> projectorOr(
+                "native.reason.preview.detached_required",
+                "Native capture requires an independent controller in an isolated world.");
+            case "LOCAL_NATIVE_HATCH_CONTEXT_UNAVAILABLE" -> projectorOr(
+                "native.reason.preview.hatch_context",
+                "An independent controller for native hatch queries is unavailable.");
             case "客户端投影与服务器原生目标不同，请重新读取后确认。" -> projectorOr(
                 "native.reason.the_client_projection_differs_from_the_server_s",
                 "客户端投影与服务器原生目标不同，请重新读取后确认。");

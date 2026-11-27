@@ -8,7 +8,11 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 import net.minecraft.world.WorldServer;
+import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.common.util.FakePlayer;
+import net.minecraftforge.event.world.BlockEvent;
+
+import cpw.mods.fml.common.eventhandler.SubscribeEvent;
 
 /** Twenty ordinary cells through real projection/review/job/world/payment, one production slice per real lab tick. */
 public final class HologramConstructionPerformanceProbe {
@@ -19,6 +23,8 @@ public final class HologramConstructionPerformanceProbe {
     private final int x, y, z;
     private final long started, writesBefore, publishBefore;
     private final NBTTagList slices = new NBTTagList();
+    private int finalPlaceEvents;
+    private boolean observing;
 
     public HologramConstructionPerformanceProbe(WorldServer world, FakePlayer actor, int x, int y, int z)
         throws Exception {
@@ -62,6 +68,8 @@ public final class HologramConstructionPerformanceProbe {
         require(
             session.job == 1 && session.work.size() == 20,
             "Twenty-cell native reviewed build not admitted: " + session.status);
+        MinecraftForge.EVENT_BUS.register(this);
+        observing = true;
     }
 
     public boolean step() {
@@ -85,19 +93,42 @@ public final class HologramConstructionPerformanceProbe {
             require(world.getBlock(x + dx, y, z + dz) == Blocks.stone, "Actual performance fixture placement differs");
         NBTTagCompound result = new NBTTagCompound();
         result.setInteger("cells", session.completed);
+        result.setInteger("finalPlaceEvents", finalPlaceEvents);
+        result.setBoolean("oneFinalPlaceEventPerCell", finalPlaceEvents == 20);
+        result.setString("executor", "legacy workspace reviewedBuild/PlacementJobs/operateChecked compatibility path");
+        result.setBoolean("sharedNativeKernelVerified", false);
         result.setTag("realTickSlices", slices);
         result.setLong("elapsedNanos", System.nanoTime() - started);
         result.setLong("durablePublications", HologramConstructionJournal.publications - writesBefore);
         result.setLong("publishNanos", HologramConstructionJournal.publishNanos - publishBefore);
         result.setString(
             "scope",
-            "ordinary main-inventory construction; real WorldTransactions; no AE-grid or global performance claim");
+            "legacy ordinary main-inventory construction; observed event count only, not the shared native kernel contract; no AE-grid or global performance claim");
         return result;
     }
 
     public void cleanup() {
+        if (observing) {
+            observing = false;
+            MinecraftForge.EVENT_BUS.unregister(this);
+        }
         for (int dz = 0; dz < 4; dz++) for (int dx = 0; dx < 5; dx++)
             if (world.getBlock(x + dx, y, z + dz) == Blocks.stone) world.setBlockToAir(x + dx, y, z + dz);
+    }
+
+    @SubscribeEvent
+    public void placed(BlockEvent.PlaceEvent event) {
+        if (!observing || event.world != world
+            || event.player != actor
+            || event.x < x
+            || event.x >= x + 5
+            || event.y != y
+            || event.z < z
+            || event.z >= z + 4) return;
+        require(
+            world.getBlock(event.x, event.y, event.z) == Blocks.stone,
+            "Protection event must observe the final placed state");
+        finalPlaceEvents++;
     }
 
     private static void require(boolean value, String message) {
