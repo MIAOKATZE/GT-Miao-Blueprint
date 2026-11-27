@@ -127,7 +127,40 @@ public final class HologramProgressRegression {
             "server detail arrives without an additional progress poll or command");
         HologramClientProgress.clear();
         constructionProgressOwnership();
+        controllerOpeningProgress();
         saveReceiptBusyResolution();
+    }
+
+    private static void controllerOpeningProgress() {
+        HologramControllerOpenIntent opening = new HologramControllerOpenIntent();
+        long first = opening.begin(0, 1, 64, 2);
+        SimpleAssert.eq("ack", opening.progress().phase, "the regular header starts with an unquantified reply wait");
+        NBTTagCompound capture = event("controller", 1, 1, "", "running");
+        capture.setLong("controllerOpenId", first);
+        HologramClientProgress.receive(capture);
+        SimpleAssert.eq("capture", opening.progress().phase, "server capture drives the normal progress model");
+        NBTTagCompound snapshot = (NBTTagCompound) capture.copy();
+        snapshot.setString("phase", "snapshot.prepare");
+        snapshot.setLong("sequence", 2);
+        snapshot.setLong("snapshotSequence", 41);
+        HologramClientProgress.receive(snapshot);
+        NBTTagCompound download = new NBTTagCompound();
+        download.setString("scope", "snapshot");
+        download.setString("phase", "download");
+        download.setLong("sequence", 40);
+        HologramClientProgress.receive(download);
+        SimpleAssert.eq("snapshot.prepare", opening.progress().phase, "unrelated downloads stay off the opening bar");
+        download.setLong("sequence", 41);
+        HologramClientProgress.receive(download);
+        HologramClientProgress.decoding(41);
+        SimpleAssert.eq("decode", opening.progress().phase, "the correlated byte transfer advances into actual decode");
+        long second = opening.begin(0, 1, 64, 2);
+        SimpleAssert.eq("ack", opening.progress().phase, "reopening the same target hides its previous progress");
+        capture.setLong("sequence", 3);
+        capture.setLong("controllerOpenId", second);
+        HologramClientProgress.receive(capture);
+        SimpleAssert.eq("capture", opening.progress().phase, "the new click cannot inherit the old decoder");
+        HologramClientProgress.clear();
     }
 
     private static void constructionProgressOwnership() {

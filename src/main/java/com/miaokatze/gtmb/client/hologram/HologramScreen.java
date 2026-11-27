@@ -6,8 +6,13 @@ package com.miaokatze.gtmb.client.hologram;
 import static com.miaokatze.gtmb.client.hologram.HologramUiCanvas.*;
 import static net.minecraft.client.gui.Gui.*;
 
+import net.minecraft.client.Minecraft;
+import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
+import net.minecraft.tileentity.TileEntity;
+
+import com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector;
 
 /** Minecraft screen adapter. Domain state and behavior live in composed workflow modules. */
 public final class HologramScreen extends HologramMuiCanvasScreen implements HologramUiHost {
@@ -22,11 +27,99 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     private String detachedTopic;
     private Runnable detachedReturn;
     private boolean domainInitialized;
+    private long controllerRequest;
+    private TileEntity openingController;
+    private Object openingConnection;
+    private ItemStack openingTool;
+    private String openingToolId;
+    private int openingSlot;
 
     HologramScreen(HologramState state) {
         super("workstation");
         ui.session.initialize(state);
         workspaceGraphs.retain(state, () -> ui);
+    }
+
+    HologramScreen(TileEntity tile, int dimension, long request) {
+        this(controllerWaitingState(dimension, tile.xCoord, tile.yCoord, tile.zCoord));
+        Minecraft client = minecraft();
+        controllerRequest = request;
+        openingController = tile;
+        openingConnection = client.getNetHandler();
+        openingTool = client.thePlayer.getHeldItem();
+        openingToolId = toolId(openingTool);
+        openingSlot = client.thePlayer.inventory.currentItem;
+    }
+
+    static HologramState controllerWaitingState(int dimension, int x, int y, int z) {
+        NBTTagCompound data = new NBTTagCompound();
+        data.setString("editorWorkspace", "projection");
+        data.setString("workspaceTab", "structure");
+        data.setString("title", HologramClient.text("controllerOpening", "Reading controller"));
+        data.setBoolean("target", true);
+        data.setBoolean("controllerOpening", true);
+        data.setBoolean("snapshotPending", true);
+        data.setBoolean("areaSelectionShell", true);
+        data.setInteger("dimension", dimension);
+        data.setInteger("x", x);
+        data.setInteger("y", y);
+        data.setInteger("z", z);
+        return new HologramState(data);
+    }
+
+    long controllerRequest() {
+        return controllerRequest;
+    }
+
+    boolean controllerOpeningCurrent() {
+        Minecraft client = minecraft();
+        if (controllerRequest == 0 || !HologramClient.controllerOpen.accepts(controllerRequest)
+            || client.thePlayer == null
+            || client.theWorld == null
+            || client.getNetHandler() != openingConnection
+            || client.theWorld != openingController.getWorldObj()
+            || client.thePlayer.inventory.currentItem != openingSlot
+            || client.theWorld
+                .getTileEntity(openingController.xCoord, openingController.yCoord, openingController.zCoord)
+                != openingController)
+            return false;
+        ItemStack held = client.thePlayer.getHeldItem();
+        if (!ItemNekoHologramProjector.isProjector(held)) return false;
+        String heldId = toolId(held);
+        // Opening an unlinked projector assigns its ID server-side and can replace the local stack on sync.
+        if (openingToolId.isEmpty()) return held == openingTool || !heldId.isEmpty();
+        return openingToolId.equals(heldId);
+    }
+
+    boolean acceptsControllerTool(String serverToolId) {
+        String heldId = toolId(minecraft().thePlayer.getHeldItem());
+        return heldId.isEmpty() || serverToolId.isEmpty() || heldId.equals(serverToolId);
+    }
+
+    private static String toolId(ItemStack stack) {
+        return stack == null || !stack.hasTagCompound() ? ""
+            : stack.getTagCompound()
+                .getString("gtitHologramToolId");
+    }
+
+    void controllerOpened() {
+        controllerRequest = 0;
+        openingController = null;
+        openingConnection = null;
+        openingTool = null;
+        openingToolId = null;
+    }
+
+    boolean closeControllerOpening() {
+        if (controllerRequest == 0) return false;
+        HologramClient.controllerOpen.dismiss(controllerRequest);
+        if (minecraft().currentScreen == this) minecraft().displayGuiScreen(null);
+        return true;
+    }
+
+    private void deferControllerClose() {
+        HologramClient.controllerOpen.dismiss(controllerRequest);
+        deferAction(this::closeControllerOpening);
     }
 
     private HologramScreen(String topic, boolean replay, Runnable returnToStorage) {
@@ -108,7 +201,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         if (detached) return;
         if (websiteConfirmationResumePending) websiteConfirmationResumePending = false;
         ui.canvas.resize();
-        HologramBackgroundTasks.restoreUi(ui);
+        if (controllerRequest == 0) HologramBackgroundTasks.restoreUi(ui);
     }
 
     void resumeAfterWebsiteConfirmation() {
@@ -124,7 +217,8 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             if (detached) {
                 ui.tutorial.closeWithoutProgress();
                 endTutorialFields();
-            } else ui.router.onGuiClosed();
+            } else if (controllerRequest == 0) ui.router.onGuiClosed();
+            else org.lwjgl.input.Keyboard.enableRepeatEvents(false);
         } finally {
             // This hook runs on final MUI panel disposal, unlike onGuiClosed's
             // temporary website/NEI suspensions. Dormant graph GPU resources end here.
@@ -160,6 +254,10 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             endTutorialFields();
             return;
         }
+        if (controllerRequest > 0) {
+            HologramClient.controllerOpen.dismiss(controllerRequest);
+            return;
+        }
         ui.memory.rememberUi();
         HologramBackgroundTasks.rememberUi(ui);
         if (ui.ae.aePreviewTransition()) ui.ae.aePreviewTransition(false);
@@ -174,6 +272,13 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     }
 
     public void updateScreen() {
+        if (controllerRequest > 0) {
+            if (!controllerOpeningCurrent()) closeControllerOpening();
+            else try (FieldGraph ignored = fieldGraph(ui)) {
+                ui.shell.tick();
+            }
+            return;
+        }
         if (detached) {
             if (!detachedStarted) {
                 if (detachedHostReady()) tryDeferAction(() -> {
@@ -281,7 +386,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     }
 
     public void keyTyped(char c, int key) {
-        if (detached) return;
+        if (detached || controllerRequest > 0 && muiKeyBefore(c, key)) return;
         ui.router.keyTyped(c, key);
     }
 
@@ -334,6 +439,10 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     protected boolean muiKeyBefore(char character, int key) {
         boolean back = key == org.lwjgl.input.Keyboard.KEY_ESCAPE
             || key == org.lwjgl.input.Keyboard.KEY_E && !ui.router.textFieldFocused();
+        if (controllerRequest > 0) {
+            if (back) deferControllerClose();
+            return true;
+        }
         if (back && ui.tutorial.active()) {
             deferAction(ui.tutorial::closeWithoutProgress);
             return true;
@@ -359,6 +468,10 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
 
     @Override
     protected boolean muiMouseBefore(int button) {
+        if (controllerRequest > 0) {
+            if (ui.shell.controllerOpeningExitHovered(button)) deferControllerClose();
+            return true;
+        }
         if (ui.tutorial.blockInput()) return button != 0 || !ui.tutorial.navigationContains(
             getScreen().getContext()
                 .getAbsMouseX(),
@@ -370,7 +483,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
 
     @Override
     protected boolean muiScrollBefore() {
-        return ui.tutorial.blockInput() || detached && !ui.tutorial.active();
+        return controllerRequest > 0 || ui.tutorial.blockInput() || detached && !ui.tutorial.active();
     }
 
     @Override

@@ -269,6 +269,10 @@ final class HologramUiSession {
         return this.state.data.getBoolean("areaImporting");
     }
 
+    boolean controllerOpening() {
+        return state.data.getBoolean("controllerOpening");
+    }
+
     boolean editable() {
         if (HologramBackgroundTasks.busy()) return false;
         int job = this.state.data.getInteger("job");
@@ -320,6 +324,7 @@ final class HologramUiSession {
             tutorialSink.accept(op, request == null ? new NBTTagCompound() : (NBTTagCompound) request.copy());
             return;
         }
+        if (controllerOpening()) return;
         if (!ui.diagnostics.captureRenderSmokeAction() && !HologramBackgroundTasks.commandAllowed(op)) return;
         sequence = Math.max(sequence, HologramBackgroundTasks.commandSequence(state.session));
         if ("switchEditorWorkspace".equals(op)) sequence = Math.max(sequence, HologramClient.editorWorkspaceSequence());
@@ -402,6 +407,7 @@ final class HologramUiSession {
     }
 
     HologramProgress progress() {
+        if (controllerOpening()) return HologramClient.controllerOpen.progress();
         if (HologramBackgroundTasks.busy()) return HologramBackgroundTasks.progress();
         HologramProgress server = HologramClientProgress.view("server", state.session);
         if (server != null && !server.complete) return server;

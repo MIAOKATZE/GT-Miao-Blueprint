@@ -76,6 +76,8 @@ final class HologramUiRouter {
     }
 
     void closeRoot() {
+        if (ui.session.controllerOpening() && ui.host.parent()
+            .closeControllerOpening()) return;
         if (ui.workspaces.hasProjectionContent()) ui.review.dismissConfirmation();
         if (HologramBackgroundTasks.busy() && !ui.diagnostics.captureRenderSmokeAction()) {
             ui.memory.rememberUi();
