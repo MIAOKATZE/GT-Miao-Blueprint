@@ -57,6 +57,12 @@ final class HologramPlacementJobs {
 
     static void tickJob(HologramSession s) {
         if (s.job != 1) return;
+        try (var updates = HologramMachineUpdateBatch.open()) {
+            tickJobBatch(s);
+        }
+    }
+
+    private static void tickJobBatch(HologramSession s) {
         if (HologramConstructionJournal.pending(s.player)) {
             s.job = 4;
             s.phase = "STOPPED";

@@ -264,7 +264,10 @@ public final class HologramTutorialIssue100Probe {
                     "actorMode",
                     HologramFourMachineRuntimeProbe.enabled()
                         ? "Real non-OP SURVIVAL; finite recorded inventory fixture; complete inventory/slot/position restoration"
-                        : HologramOwnedLargeBlueprintProbe.ENABLED ? "Owned creative preview and placement fixture"
+                        : HologramOwnedLargeBlueprintProbe.ENABLED
+                            ? Boolean.getBoolean("gtmb.testlab.ownedLargeBlueprintFinite")
+                                ? "Real non-OP SURVIVAL; finite three-material native blueprint fixture"
+                                : "Owned creative preview and placement fixture"
                             : TURBINE
                                 ? "Owned turbine fixture: creative initial construction; survival repair; fixture stock"
                                 : HologramControllerWorldProjectionProbe.enabled()
@@ -646,6 +649,8 @@ public final class HologramTutorialIssue100Probe {
                 output.resolve("gtmb-large-blueprint-world.json"),
                 json(receipt),
                 java.nio.file.StandardOpenOption.CREATE_NEW);
+            if (Boolean.getBoolean(HologramOwnedLargeBlueprintProbe.FLAG + "Finite"))
+                HologramTestLabUiProfile.install();
         } else if (TURBINE) {
             receipt.put("schema", "gtmb-gtsr-native-turbine-stock-world-v1");
             receipt.put(

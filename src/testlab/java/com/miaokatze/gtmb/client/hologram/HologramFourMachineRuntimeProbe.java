@@ -52,6 +52,7 @@ final class HologramFourMachineRuntimeProbe {
     private final List<MachineCase> cases = new ArrayList<>();
     private final List<Map<String, Object>> caseResults = new ArrayList<>();
     private final Map<String, Object> report = new LinkedHashMap<>();
+    private final HologramFourMachinePerformanceProbe performance;
     private final List<Map<String, Object>> steps = new ArrayList<>();
     private final java.util.Set<String> capturedPanels = new java.util.HashSet<>();
     private volatile HologramFourMachineWorldFixture fixture;
@@ -65,11 +66,19 @@ final class HologramFourMachineRuntimeProbe {
     private HologramFourMachineWireAudit.Begin submittedBegin;
     private int submittedOperation, submittedSources, submittedDestination;
     private int beginsBefore;
+    private UUID performanceTerminal;
+    private HologramClientStockNative.Context submittedContext;
+    private NBTTagCompound submittedSettings;
+    private String submittedTool;
+    private int submittedSlot;
+    private boolean submittedScreenClosed, performanceCompleted, businessReopened, businessReopenedDrawn;
     private long submittedAt;
     private long cleanupAuditAt;
     private int phase, ticks, submitPhase;
     private long since = System.nanoTime();
-    private boolean tutorialExit, done, restored;
+    private final HologramFourMachineScreenVisit screenVisit = new HologramFourMachineScreenVisit();
+    private Boolean tutorialObservedActive;
+    private boolean done, restored;
     private boolean initialStageAttempted, unformedCycle;
     private int caseIndex, sourcePhase, editPhase, channelIndex;
     private int disabledActionIndex, disabledActionBegins;
@@ -122,6 +131,7 @@ final class HologramFourMachineRuntimeProbe {
         report.put("cleanupPending", true);
         report.put("input", "Real MUI widget events, normal stock PROBE/BEGIN wire, real non-OP survival actor");
         parent.put("fourMachineRuntime", report);
+        performance = new HologramFourMachinePerformanceProbe(report);
     }
 
     void server(WorldServer world) throws Exception {
@@ -208,13 +218,18 @@ final class HologramFourMachineRuntimeProbe {
                 0,
                 current().facing.getDirection()
                     .ordinal());
-            screen.openFrom(mc.currentScreen);
+            GuiScreen previous = mc.currentScreen;
+            screenVisit.open(screen, () -> screen.openFrom(previous));
+            tutorialObservedActive = null;
             next();
             return false;
         }
-        require(
-            mc.currentScreen == screen || phase == 27 || phase == 28 || phase == 29,
-            "Native machine screen ownership changed");
+        if (mc.currentScreen != screen) {
+            if (businessWaitPhase()) requireDetachedBusiness(mc);
+            else require(
+                (phase == 28 || phase == 29) && mc.currentScreen == null,
+                "Native machine screen ownership changed");
+        }
         report.put("lastState", screen.ui.session.state().data.toString());
         report.put(
             "lastMaterialDialog",
@@ -225,10 +240,17 @@ final class HologramFourMachineRuntimeProbe {
         report.put(
             "flowRequest",
             String.valueOf(HologramClientStockNative.OWNER.requestFor(screen, HologramClientStockNative.context(mc))));
-        if (screen.ui.tutorial.active()) {
-            if (!tutorialExit) {
-                tutorialExit = true;
+        boolean tutorialActive = screen.ui.tutorial.active();
+        report.put("lastTutorialActive", tutorialActive);
+        if (tutorialObservedActive == null || tutorialObservedActive != tutorialActive) {
+            tutorialObservedActive = tutorialActive;
+            record("natural-tutorial-active-state", screen.ui.tutorial.diagnosticState());
+        }
+        if (tutorialActive) {
+            if (screenVisit.takeTutorialExit(screen, true)) {
+                record("tutorial-escape-dispatch-before", screen.ui.tutorial.diagnosticState());
                 HologramMuiProbeInput.key(screen, (char) 0, Keyboard.KEY_ESCAPE);
+                record("tutorial-escape-dispatch-after", screen.ui.tutorial.diagnosticState());
             }
             return false;
         }
@@ -616,7 +638,6 @@ final class HologramFourMachineRuntimeProbe {
                 sourcePhase = 0;
                 editPhase = 0;
                 disabledActionIndex = 0;
-                tutorialExit = false;
                 pending = fixture.request(() -> fixture.stageController(current().spec, current().facing));
                 phase = 0;
                 ticks = 0;
@@ -816,6 +837,20 @@ final class HologramFourMachineRuntimeProbe {
                 | (screen.ui.config.sourceEnabled("materialContainers") ? 2 : 0)
                 | (screen.ui.config.sourceEnabled("materialMe") ? 4 : 0);
             submittedDestination = destination;
+            Minecraft mc = Minecraft.getMinecraft();
+            submittedContext = HologramClientStockNative.context(mc);
+            submittedSettings = (NBTTagCompound) screen.ui.config.configuration()
+                .copy();
+            submittedSlot = mc.thePlayer.inventory.currentItem;
+            submittedTool = mc.thePlayer.getHeldItem()
+                .getTagCompound()
+                .getString("gtitHologramToolId");
+            submittedScreenClosed = false;
+            performanceCompleted = false;
+            businessReopened = false;
+            businessReopenedDrawn = false;
+            performance
+                .submitted(current().spec.key, current().facing.toString(), phase, operation.name(), unformedCycle);
             click("materials.control.55");
             record("material-submit-post-input-" + operation, screen.ui.review.materialDialogProbeState());
             record("material-submit-post-notice-" + operation, screen.ui.session.notice());
@@ -827,6 +862,8 @@ final class HologramFourMachineRuntimeProbe {
     }
 
     private boolean completed() {
+        if (submittedBegin != null && submittedBegin.request.equals(performanceTerminal))
+            return finishBusinessObservation();
         if (submittedBegin == null) {
             submittedBegin = wire.beginAfter(beginsBefore);
             if (submittedBegin != null) {
@@ -873,6 +910,94 @@ final class HologramFourMachineRuntimeProbe {
         if (aeRecoveryReplace() && (phase == 23 || phase == 34)) require(
             submittedBegin.destination == 1,
             "AE replacement recovery did not enter actual business wire destination");
+        performanceTerminal = submittedBegin.request;
+        return finishBusinessObservation();
+    }
+
+    private boolean businessWaitPhase() {
+        return phase == 4 || phase == 11 || phase == 17 || phase == 23 || phase == 27 || phase == 34 || phase == 40;
+    }
+
+    private void requireDetachedBusiness(Minecraft mc) {
+        require(mc.currentScreen == null, "A competing GUI replaced the submitted native machine screen");
+        require(
+            submittedContext != null && submittedContext.same(HologramClientStockNative.context(mc)),
+            "Detached native business connection/world/player/dimension changed");
+        ItemStack held = mc.thePlayer.getHeldItem();
+        require(
+            mc.thePlayer.inventory.currentItem == submittedSlot && held != null
+                && held.getItem() == ProjectorRegistry.projector
+                && held.hasTagCompound()
+                && submittedTool.equals(
+                    held.getTagCompound()
+                        .getString("gtitHologramToolId")),
+            "Detached native business projector identity or slot changed");
+        var begin = submittedBegin == null ? wire.beginAfter(beginsBefore) : submittedBegin;
+        require(
+            begin != null && begin.ordinal == beginsBefore + 1
+                && wire.beginCount() == begin.ordinal
+                && begin.operation == submittedOperation
+                && (begin.sources & 7) == submittedSources
+                && begin.destination == submittedDestination,
+            "Screen closed without exactly the submitted real business BEGIN");
+        var reply = wire.latest(begin.request);
+        require(
+            reply != null && (reply.phase() == HologramStockNativeWire.Phase.ACCEPTED
+                || reply.phase() == HologramStockNativeWire.Phase.ACTIVE
+                || reply.phase() == HologramStockNativeWire.Phase.COMPLETE),
+            "Screen closed without a matching admitted or completed real business reply");
+        if (!submittedScreenClosed) {
+            submittedScreenClosed = true;
+            record(
+                "production-start-closed-screen",
+                "request=" + begin.request
+                    + "; admitted="
+                    + reply.phase()
+                    + "; exact context/tool retained; no competing GUI");
+        }
+    }
+
+    private boolean finishBusinessObservation() {
+        if (!performanceCompleted) {
+            if (!performance.completed(submittedBegin.request.toString())) return false;
+            performanceCompleted = true;
+        }
+        Minecraft mc = Minecraft.getMinecraft();
+        require(
+            !HologramClientStockNative.OWNER.pendingHere(HologramClientStockNative.context(mc)),
+            "Matching COMPLETE left a live native business Flow");
+        if (submittedOperation == HologramStockNativeWire.Operation.DEMOLISH.ordinal()) {
+            require(mc.currentScreen == null, "Demolition retained or replaced its closed native machine screen");
+            return true;
+        }
+        if (!businessReopened && submittedScreenClosed) {
+            requireDetachedBusiness(mc);
+            int[] p = fixture.anchor();
+            require(
+                mc.theWorld
+                    .getTileEntity(p[0], p[1], p[2]) instanceof gregtech.api.metatileentity.BaseMetaTileEntity base
+                    && base.getMetaTileID() == current().spec.controllerId,
+                "Completed native action lost the real controller before reopening");
+            screen = HologramScreen.localController(
+                mc.theWorld.getTileEntity(p[0], p[1], p[2]),
+                mc.thePlayer.dimension,
+                current().facing.getDirection()
+                    .ordinal());
+            screenVisit.open(screen, () -> screen.openFrom(null));
+            tutorialObservedActive = null;
+            require(mc.currentScreen == screen, "Production localController/openFrom did not acquire the new screen");
+            screen.refreshLocalController((NBTTagCompound) submittedSettings.copy());
+            businessReopened = true;
+            record(
+                "production-controller-reopen-callback",
+                "New localController/openFrom; submitted configuration replayed through refreshLocalController; callback observation, not a user click");
+            return false;
+        }
+        require(mc.currentScreen == screen, "Native machine screen ownership changed after completed business");
+        if (businessReopened
+            && (!businessReopenedDrawn || !screen.ui.session.state().data.getBoolean("nativeTargetReady")
+                || screen.ui.session.state().data.getBoolean("capturePending")))
+            return false;
         return true;
     }
 
@@ -1205,6 +1330,10 @@ final class HologramFourMachineRuntimeProbe {
 
     void guiPost(GuiScreen gui, long frame) throws Exception {
         if (gui != screen) return;
+        if (businessReopened && !businessReopenedDrawn) {
+            businessReopenedDrawn = true;
+            record("production-controller-reopen-natural-gui-post", frame);
+        }
         capturePanelFrame("presets", "config.presets", frame);
         capturePanelFrame("channels", "config.channels", frame);
         if (screen.ui.review.materialDialogOpen() && screen.ui.review.materialDialogProbeState()
@@ -1269,6 +1398,7 @@ final class HologramFourMachineRuntimeProbe {
 
     boolean finish(Minecraft mc) throws Exception {
         if (restored) return true;
+        performance.close();
         var context = HologramClientStockNative.context(mc);
         if (HologramClientStockNative.OWNER.pendingHere(context)) {
             report.put("pendingRequest", String.valueOf(HologramClientStockNative.OWNER.requestFor(screen, context)));

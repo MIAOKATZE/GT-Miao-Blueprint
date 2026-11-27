@@ -559,6 +559,12 @@ public final class HologramNativeLocalConstruction {
         }
 
         boolean step(long deadline) {
+            try (var updates = HologramMachineUpdateBatch.open()) {
+                return stepBatch(deadline);
+            }
+        }
+
+        private boolean stepBatch(long deadline) {
             if (!current()) return stop(Phase.CANCELLED, "施工已停止，未完成部分不再扣料");
             int old = placed + satisfied;
             try {

@@ -410,6 +410,12 @@ final class HologramNativeProjectionJob {
 
     State drain(long deadline, PermitAdmission admission) {
         if (state != State.ACTIVE) return state;
+        try (var updates = HologramMachineUpdateBatch.open()) {
+            return drainBatch(deadline, admission);
+        }
+    }
+
+    private State drainBatch(long deadline, PermitAdmission admission) {
         try {
             if (!current() || HologramConstructionAuthority.hasKnownRecovery(endpoint.player))
                 return stop("原生结构、工具或恢复状态已变化。");

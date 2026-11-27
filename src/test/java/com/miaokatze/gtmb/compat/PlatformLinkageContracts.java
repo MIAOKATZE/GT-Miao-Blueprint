@@ -66,7 +66,7 @@ public final class PlatformLinkageContracts {
             }
         }
         if (!contract.failures.isEmpty()) throw new AssertionError(String.join("\n", contract.failures));
-        if (contract.references < 100 || contract.selectors < 8 || contract.mixins != 10 || contract.targets < 1)
+        if (contract.references < 100 || contract.selectors < 9 || contract.mixins != 11 || contract.targets < 1)
             throw new AssertionError("Incomplete platform coverage");
         System.out.println(
             "GTNH " + args[0]
