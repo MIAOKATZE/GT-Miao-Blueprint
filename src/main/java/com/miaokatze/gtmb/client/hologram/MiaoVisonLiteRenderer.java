@@ -280,9 +280,9 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     static void worldSnapshotChanged(HologramState previous, HologramState next, Set<HologramRegionCache.Key> dirty,
         HologramPreviewAssets assets) {
         if (worldState == previous) {
-            if (worldIndex != previous.cells.size()
-                && (next.changedIndices.length != 0 || !next.changedPreviousCells.isEmpty())) {
-                clearWorldGroups();
+            if (worldIndex != previous.cells.size()) {
+                // A metadata-only publication shares the unfinished occupancy index, including its cursor.
+                if (next.changedIndices.length != 0 || !next.changedPreviousCells.isEmpty()) clearWorldGroups();
             } else {
                 for (HologramRegionCache.Key key : dirty) {
                     WorldGroup group = worldGroups.get(coordinate(key.x, key.y, key.z));

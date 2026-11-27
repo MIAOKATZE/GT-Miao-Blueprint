@@ -4,6 +4,9 @@
 package com.miaokatze.gtmb.client.hologram;
 
 import java.io.IOException;
+import java.lang.reflect.AccessibleObject;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Collections;
@@ -34,6 +37,7 @@ public final class HologramRenderingRegression {
         detachedTopologyRuns();
         editorDescriptorOwnership();
         worldRegionCandidates();
+        worldIndexPublications();
         sourceSwitchFence();
         cameraNavigationWhilePreparing();
         orderedPreviewBatches();
@@ -339,6 +343,75 @@ public final class HologramRenderingRegression {
         int local = ((cx & 15) << 8) | ((cy & 15) << 4) | (cz & 15);
         int actual = MiaoVisonLiteRenderer.BoundaryNeighborhood.edges(regions, local);
         SimpleAssert.eq(expected, actual, "all twelve edge positions match the original ownership and crease rule");
+    }
+
+    /** A metadata receipt may arrive between any two cooperative world-index slices. No GL context is needed. */
+    static void worldIndexPublications() {
+        NBTTagCompound source = new NBTTagCompound();
+        source.setString("session", "world-index");
+        source.setInteger("mode", 2);
+        NBTTagList rows = new NBTTagList();
+        for (int i = 0; i < 1000; i++) {
+            NBTTagCompound row = new NBTTagCompound();
+            row.setInteger("x", i);
+            row.setString("id", "minecraft:stone");
+            row.setString("wantId", "minecraft:air");
+            rows.appendTag(row);
+        }
+        source.setTag("cells", rows);
+        HologramState before = new HologramState(source);
+        Class<?> renderer = MiaoVisonLiteRenderer.class;
+        try {
+            Field owner = renderer.getDeclaredField("worldState"),
+                cursor = renderer.getDeclaredField("worldIndex"),
+                occupancy = renderer.getDeclaredField("worldOutlineCells");
+            Method one = renderer.getDeclaredMethod("indexWorldCell", HologramState.class, HologramState.Cell.class),
+                finish = renderer.getDeclaredMethod("indexWorld", HologramState.class, long.class);
+            for (AccessibleObject field : new AccessibleObject[] {
+                owner, cursor, occupancy, one, finish }) field.setAccessible(true);
+            int[][] trials = { { 100, -1 }, { 0, -1 }, { 1000, -1 }, { 100, 3 }, { 100, 900 }, { 1000, 3 } };
+            for (int[] trial : trials) {
+                MiaoVisonLiteRenderer.releaseWorld();
+                owner.set(null, before);
+                int prefix = trial[0], changed = trial[1];
+                for (int i = 0; i < prefix; i++) one.invoke(null, before, before.cells.get(i));
+                cursor.setInt(null, prefix);
+                NBTTagCompound patch = new NBTTagCompound();
+                patch.setBoolean("partial", true);
+                patch.setString("session", before.session);
+                patch.setLong("baseRevision", 0);
+                patch.setLong("planRevision", 1);
+                patch.setInteger("cellCount", before.cells.size());
+                patch.setLong("uiSequence", 7);
+                if (changed >= 0) {
+                    NBTTagCompound row = (NBTTagCompound) rows.getCompoundTagAt(changed).copy();
+                    row.setInteger("index", changed);
+                    row.setString("id", "minecraft:air");
+                    NBTTagList delta = new NBTTagList();
+                    delta.appendTag(row);
+                    patch.setTag("cells", delta);
+                }
+                HologramState after = HologramState.apply(before, patch);
+                if (changed < 0) SimpleAssert.that(after.cells == before.cells && after.regions == before.regions,
+                    "metadata shares original geometry");
+                HologramRenderer.snapshotChanged(before, after);
+                int saved = cursor.getInt(null);
+                finish.invoke(null, after, Long.MAX_VALUE);
+                int total = ((java.util.Set<?>) occupancy.get(null)).size();
+                SimpleAssert.eq(changed < 0 ? 1000 : 999, total, "all unfiltered cells must reach world occupancy");
+                SimpleAssert.eq(changed < 0 || prefix == 1000 ? prefix : 0, saved,
+                    "retain metadata prefix, restart incomplete changed geometry, patch complete geometry in place");
+                SimpleAssert.that(owner.get(null) == after && cursor.getInt(null) == after.cells.size(),
+                    "the new state owns the fully resumed index");
+                HologramRenderer.snapshotChanged(after, before);
+                SimpleAssert.that(owner.get(null) == null && cursor.getInt(null) == 0,
+                    "a reverse publication cannot inherit another state's occupancy");
+            }
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError(failure);
+        } finally {
+            MiaoVisonLiteRenderer.releaseWorld();
+        }
     }
 
     private static void worldRegionCandidates() {
