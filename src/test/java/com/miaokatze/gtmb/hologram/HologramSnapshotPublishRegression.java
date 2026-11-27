@@ -715,6 +715,9 @@ public final class HologramSnapshotPublishRegression {
             SimpleAssert.that(
                 s.localPlanPending && !s.localPlanError.isEmpty(),
                 "real deferred planner failure remains fenced");
+            SimpleAssert.that(!HologramDeferredPlanRefresh.failInitialExecution(s, ignored -> {
+                throw new AssertionError("a recoverable editor draft must not be cancelled");
+            }), "failed editing remains recoverable");
             s.pins.put(0, new net.minecraft.item.ItemStack(net.minecraft.init.Blocks.dirt));
             s.planTargets.add(new net.minecraft.item.ItemStack(net.minecraft.init.Blocks.diamond_block));
             s.planFacings.put(0, 5);

@@ -82,9 +82,29 @@ final class HologramDeferredPlanRefresh {
             HologramWorkBudget.remainingNanos(NANOS_PER_TICK),
             HologramLocalPlanRefresh::completed);
         if (pending && !s.cancelled && HologramWorkspace.find(s.player.getUniqueID()) == s) {
-            if (!s.localPlanError.isEmpty() && !s.localPlanError.equals(error)) HologramLocalPlanRefresh.failed(s);
+            if (!s.localPlanError.isEmpty() && !s.localPlanError.equals(error)) {
+                if (failInitialExecution(s,
+                    reason -> HologramProjectedPlacementService.reply(s.player, s.executionRequestId, false, reason)))
+                    return;
+                HologramLocalPlanRefresh.failed(s);
+            }
             HologramSnapshots.sendProgress(s);
         }
+    }
+
+    /** A new uploaded review has no baseline capable of receiving a plan-error delta. */
+    static boolean failInitialExecution(HologramSession s, java.util.function.Consumer<String> reject) {
+        if (s.localPlanError.isEmpty() || s.executionRequestId.isEmpty() || !s.localPlanPending
+            || !s.blueprintAwaitingConfirmation || s.placementReviewIssued || !s.placementValidating
+            || s.placementReviewNonce != 1 || s.job != 0 || s.cancelled || !s.virtual || !s.virtualLocked
+            || HologramWorkspace.find(s.player.getUniqueID()) != s) return false;
+        s.placementValidating = false;
+        try {
+            reject.accept(s.localPlanError + "；未施工，未扣除材料。");
+        } finally {
+            HologramWorldPlacementWorkflow.cancelExecution(s);
+        }
+        return true;
     }
 
     /** Deterministic budget/completion ports exercise the production lifecycle without network publication. */
