@@ -56,6 +56,10 @@ public final class HologramBlueprintParticipation {
         return !disabledMember;
     }
 
+    public boolean hasDisabledMembers() {
+        return hasDisabled;
+    }
+
     public boolean includes(JsonObject cell) {
         if (!hasDisabled) return true;
         JsonElement ids = cell.get("structureIds");

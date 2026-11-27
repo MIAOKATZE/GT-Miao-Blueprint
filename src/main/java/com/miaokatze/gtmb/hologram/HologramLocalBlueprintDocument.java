@@ -397,10 +397,16 @@ public final class HologramLocalBlueprintDocument {
         }
 
         public void visitDisplayCells(DisplayCell visitor, java.util.function.BooleanSupplier current) throws IOException {
-            HologramBlueprintParticipation participation = HologramBlueprintParticipation.fromPreset(document);
+            visitDisplayCells(visitor, current, false);
+        }
+
+        public void visitDisplayCells(DisplayCell visitor, java.util.function.BooleanSupplier current,
+            boolean placement) throws IOException {
+            HologramBlueprintParticipation participation = placement
+                ? HologramBlueprintParticipation.fromPreset(document) : null;
             for (Cell cell : document.cells) {
                 if (!current.getAsBoolean()) throw new IOException("蓝图预览已取消");
-                if (!cell.excluded && participation.includes(cell)) visitor.accept(
+                if (!cell.excluded && (participation == null || participation.includes(cell))) visitor.accept(
                     cell.x, cell.y, cell.z, text(cell.block), cell.metadata, text(cell.item), cell.damage, cell.facing,
                     text(cell.tileNbt), text(cell.itemNbt));
             }

@@ -179,6 +179,7 @@ final class HologramLibraryClient {
         HologramSavedMaterialSource savedMaterials;
         // Stays attached to these exact bytes when the transient geometry is released after browsing.
         boolean compactSource;
+        private boolean participationSensitive, placementProjection;
         private boolean checkedStoredUse; // set only by the single IO worker for these immutable bytes
         volatile HologramState state;
         String hash;
@@ -211,6 +212,19 @@ final class HologramLibraryClient {
             this.publicId = publicId;
             this.hash = hash;
             this.revision = revision;
+        }
+
+        boolean displayMatches(boolean placement) {
+            return !participationSensitive || placementProjection == placement;
+        }
+
+        void captureDisplay(HologramBlueprintPreview.DisplayInput input, boolean placement) {
+            snapshot = input.snapshot;
+            compactCells = input.cells;
+            savedMaterials = input.savedMaterials;
+            compactSource = input.cells != null;
+            participationSensitive = input.participationSensitive;
+            placementProjection = placement;
         }
 
         /** Historical observation on this capture; not a live index check, a pair receipt, or placement authority. */
@@ -1446,7 +1460,7 @@ final class HologramLibraryClient {
         status = "正在读取蓝图预览";
         localProgressPhase = "library.read";
         work(() -> {
-            DisplaySource source = readSavedDisplaySource(id, store.savedDisplayPath(id), !placement, token, epoch);
+            DisplaySource source = readSavedDisplaySource(id, store.savedDisplayPath(id), !placement, token, epoch, placement);
             if (placement) source.requireStoredUse();
             main(() -> {
                 if (discardedBrowse(token, epoch, placement)) return;
@@ -1509,42 +1523,48 @@ final class HologramLibraryClient {
 
     DisplaySource readDisplaySource(String key, java.nio.file.Path path, String localId, String publicId)
         throws java.io.IOException {
-        return readDisplaySource(key, path, localId, publicId, false, generation, browseEpoch, false);
+        return readDisplaySource(key, path, localId, publicId, false, generation, browseEpoch, false, false);
     }
 
     DisplaySource readSavedDisplaySource(String id, HologramClientLibrary.SavedDisplayPath selected, boolean thumbnail,
         long token, long epoch) throws java.io.IOException {
-        return readDisplaySource("local:" + id, selected.path(), id, "", thumbnail, token, epoch, selected.indexed());
+        return readSavedDisplaySource(id, selected, thumbnail, token, epoch, false);
+    }
+
+    DisplaySource readSavedDisplaySource(String id, HologramClientLibrary.SavedDisplayPath selected, boolean thumbnail,
+        long token, long epoch, boolean placement) throws java.io.IOException {
+        return readDisplaySource(
+            "local:" + id, selected.path(), id, "", thumbnail, token, epoch, selected.indexed(), placement);
     }
 
     private DisplaySource readDisplaySource(String key, java.nio.file.Path path, String localId, String publicId,
-        boolean thumbnail, long token, long epoch, boolean indexedDisplayPath) throws java.io.IOException {
+        boolean thumbnail, long token, long epoch, boolean indexedDisplayPath, boolean placement)
+        throws java.io.IOException {
         String stamp = fileStamp(path);
         DisplaySource cached;
         synchronized (localPreviews) {
             cached = localPreviews.get(key);
         }
-        if (cached != null && stamp.equals(cached.stamp) && localId.equals(cached.localId)
-            && publicId.equals(cached.publicId) && indexedDisplayPath == cached.indexedDisplayPath) {
+        boolean sameCapture = cached != null && stamp.equals(cached.stamp) && localId.equals(cached.localId)
+            && publicId.equals(cached.publicId) && indexedDisplayPath == cached.indexedDisplayPath;
+        if (sameCapture && cached.displayMatches(placement)) {
             // The existing stamp is a reuse hint, not proof that on-disk content still equals the captured bytes.
             if (thumbnail && cached.thumbnail == null) queueBrowseImage(cached, path, token, epoch);
             return cached;
         }
-        byte[] json = readDisplayBytes(path, HologramBlueprintArtifact.MAX_JSON_BYTES);
+        byte[] json = sameCapture ? cached.json : readDisplayBytes(path, HologramBlueprintArtifact.MAX_JSON_BYTES);
         if (!stamp.equals(fileStamp(path))) throw new java.io.IOException("蓝图文件已变化，请重试");
         DisplaySource source = new DisplaySource(key, stamp, json, null, localId, publicId, "", "", null,
             indexedDisplayPath);
-        if (thumbnail) queueBrowseImage(source, path, token, epoch);
+        if (sameCapture) source.thumbnail = cached.thumbnail;
+        if (thumbnail && source.thumbnail == null) queueBrowseImage(source, path, token, epoch);
         observeDisplay(token, "library.parse", 0, 0, "");
         // savedPath also serves untracked portable files. A local selection is not durable index membership.
         boolean savedPrivate = publicId.isEmpty() && localId.matches("local_[a-fA-F0-9-]{36}")
             && key.equals("local:" + localId);
         HologramBlueprintPreview.DisplayInput input = HologramBlueprintPreview.displayInput(
-            json, (done, total) -> observeDisplay(token, "library.parse", done, total, "cells"), savedPrivate);
-        source.snapshot = input.snapshot;
-        source.compactCells = input.cells;
-        source.savedMaterials = input.savedMaterials;
-        source.compactSource = input.cells != null;
+            json, (done, total) -> observeDisplay(token, "library.parse", done, total, "cells"), savedPrivate, placement);
+        source.captureDisplay(input, placement);
         return source;
     }
 
@@ -1559,7 +1579,7 @@ final class HologramLibraryClient {
         work(() -> {
             HologramClientLibrary.LastSource source = store.lastSource(connection);
             DisplaySource display = !source.publicLibrary && !source.localId.isEmpty()
-                ? readSavedDisplaySource(source.localId, store.savedDisplayPath(source.localId), false, token, browseEpoch)
+                ? readSavedDisplaySource(source.localId, store.savedDisplayPath(source.localId), false, token, browseEpoch, true)
                 : null;
             if (display != null) display.requireStoredUse();
             main(() -> {
@@ -1669,15 +1689,15 @@ final class HologramLibraryClient {
         synchronized (localPreviews) {
             cached = localPreviews.get(key);
         }
-        if (cached == null || !stamp.equals(cached.stamp)) {
+        boolean placement = read.use() == PublicUse.PLACE;
+        if (cached == null || !stamp.equals(cached.stamp) || !cached.displayMatches(placement)) {
             HologramBlueprintPreview.DisplayInput input = HologramBlueprintPreview.displayInput(
                 artifact.json,
-                (done, total) -> observeDisplay(token, "library.parse", done, total, "cells"));
+                (done, total) -> observeDisplay(token, "library.parse", done, total, "cells"), false, placement);
             cached = new DisplaySource(
                 key, stamp, artifact.json, input.snapshot, "", identity.id(), identity.hash(),
                 String.valueOf(identity.revision()));
-            cached.compactCells = input.cells;
-            cached.compactSource = input.cells != null;
+            cached.captureDisplay(input, placement);
             cached.thumbnail = decodeDisplayImage(artifact.png);
         }
         DisplaySource display = cached;
@@ -1686,7 +1706,6 @@ final class HologramLibraryClient {
             if (token != generation || publicRead != read) return;
             publicRead = null;
             retainPublicArtifact(identity, artifact, token);
-            boolean placement = read.use() == PublicUse.PLACE;
             if (discardedBrowse(token, read.browseEpoch(), placement)) return;
             startDisplay(display, placement, read.browseEpoch());
             rememberPublic(identity.id());
@@ -1814,21 +1833,22 @@ final class HologramLibraryClient {
             HologramClientLibrary.SavedDisplayPath saved = localId.matches("local_[a-fA-F0-9-]{36}")
                 ? store.savedDisplayPath(localId) : null;
             if (saved != null && java.nio.file.Files.isRegularFile(saved.path()))
-                source = readSavedDisplaySource(localId, saved, !placement, token, epoch);
+                source = readSavedDisplaySource(localId, saved, !placement, token, epoch, placement);
             else {
                 String key = id.startsWith("legacy:") ? id : "legacy:" + id;
                 String stamp = fileStamp(store.legacyCatalogPath());
                 synchronized (localPreviews) {
                     source = localPreviews.get(key);
                 }
-                if (source == null || !stamp.equals(source.stamp)) {
-                    byte[] json = store.readLegacyDocument(id);
+                boolean sameCapture = source != null && stamp.equals(source.stamp);
+                if (!sameCapture || !source.displayMatches(placement)) {
+                    byte[] json = sameCapture ? source.json : store.readLegacyDocument(id);
                     if (!stamp.equals(fileStamp(store.legacyCatalogPath()))) throw new java.io.IOException("蓝图库已变化，请重试");
                     HologramBlueprintPreview.DisplayInput input = HologramBlueprintPreview.displayInput(
-                        json, (done, total) -> observeDisplay(token, "library.parse", done, total, "cells"));
+                        json, (done, total) -> observeDisplay(token, "library.parse", done, total, "cells"), false,
+                        placement);
                     source = new DisplaySource(key, stamp, json, input.snapshot, "", "", "", "");
-                    source.compactCells = input.cells;
-                    source.compactSource = input.cells != null;
+                    source.captureDisplay(input, placement);
                 }
             }
             if (placement) source.requireStoredUse();

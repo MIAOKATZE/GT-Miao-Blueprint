@@ -123,8 +123,11 @@ public final class HologramLocalPreviewRegression {
             "disabled-only members create no operation; shared and unlinked positions remain");
         SimpleAssert.eq(3, plan.needs().get(0).count(), "disabled-only membership is not payable");
 
-        NBTTagList expanded = HologramBlueprintPreview.snapshot(source).getTagList("cells", 10);
-        SimpleAssert.eq(3, expanded.tagCount(), "historic expanded preview honors the same scope");
+        NBTTagList expanded = HologramBlueprintPreview.displayInput(source, null, false, true).snapshot
+            .getTagList("cells", 10);
+        SimpleAssert.eq(3, expanded.tagCount(), "historic expanded placement preview honors the same scope");
+        SimpleAssert.eq(4, HologramBlueprintPreview.snapshot(source).getTagList("cells", 10).tagCount(),
+            "ordinary preview and save cover preserve disabled member geometry");
         SimpleAssert.eq(2, expanded.getCompoundTagAt(1).getInteger("dx"), "shared expanded cell stays visible");
 
         HologramLocalBlueprintDocument document = HologramLocalBlueprintDocument.open(source);
@@ -139,13 +142,17 @@ public final class HologramLocalPreviewRegression {
         var all = document.freeze();
         SimpleAssert.eq(4, HologramBlueprintPreview.displayInput(all, () -> true, null).cells.size(),
             "all-enabled and unlinked placement stays whole");
+        SimpleAssert.that(!HologramBlueprintPreview.displayInput(all.artifact(), null).participationSensitive,
+            "all-enabled and implicit defaults do not split the cache");
         SimpleAssert.eq(3, HologramBlueprintPreview.displayInput(first, () -> true, null).cells.size(),
             "enabling in the editor must not change an earlier frozen placement");
+        SimpleAssert.eq(4, HologramBlueprintPreview.snapshot(first, () -> true).getTagList("cells", 10).tagCount(),
+            "draft cover geometry is unchanged");
         change.setBoolean("enabled", false);
         change.setLong("planRevision", document.revision());
         document.apply("structureState", change);
         byte[] compact = document.freeze().artifact();
-        var indexed = HologramBlueprintPreview.displayInput(compact, null, true);
+        var indexed = HologramBlueprintPreview.displayInput(compact, null, true, true);
         SimpleAssert.that(indexed.cells != null && indexed.cells.size() == 3 && indexed.savedMaterials != null,
             "compact geometry omits the same disabled-only member");
         var forecast = HologramLibraryMaterialForecast.project(indexed.savedMaterials);
@@ -156,6 +163,25 @@ public final class HologramLocalPreviewRegression {
             com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec.portableDocument(compact), origin,
             new int[0], 256, () -> true);
         SimpleAssert.eq(plan.cells(), compactPlan.cells(), "compact and expanded placement produce the same operations");
+        String id = "local_00000000-1111-2222-3333-444444444444";
+        java.nio.file.Path file = java.nio.file.Files.createTempFile("gtmb-member-participation-", ".json");
+        try {
+            java.nio.file.Files.write(file, compact);
+            var selected = new HologramClientLibrary.SavedDisplayPath(file, true);
+            HologramLibraryClient reader = new HologramLibraryClient();
+            var browsing = reader.readSavedDisplaySource(id, selected, false, 0, 0, false);
+            reader.retainDisplaySource(browsing);
+            var placing = reader.readSavedDisplaySource(id, selected, false, 0, 0, true);
+            SimpleAssert.that(browsing != placing && browsing.json == placing.json
+                && browsing.compactCells.size() == 4 && placing.compactCells.size() == 3,
+                "placement over a warm browse decodes the same captured bytes in the correct scope");
+            reader.retainDisplaySource(placing);
+            var browsingAgain = reader.readSavedDisplaySource(id, selected, false, 0, 0, false);
+            SimpleAssert.that(placing != browsingAgain && browsingAgain.compactCells.size() == 4,
+                "placement preview cannot leak into browsing later");
+        } finally {
+            java.nio.file.Files.deleteIfExists(file);
+        }
         NBTTagCompound undo = new NBTTagCompound();
         undo.setLong("planRevision", document.revision());
         document.apply("editUndo", undo);
