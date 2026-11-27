@@ -148,7 +148,10 @@ final class HologramLinkNodePreview {
     }
 
     static void draw(HologramState.Cell cell, boolean current, float alpha) {
-        List<Node> nodes = prepare(cell, current);
+        draw(prepare(cell, current), alpha);
+    }
+
+    static void draw(List<Node> nodes, float alpha) {
         if (nodes.isEmpty()) return;
         GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
         try {

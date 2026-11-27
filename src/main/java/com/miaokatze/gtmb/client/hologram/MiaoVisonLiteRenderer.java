@@ -3042,9 +3042,12 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
             }
         GL11.glPopAttrib();
         for (HologramState.Cell c : cells) if (worldGhosts.contains(coordinate(c.x, c.y, c.z))) {
+            // Do not record an empty transform in the display list for ghosts without link nodes.
+            List<HologramLinkNodePreview.Node> nodes = HologramLinkNodePreview.prepare(c, false);
+            if (nodes.isEmpty()) continue;
             GL11.glPushMatrix();
             GL11.glTranslated(c.x, c.y, c.z);
-            HologramLinkNodePreview.draw(c, false, .38f);
+            HologramLinkNodePreview.draw(nodes, .38f);
             GL11.glPopMatrix();
         }
         GL11.glDisable(GL11.GL_TEXTURE_2D);
