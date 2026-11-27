@@ -15,12 +15,15 @@ import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.common.util.FakePlayer;
 import net.minecraftforge.event.world.BlockEvent;
 
+import com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing;
 import com.miaokatze.gtmb.register.ProjectorRegistry;
 import com.miaokatze.gtmb.testlab.TestLab;
 
 import cpw.mods.fml.common.eventhandler.EventPriority;
 import cpw.mods.fml.common.eventhandler.SubscribeEvent;
+import gregtech.api.interfaces.modularui.IControllerWithOptionalFeatures;
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
+import gregtech.api.metatileentity.implementations.MTEEnhancedMultiBlockBase;
 import gregtech.api.metatileentity.implementations.MTEHatch;
 import gregtech.common.blocks.ItemMachines;
 
@@ -30,6 +33,7 @@ public final class HologramCommunityVariantPlacementProbe {
     private final WorldServer world;
     private final FakePlayer actor;
     private final List<HologramInstalledNativeTargetMatrix.Variant> variants;
+    private final List<HologramInstalledNativeTargetMatrix.ControllerSample> controllers;
     private final HologramSession session;
     private final ItemStack tool, toolBefore;
     private final NBTTagList inventoryBefore, results = new NBTTagList();
@@ -38,9 +42,15 @@ public final class HologramCommunityVariantPlacementProbe {
     private HologramNativeTargetPlan.Cell activeTarget;
     private int cursor, events;
     private boolean observing, restored;
+    private final NBTTagList controllerResults = new NBTTagList();
+    private int controllerCursor, controllerStage;
+    private HologramPresets.Cell capturedController;
+    private NBTTagCompound capturedControllerState, controllerDefaults, activeConfiguration;
+    private ExtendedFacing activeAlignment;
 
     public HologramCommunityVariantPlacementProbe(WorldServer world, FakePlayer actor, int x, int y, int z,
-        List<HologramInstalledNativeTargetMatrix.Variant> variants) throws Exception {
+        List<HologramInstalledNativeTargetMatrix.Variant> variants,
+        List<HologramInstalledNativeTargetMatrix.ControllerSample> controllers) throws Exception {
         require(
             Boolean.getBoolean("gtmb.testlab.installedNativeTargetMatrix"),
             "Explicit installed matrix opt-in required");
@@ -51,6 +61,10 @@ public final class HologramCommunityVariantPlacementProbe {
         this.y = y;
         this.z = z;
         this.variants = variants;
+        require(
+            controllers != null && controllers.size() == 2,
+            "The exact GTNL and LCR controller samples are required");
+        this.controllers = controllers;
         toolSlot = actor.inventory.currentItem;
         tool = actor.getHeldItem();
         require(tool != null && tool.getItem() == ProjectorRegistry.projector, "Owned projector required");
@@ -81,7 +95,9 @@ public final class HologramCommunityVariantPlacementProbe {
     }
 
     public boolean step() throws Exception {
-        require(cursor < variants.size() && !restored && authority(), "Community fixture authority changed");
+        require(!restored && authority(), "Community fixture authority changed");
+        if (cursor == variants.size()) return stepController();
+        require(cursor < variants.size(), "Community variant cursor is invalid");
         require(inventoryBefore.equals(inventory()), "Previous community variant did not restore borrowed inventory");
         emptyVolume(false);
         HologramInstalledNativeTargetMatrix.Variant variant = variants.get(cursor);
@@ -168,7 +184,175 @@ public final class HologramCommunityVariantPlacementProbe {
         results.appendTag(result);
         activeTarget = null;
         cursor++;
-        return cursor == variants.size();
+        return false;
+    }
+
+    /** Source placement and each saved replay are separate real lab ticks; all use this exact owned cell. */
+    private boolean stepController() throws Exception {
+        require(controllerCursor < controllers.size(), "Saved-controller cursor is invalid");
+        require(inventoryBefore.equals(inventory()), "Controller fixture inventory was not restored between samples");
+        emptyVolume(false);
+        var sample = controllers.get(controllerCursor);
+        activeTarget = sample.target();
+        activeAlignment = sample.alignment();
+        activeConfiguration = controllerStage == 0 ? null
+            : controllerStage == 1 ? capturedControllerState : controllerDefaults;
+        NBTTagCompound result = sample.description();
+        HologramNativeConstruction.Prepared prepared;
+        if (controllerStage == 0) {
+            result.setString("phase", "native-source-placement-and-production-capture");
+            prepared = HologramNativeConstruction.projection(activeTarget);
+        } else {
+            boolean retain = controllerStage == 1;
+            result.setString("phase", retain ? "saved-retain-true" : "saved-retain-false");
+            result.setBoolean("retainNbt", retain);
+            session.virtual = session.virtualPlacement = session.virtualLocked = session.open = true;
+            session.virtualPreset = HologramTestLabBlueprintProbe
+                .preset(actor.getUniqueID(), actor.getCommandSenderName());
+            session.virtualPreset.retainNbt = retain;
+            session.virtualPreset.retainCovers = false;
+            session.placementRetainCovers = false;
+            prepared = HologramNativeConstruction.saved(
+                session,
+                activeTarget.block(),
+                activeTarget.metadata(),
+                activeTarget.material(),
+                capturedController.facing,
+                capturedController.tileNbt,
+                capturedController.itemNbt,
+                activeAlignment);
+            NBTTagCompound projected = prepared.buffers.tileEmpty;
+            for (String key : new String[] { "mEUt", "checkRecipeResultID", "canBeMuffled", "mProgresstime",
+                "mMaxProgresstime" })
+                require(
+                    projected == null || !projected.hasKey(key),
+                    "Runtime observation leaked into saved target: " + key);
+            result.setBoolean("runtimeObservationsProjectedOut", true);
+            result.setTag(
+                "expectedNativeConfiguration",
+                activeConfiguration.getCompoundTag(HologramNativeConfiguration.TAG)
+                    .copy());
+        }
+        ItemStack material = activeTarget.material();
+        require(
+            !HologramRecovery.hasSeal(material) && (!material.hasTagCompound() || material.getTagCompound()
+                .hasNoTags()),
+            "UNSUPPORTED retained/sealed controller payment material");
+        for (int slot = 0; slot < actor.inventory.mainInventory.length; slot++) {
+            ItemStack existing = actor.inventory.mainInventory[slot];
+            require(
+                slot == toolSlot || existing == null || !existing.isItemEqual(material),
+                "Controller material exists outside the one-item borrowed supply");
+        }
+        actor.inventory.mainInventory[supplySlot] = material.copy();
+        actor.inventory.markDirty();
+        events = 0;
+        var outcome = HologramNativeConstruction.place(session, prepared, x + 1, y + 1, z + 1, this::authority);
+        require(
+            outcome == HologramNativeConstruction.Outcome.PLACED,
+            "Controller saved/native placement rejected: " + result + " status=" + session.status);
+        require(
+            events == 1 && actor.inventory.mainInventory[supplySlot] == null && inventoryBefore.equals(inventory()),
+            "Controller placement must consume exactly one real item and publish exactly one final event");
+        require(
+            !HologramConstructionJournal.pending(actor) && session.job != 4,
+            "Controller placement left a pending world/payment recovery journal");
+        requireTarget();
+        emptyVolume(true);
+        TileEntity tile = world.getTileEntity(x + 1, y + 1, z + 1);
+        if (controllerStage == 0) captureController(tile, result);
+        result.setInteger("finalPlaceEvents", events);
+        result.setInteger("actualMaterialDebit", 1);
+        result.setInteger("actualGtId", ((IGregTechTileEntity) tile).getMetaTileID());
+        result.setString(
+            "actualMteClass",
+            ((IGregTechTileEntity) tile).getMetaTileEntity()
+                .getClass()
+                .getName());
+        result.setString(
+            "actualAlignment",
+            ((MTEEnhancedMultiBlockBase<?>) ((IGregTechTileEntity) tile).getMetaTileEntity()).getExtendedFacing()
+                .toString());
+        NBTTagCompound actualConfiguration = new NBTTagCompound();
+        HologramNativeConfiguration.capture(tile, actor, actualConfiguration);
+        result.setTag(
+            "actualNativeConfiguration",
+            actualConfiguration.getCompoundTag(HologramNativeConfiguration.TAG)
+                .copy());
+        require(world.setBlockToAir(x + 1, y + 1, z + 1), "Could not clear the owned controller fixture");
+        emptyVolume(false);
+        require(inventoryBefore.equals(inventory()), "Controller fixture cleanup changed the original inventory");
+        result.setBoolean("journalClear", true);
+        result.setBoolean("ownedCellAndBorrowedInventoryRestored", true);
+        controllerResults.appendTag(result);
+        activeTarget = null;
+        activeAlignment = null;
+        activeConfiguration = null;
+        if (++controllerStage == 3) {
+            controllerStage = 0;
+            controllerCursor++;
+            capturedController = null;
+            capturedControllerState = controllerDefaults = null;
+        }
+        return controllerCursor == controllers.size();
+    }
+
+    private void captureController(TileEntity tile, NBTTagCompound result) throws Exception {
+        IGregTechTileEntity gt = (IGregTechTileEntity) tile;
+        require(
+            gt.getMetaTileEntity() instanceof IControllerWithOptionalFeatures,
+            "Installed controller has no native optional-feature configuration capability");
+        IControllerWithOptionalFeatures features = (IControllerWithOptionalFeatures) gt.getMetaTileEntity();
+        require(
+            features.supportsBatchMode(),
+            "Installed controller has no native batch setting for retained/default contrast");
+        controllerDefaults = new NBTTagCompound();
+        HologramNativeConfiguration.capture(tile, actor, controllerDefaults);
+        boolean previousBatch = features.isBatchModeEnabled();
+        features.setBatchMode(!previousBatch);
+        require(
+            features.isBatchModeEnabled() != previousBatch,
+            "Native controller batch setter did not accept the fixture setting");
+        tile.markDirty();
+        NBTTagCompound before = HologramNativeCapture.capture(tile);
+        HologramPresets.Preset literal = HologramTestLabBlueprintProbe
+            .preset(actor.getUniqueID(), actor.getCommandSenderName());
+        literal.cells.clear();
+        literal.palette.clear();
+        new HologramLiteralAreaWriter()
+            .append(literal, activeTarget.block(), activeTarget.metadata(), tile, 0, 0, 0, actor);
+        require(
+            world.getTileEntity(x + 1, y + 1, z + 1) == tile && before.equals(HologramNativeCapture.capture(tile)),
+            "Production literal controller capture changed source tile identity or persistent state");
+        require(literal.cells.size() == 1, "Production literal capture did not produce exactly one controller cell");
+        capturedController = literal.cells.get(0);
+        require(
+            capturedController.damage == activeTarget.material()
+                .getItemDamage() && capturedController.facing == activeTarget.facing(),
+            "Captured controller identity/facing differs from the real source");
+        capturedControllerState = HologramBlueprintNbt.decode(capturedController.tileNbt);
+        require(
+            capturedControllerState != null && capturedControllerState.hasKey(HologramNativeConfiguration.TAG, 10),
+            "Production capture did not retain the actual native controller configuration envelope");
+        NBTTagCompound observations = new NBTTagCompound();
+        for (String key : new String[] { "mEUt", "checkRecipeResultID", "canBeMuffled", "mProgresstime",
+            "mMaxProgresstime", "mRuntime", "mTotalRunTime" })
+            if (capturedControllerState.hasKey(key)) observations.setTag(
+                key,
+                capturedControllerState.getTag(key)
+                    .copy());
+        require(
+            !observations.hasNoTags(),
+            "Actual native controller capture did not exercise any reported runtime-observation field");
+        result.setTag("actualSourceRuntimeObservations", observations);
+        result.setBoolean("runtimeFieldsWrittenByProbe", false);
+        result.setBoolean("productionCaptureSourceUnchanged", true);
+        result.setBoolean("nativeBatchSettingToggled", true);
+        result.setTag(
+            "factoryDefaultConfiguration",
+            controllerDefaults.getCompoundTag(HologramNativeConfiguration.TAG)
+                .copy());
+        result.setString("capturedTileNbt", capturedController.tileNbt);
     }
 
     @SubscribeEvent(priority = EventPriority.LOWEST, receiveCanceled = true)
@@ -229,6 +413,23 @@ public final class HologramCommunityVariantPlacementProbe {
                     "Real GT hatch texture callback did not retain the native appearance");
             }
         }
+        if (activeAlignment != null) {
+            require(
+                tile instanceof IGregTechTileEntity
+                    && ((IGregTechTileEntity) tile).getMetaTileEntity() instanceof MTEEnhancedMultiBlockBase<?>,
+                "Installed controller has no native enhanced alignment");
+            require(
+                ((MTEEnhancedMultiBlockBase<?>) ((IGregTechTileEntity) tile).getMetaTileEntity()).getExtendedFacing()
+                    == activeAlignment,
+                "Actual saved/native controller alignment differs");
+        }
+        if (activeConfiguration != null) try {
+            require(
+                HologramNativeConfiguration.matches(tile, actor, activeConfiguration),
+                "Actual retained/default controller configuration differs from native capture");
+        } catch (java.io.IOException invalid) {
+            throw new IllegalStateException("Cannot compare actual saved controller configuration", invalid);
+        }
     }
 
     private void emptyVolume(boolean targetAllowed) {
@@ -270,7 +471,9 @@ public final class HologramCommunityVariantPlacementProbe {
     }
 
     public NBTTagCompound evidence() {
-        require(cursor == variants.size() && restored, "Community variant placement/cleanup is incomplete");
+        require(
+            cursor == variants.size() && controllerCursor == controllers.size() && restored,
+            "Community variant/controller placement/cleanup is incomplete");
         NBTTagCompound result = new NBTTagCompound();
         result.setTag("variants", results.copy());
         result.setInteger("completedVariants", cursor);
@@ -282,6 +485,35 @@ public final class HologramCommunityVariantPlacementProbe {
         result.setString(
             "scope",
             "GTNL/GTSR material/state variants only; not full-machine spatial placement, formation, four operations, saved-blueprint end-to-end, GUI or TCP acceptance");
+        return result;
+    }
+
+    public NBTTagCompound controllerEvidence() {
+        require(
+            controllerCursor == controllers.size() && restored && controllerResults.tagCount() == 6,
+            "Installed controller source capture and both retained/default saved replays are incomplete");
+        NBTTagCompound result = new NBTTagCompound();
+        result.setTag("placements", controllerResults.copy());
+        result.setInteger("sourceControllers", controllers.size());
+        result.setInteger("savedReplays", 4);
+        result.setInteger("actualMaterialDebit", 6);
+        result.setBoolean("fixtureAndOriginalInventoryRestored", true);
+        result.setBoolean("journalClear", true);
+        result.setString(
+            "scope",
+            "Installed GTNL/LCR controller shells: real native source placement, production literal capture, common saved retain=true/false replay; no full structure formation, blueprint GUI, external TCP, or full blueprint TaskGate claim");
+        return result;
+    }
+
+    public NBTTagCompound controllerProgress() {
+        NBTTagCompound result = new NBTTagCompound();
+        result.setTag("placements", controllerResults.copy());
+        result.setInteger("completedControllers", controllerCursor);
+        result.setInteger("nextControllerStage", controllerStage);
+        result.setBoolean("complete", controllerCursor == controllers.size() && restored);
+        result.setString(
+            "scope",
+            "Partial common-side controller capture/replay evidence; complete PASS requires all source/retain groups and fixture cleanup");
         return result;
     }
 

@@ -84,10 +84,23 @@ final class TestLabConstructionPerformanceTask implements TestLabTasks.Task {
                 zone.x + 8,
                 zone.y + 1,
                 zone.z + 8,
-                matrix.variants());
-            if (!community.step()) return TestLabTasks.WAIT;
+                matrix.variants(),
+                matrix.controllers());
+            boolean communityDone;
+            try {
+                communityDone = community.step();
+            } finally {
+                runtime.evidence().data.setTag("savedNativeControllerPlacement", community.controllerProgress());
+            }
+            if (!communityDone) return TestLabTasks.WAIT;
             community.cleanup();
             runtime.evidence().data.setTag("communityNativeVariantPlacement", community.evidence());
+            runtime.evidence().data.setTag("savedNativeControllerPlacement", community.controllerEvidence());
+            runtime.evidence()
+                .check(
+                    "installed_gtnl_lcr_controller_saved_replay",
+                    "PASS",
+                    "Two actually placed controllers captured by the production literal writer, then paid saved replay with retain=true/false; native config/alignment, runtime projection, event/debit/recovery and fixture restoration; no whole-machine/GUI/TCP claim");
             runtime.evidence()
                 .check(
                     "installed_community_material_state_variants_placed",

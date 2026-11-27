@@ -31,6 +31,7 @@ public final class HologramInstalledNativeTargetMatrix {
     private final NBTTagList results = new NBTTagList();
     private final Map<String, Integer> centerCounts = new HashMap<>();
     private final Map<String, Variant> variants = new LinkedHashMap<>();
+    private final Map<String, ControllerSample> controllers = new LinkedHashMap<>();
     private int cursor;
 
     public HologramInstalledNativeTargetMatrix() {
@@ -57,6 +58,9 @@ public final class HologramInstalledNativeTargetMatrix {
         if (cursor >= cases.size()) return true;
         Case input = cases.get(cursor);
         int id = registeredId(input.type);
+        if (input.facing == ExtendedFacing.NORTH_NORMAL_NONE && (input.type.startsWith("com.science.gtnl.")
+            || input.type.equals("gregtech.common.tileentities.machines.multi.MTELargeChemicalReactor")))
+            controllers.putIfAbsent(input.type, new ControllerSample(id, input.type, input.facing));
         ItemStack trigger = HologramNativeTargetPlan.canonicalTrigger(input.tier, new NBTTagCompound());
         if (input.sectors > 0) ChannelDataAccessor.setChannelData(trigger, "ore_center_sectors", input.sectors);
         long started = System.nanoTime();
@@ -114,6 +118,7 @@ public final class HologramInstalledNativeTargetMatrix {
         result.setTag("cases", results.copy());
         result.setInteger("completedCases", cursor);
         result.setInteger("communityMaterialStateVariants", variants.size());
+        result.setInteger("savedControllerSamples", controllers.size());
         result.setString(
             "scope",
             "installed native target and footprint only; actual construction/payment, saved blueprint, GUI and TCP NOT_RUN");
@@ -125,6 +130,69 @@ public final class HologramInstalledNativeTargetMatrix {
         require(cursor == cases.size(), "installed native matrix is incomplete");
         require(!variants.isEmpty(), "installed community matrix produced no material/state variants");
         return Collections.unmodifiableList(new ArrayList<>(variants.values()));
+    }
+
+    public List<ControllerSample> controllers() {
+        require(
+            cursor == cases.size() && controllers.size() == 2,
+            "Both installed saved-controller samples are required");
+        return Collections.unmodifiableList(new ArrayList<>(controllers.values()));
+    }
+
+    /** Two exact registered ItemMachines samples only; never a controller graph or a live tile. */
+    public static final class ControllerSample {
+
+        private final int id, metadata;
+        private final String type;
+        private final ItemStack material;
+        private final ExtendedFacing facing;
+
+        private ControllerSample(int id, String type, ExtendedFacing facing) {
+            this.id = id;
+            this.type = type;
+            this.facing = facing;
+            IMetaTileEntity prototype = GregTechAPI.METATILEENTITIES[id];
+            material = prototype.getStackForm(1)
+                .copy();
+            material.stackSize = 1;
+            metadata = prototype.getTileEntityBaseType();
+            require(
+                material.getItem() instanceof gregtech.common.blocks.ItemMachines && material.getItemDamage() == id
+                    && !HologramRecovery.hasSeal(material)
+                    && (!material.hasTagCompound() || material.getTagCompound()
+                        .hasNoTags()),
+                "UNSUPPORTED non-plain registered controller material: " + type);
+        }
+
+        HologramNativeTargetPlan.Cell target() {
+            return new HologramNativeTargetPlan.Cell(
+                0,
+                0,
+                0,
+                GregTechAPI.sBlockMachines,
+                metadata,
+                material.copy(),
+                facing.getDirection()
+                    .ordinal(),
+                null,
+                null,
+                null,
+                null,
+                false);
+        }
+
+        ExtendedFacing alignment() {
+            return facing;
+        }
+
+        NBTTagCompound description() {
+            NBTTagCompound result = new NBTTagCompound();
+            result.setString("registeredClass", type);
+            result.setInteger("registeredId", id);
+            result.setString("alignment", facing.toString());
+            result.setTag("material", material.writeToNBT(new NBTTagCompound()));
+            return result;
+        }
     }
 
     private void rememberVariant(String source, HologramNativeTargetPlan.Cell cell) {
