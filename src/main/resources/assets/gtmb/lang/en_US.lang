@@ -813,3 +813,9 @@ gtmb.hologram.projector.admin.awaiting_server=Waiting for the server to confirm 
 gtmb.hologram.projector.admin.integer_error=Enter a valid integer.
 gtmb.hologram.projector.admin.confirmed=Server confirmed all settings · Revision %1$s
 gtmb.hologram.projector.admin.revision_conflict=Another admin updated these settings. Your draft is kept; reload before editing.
+
+gtmb.hologram.projector.library.draft_sections=Review Draft Sections (Read Only)
+gtmb.hologram.projector.library.draft_sections_help=Browse a small plain-block local draft section by section. No save, edit, or placement.
+gtmb.hologram.projector.library.draft_sections_loading=Preparing sections…
+gtmb.hologram.projector.library.draft_sections_unavailable=This draft is not eligible for section review.
+gtmb.hologram.projector.library.draft_sections_page=%s / %s | %s cells | section %s, %s, %s

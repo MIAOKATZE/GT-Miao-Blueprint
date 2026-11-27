@@ -40,6 +40,7 @@ final class HologramEditorLibraryPane {
     private final List<NBTTagCompound> matches = new ArrayList<>(), rows = new ArrayList<>();
     private final PagedWidget.Controller pages = new PagedWidget.Controller();
     private final HologramEditorNativeLibraryDialogs dialogs;
+    private final HologramDraftSectionPanel draftSections;
     private IWidget built, save;
     private HologramRecessedList rowList;
     private String previousQuery = "";
@@ -49,6 +50,15 @@ final class HologramEditorLibraryPane {
     HologramEditorLibraryPane(HologramUiModules ui) {
         this.ui = ui;
         dialogs = new HologramEditorNativeLibraryDialogs(ui);
+        draftSections = HologramDraftSectionPanel.enabled() ? new HologramDraftSectionPanel(ui) : null;
+    }
+
+    void tickDraftSections() {
+        if (draftSections != null) draftSections.tick();
+    }
+
+    void closeDraftSections() {
+        if (draftSections != null) draftSections.close();
     }
 
     void showMaintenance() {
@@ -326,6 +336,9 @@ final class HologramEditorLibraryPane {
                 .widthRel(1f)
                 .height(20));
         footer.child(secondary);
+        if (draftSections != null) footer.child(Flow.row().widthRel(1f).height(20)
+            .setEnabledIf(widget -> ui.session.localDocument() && !ui.library.publicLibrary())
+            .child(draftSections.button().name("library_private_draft_sections")));
         page.child(footer);
         ui.shell.registerTarget("library.footer", footer);
         return page;

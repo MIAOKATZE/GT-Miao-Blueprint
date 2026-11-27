@@ -25,6 +25,7 @@ public final class HologramLocalPreviewRegression {
         compactDirectDisplay();
         packedEditorParity();
         frozenDraftParity();
+        HologramDraftSectionReviewRegression.run();
         singleCellAnnotation();
         compactCoordinateCompatibility();
         compactDenseRegion();

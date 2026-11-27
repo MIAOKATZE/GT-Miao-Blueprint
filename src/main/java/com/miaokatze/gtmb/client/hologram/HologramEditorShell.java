@@ -660,6 +660,7 @@ final class HologramEditorShell {
     }
 
     void tick() {
+        if (library != null) library.tickDraftSections();
         if (root == null || paused || properties == null) return;
         if (footer != null) footer.setEnabled(!ui.workspaces.emptyProjection());
         if (taskProgress != null) taskProgress.refresh();
@@ -800,6 +801,7 @@ final class HologramEditorShell {
     }
 
     void close() {
+        if (library != null) library.closeDraftSections();
         if (cut != null) cut.close();
         ui.preview.releasePointerCapture();
     }
@@ -1055,6 +1057,7 @@ final class HologramEditorShell {
     }
 
     private void pause(boolean workspace) {
+        if (library != null) library.closeDraftSections();
         if (root == null || paused) return;
         if (scene instanceof HologramEditorSceneWidget) ((HologramEditorSceneWidget) scene).invalidatePresentation();
         LocatedWidget focused = host.getContext()

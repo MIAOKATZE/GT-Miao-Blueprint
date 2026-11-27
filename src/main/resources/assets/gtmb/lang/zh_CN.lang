@@ -814,3 +814,9 @@ gtmb.hologram.projector.admin.awaiting_server=等待服务器确认全部设置
 gtmb.hologram.projector.admin.integer_error=请输入有效的整数
 gtmb.hologram.projector.admin.confirmed=服务器已确认全部设置 · 修订 %1$s
 gtmb.hologram.projector.admin.revision_conflict=其他管理员已更新；草稿保留，请重新载入后编辑
+
+gtmb.hologram.projector.library.draft_sections=分页浏览草稿（只读）
+gtmb.hologram.projector.library.draft_sections_help=逐区浏览小型普通方块本地草稿，不保存、编辑或放置。
+gtmb.hologram.projector.library.draft_sections_loading=正在准备分区…
+gtmb.hologram.projector.library.draft_sections_unavailable=此草稿不符合只读分区浏览条件。
+gtmb.hologram.projector.library.draft_sections_page=%s / %s 页 | %s 格 | 分区 %s, %s, %s

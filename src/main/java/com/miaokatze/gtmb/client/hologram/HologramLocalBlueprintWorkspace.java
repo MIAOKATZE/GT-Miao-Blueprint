@@ -48,6 +48,11 @@ final class HologramLocalBlueprintWorkspace {
             return thread;
         });
 
+    /** Reuse the bounded local worker; the review's separate owner handles retirement and publication. */
+    static void executeDraftReview(Runnable work) {
+        IO.execute(work);
+    }
+
     /** Captured on the client thread; the file worker never queries current Minecraft ownership. */
     static final class PresentationOwner {
 
