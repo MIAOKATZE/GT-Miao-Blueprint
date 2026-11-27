@@ -5,6 +5,11 @@ package com.miaokatze.gtmb.client.hologram;
 
 import java.awt.image.BufferedImage;
 import java.io.IOException;
+import java.lang.management.BufferPoolMXBean;
+import java.lang.management.GarbageCollectorMXBean;
+import java.lang.management.ManagementFactory;
+import java.lang.management.MemoryUsage;
+import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -51,6 +56,8 @@ public final class HologramRenderParityProbe {
     private static final String ANIMATION_WITNESS = "gtmb.testlab.renderParityAnimationWitness";
     private static final String GIANT_PERFORMANCE = "gtmb.testlab.renderParityGiantPerformance";
     private static final String GIANT_COLD_ONLY = "gtmb.testlab.renderParityGiantColdOnly";
+    private static final String GIANT_MEMORY = "gtmb.testlab.renderParityGiantMemory";
+    private static final String MEMORY_GC = "gtmb.testlab.renderParityGiantMemoryGc";
     private static final String COMBINED = "gtmb.testlab.renderParityCombined";
     private static final String EDITOR_RECEIPT = "gtmb-render-parity-editor.json";
     private static final String CLIENT_RECEIPT = "gtmb-client-ui.json";
@@ -68,6 +75,8 @@ public final class HologramRenderParityProbe {
     private final String giantSource = System.getProperty(GIANT_SOURCE, "");
     private final boolean giantPerformance = Boolean.getBoolean(GIANT_PERFORMANCE);
     private final boolean giantColdOnly = Boolean.getBoolean(GIANT_COLD_ONLY);
+    private final boolean giantMemory = Boolean.getBoolean(GIANT_MEMORY);
+    private final boolean memoryGc = Boolean.getBoolean(MEMORY_GC);
     private final String giantLibraryId = System.getProperty(GIANT_LIBRARY_ID, "");
     private final List<Map<String, Object>> giantLoads = new ArrayList<>();
     private Map<String, Object> giantEvidence;
@@ -82,6 +91,8 @@ public final class HologramRenderParityProbe {
     private boolean giantDrawerDispatched;
     private HologramClientLibrary originalLibrary, isolatedLibrary;
     private HologramState coldBrowseState;
+    private WeakReference<HologramState> coldMemoryBrowseState;
+    private long memoryCloseDeadline, memoryPeakHeap;
     private long activated = System.nanoTime();
     private long beforeDraw, drawNanos, guiPosts, renderedPosts;
     private long giantStarted;
@@ -100,10 +111,14 @@ public final class HologramRenderParityProbe {
         receipt.put("orbitEditorDrawNanos", orbitDrawNanos);
         if (animationWitness) receipt.put("nativeSixAnimationFrames", animationFrames);
         if (giantPerformance) {
-            receipt.put("profile", "giant-performance-after-issue100");
+            receipt.put("profile", giantMemory ? "giant-memory-after-issue100" : "giant-performance-after-issue100");
             receipt.put("lightingAdmission", "Issue100 world rendered and unloaded; same mixed editor control");
             receipt.put("giantLoads", giantLoads);
             receipt.put("giantColdOnly", giantColdOnly);
+            if (giantMemory) {
+                receipt.put("memoryScope", "whole client JVM; no strong fixture snapshot retained by the probe");
+                receipt.put("memoryExplicitGc", memoryGc);
+            }
         }
     }
 
@@ -114,9 +129,10 @@ public final class HologramRenderParityProbe {
     static boolean install(GuiScreen menu, Path output, String run, String tutorialFailure) throws Exception {
         if (!enabled()) return false;
         HologramRenderParityProbe probe = new HologramRenderParityProbe(menu, output, run);
-        if (tutorialFailure != null || probe.giantPerformance && probe.giantSource.isEmpty()) {
+        if (tutorialFailure != null || probe.giantPerformance && probe.giantSource.isEmpty()
+            || probe.giantMemory && (!probe.giantPerformance || probe.giantColdOnly) || probe.memoryGc && !probe.giantMemory) {
             probe.finish(
-                tutorialFailure == null ? "Giant performance requires an explicit sample"
+                tutorialFailure == null ? "Giant performance requires a sample and memory profiling requires two loads"
                     : "Issue100 tutorial failed: " + tutorialFailure);
             return true;
         }
@@ -135,6 +151,12 @@ public final class HologramRenderParityProbe {
             require(mc.theWorld == null && mc.thePlayer == null && mc.getIntegratedServer() == null, "Menu-only probe");
             if (screen == null) {
                 require(mc.currentScreen == menu, "Original menu identity was lost");
+                if (memoryCloseDeadline != 0) {
+                    if (System.nanoTime() < memoryCloseDeadline) return;
+                    sampleGiantMemory("afterCloseIdle");
+                    giantEvidence.put("heapObservedPeakWhileOpen", memoryPeakHeap);
+                    memoryCloseDeadline = 0;
+                }
                 if (scenario == CASES.length + requiredGiantLoads()) {
                     verifyAeDelta();
                     finish(null);
@@ -189,6 +211,10 @@ public final class HologramRenderParityProbe {
                     if (giant()) HologramLibraryClient.INSTANCE.clearBrowsePreview();
                     mc.displayGuiScreen(menu);
                     screen = null;
+                    if (giant() && giantMemory) {
+                        snapshot = null;
+                        memoryCloseDeadline = System.nanoTime() + 2_000_000_000L;
+                    }
                     scenario = giantPerformance && scenario == 0 ? CASES.length : scenario + 1;
                 }
             }
@@ -218,6 +244,7 @@ public final class HologramRenderParityProbe {
 
     private void beginGiantBrowse() throws Exception {
         giantStarted = 0;
+        memoryPeakHeap = 0;
         lastGiantStatus = 0;
         giantDrawerDispatched = false;
         giantEvidence = new LinkedHashMap<>();
@@ -289,6 +316,7 @@ public final class HologramRenderParityProbe {
         java.lang.reflect.Method browse = HologramUiLibrary.class
             .getDeclaredMethod("browsePreset", String.class, boolean.class);
         browse.setAccessible(true);
+        if (giantMemory) sampleGiantMemory("beforeRequest");
         giantStarted = System.nanoTime();
         browse.invoke(screen.ui.library, giantLibraryId, false);
         require(screen.ui.library.browsePreviewActive(), "Production private browse did not acquire the scene");
@@ -460,6 +488,7 @@ public final class HologramRenderParityProbe {
     }
 
     private void observeGiant(boolean ready) throws Exception {
+        if (giantMemory) memoryPeakHeap = Math.max(memoryPeakHeap, heapUsedBytes());
         long elapsed = System.nanoTime() - giantStarted;
         if (!giantEvidence.containsKey("firstMaterialNanos")) {
             NBTTagCompound inspection = HologramRenderer.lessonInspection(snapshot);
@@ -486,6 +515,7 @@ public final class HologramRenderParityProbe {
             giantEvidence.put("completionStageTiming", previewTiming());
             giantEvidence.put("heapUsedBytesAfterComplete", heapUsedBytes());
             witnessGiantHydration();
+            if (giantMemory) sampleGiantMemory("complete");
         }
     }
 
@@ -513,8 +543,15 @@ public final class HologramRenderParityProbe {
 
     private void witnessGiantHydration() throws Exception {
         require(snapshot.cells.size() == GIANT_CELLS, "Expected the selected 123369-cell private structure");
-        boolean warmCacheReuse = coldBrowseState == snapshot;
-        if (coldBrowseState == null) coldBrowseState = snapshot;
+        boolean warmCacheReuse;
+        if (giantMemory) {
+            warmCacheReuse = coldMemoryBrowseState != null && coldMemoryBrowseState.get() == snapshot;
+            if (coldMemoryBrowseState == null) coldMemoryBrowseState = new WeakReference<>(snapshot);
+            if (scenario > CASES.length) giantEvidence.put("reopenCacheBehavior", warmCacheReuse ? "reused" : "rehydrated");
+        } else {
+            warmCacheReuse = coldBrowseState == snapshot;
+            if (coldBrowseState == null) coldBrowseState = snapshot;
+        }
         giantEvidence.put("warmCachedDisplayStateReused", warmCacheReuse);
         giantEvidence.put("cells", snapshot.cells.size());
         NBTTagCompound presented = HologramRenderer.lessonInspection(snapshot);
@@ -537,13 +574,87 @@ public final class HologramRenderParityProbe {
         synchronized (local) {
             source = (HologramLibraryClient.DisplaySource) local.get("local:" + giantLibraryId);
         }
-        require(
-            source != null && source.state == snapshot && source.thumbnail != null,
-            "Private pair publication lost");
-        giantEvidence.put("sourceJsonSha256", HologramBlueprintArtifact.hash(source.json));
-        giantEvidence.put("sourceBytes", source.json.length);
-        Path staged = HologramBlueprintArtifact.previewPath(isolatedLibrary.savedPath(giantLibraryId));
+        Path stagedJson = isolatedLibrary.savedPath(giantLibraryId);
+        if (source == null && giantMemory) {
+            HologramLibraryClient library = HologramLibraryClient.INSTANCE;
+            require(library.browsePreviewState() == snapshot && library.browsePreviewImage() != null,
+                "Uncached private browse lost its published state or image");
+            giantEvidence.put("sourceJsonSha256", HologramBlueprintArtifact.hash(Files.readAllBytes(stagedJson)));
+            giantEvidence.put("sourceBytes", Files.size(stagedJson));
+        } else {
+            require(source != null && source.state == snapshot && source.thumbnail != null,
+                "Private pair publication lost");
+            giantEvidence.put("sourceJsonSha256", HologramBlueprintArtifact.hash(source.json));
+            giantEvidence.put("sourceBytes", source.json.length);
+        }
+        giantEvidence.put("cachedDisplaySourceAtCompletion", source != null);
+        Path staged = HologramBlueprintArtifact.previewPath(stagedJson);
         giantEvidence.put("sourcePngSha256", HologramBlueprintArtifact.hash(Files.readAllBytes(staged)));
+    }
+
+    private void sampleGiantMemory(String stage) throws Exception {
+        Map<String, Object> sample = new LinkedHashMap<>();
+        sample.put("instant", jvmMemory());
+        if (memoryGc) {
+            long before = collectionCount();
+            System.gc();
+            long after = collectionCount();
+            sample.put("explicitCollectionObserved", after > before);
+            sample.put("afterExplicitGcRequest", jvmMemory());
+        }
+        HologramLibraryClient library = HologramLibraryClient.INSTANCE;
+        Map<?, ?> local = (Map<?, ?>) diagnosticField(HologramLibraryClient.class, "localPreviews").get(library);
+        synchronized (local) {
+            HologramLibraryClient.DisplaySource cached = (HologramLibraryClient.DisplaySource)
+                local.get("local:" + giantLibraryId);
+            sample.put("libraryCacheEntries", local.size());
+            sample.put("fixtureCached", cached != null);
+            sample.put("fixtureCachedCells", cached == null || cached.state == null ? 0 : cached.state.cells.size());
+        }
+        HologramState active = library.browsePreviewState();
+        HologramState displayed = HologramRenderer.previewDisplayState();
+        sample.put("activeBrowseCells", active == null ? 0 : active.cells.size());
+        sample.put("rendererDisplayedCells", displayed == null ? 0 : displayed.cells.size());
+        sample.put("heapProbeRetainsColdSnapshot", coldBrowseState != null);
+        sample.put("coldSnapshotWeakReferenceAlive", coldMemoryBrowseState != null && coldMemoryBrowseState.get() != null);
+        sample.put("rendererCounters", residentCounters());
+        giantEvidence.put("memory" + stage.substring(0, 1).toUpperCase(java.util.Locale.ROOT) + stage.substring(1), sample);
+    }
+
+    private static long collectionCount() {
+        long count = 0;
+        for (GarbageCollectorMXBean collector : ManagementFactory.getGarbageCollectorMXBeans())
+            count += Math.max(0, collector.getCollectionCount());
+        return count;
+    }
+
+    private static Map<String, Object> jvmMemory() {
+        Map<String, Object> result = new LinkedHashMap<>();
+        MemoryUsage heap = ManagementFactory.getMemoryMXBean().getHeapMemoryUsage();
+        MemoryUsage nonHeap = ManagementFactory.getMemoryMXBean().getNonHeapMemoryUsage();
+        result.put("heapUsedBytes", heap.getUsed());
+        result.put("heapCommittedBytes", heap.getCommitted());
+        result.put("heapMaxBytes", heap.getMax());
+        result.put("nonHeapUsedBytes", nonHeap.getUsed());
+        result.put("nonHeapCommittedBytes", nonHeap.getCommitted());
+        Map<String, Object> poolFacts = new LinkedHashMap<>();
+        for (BufferPoolMXBean pool : ManagementFactory.getPlatformMXBeans(BufferPoolMXBean.class)) {
+            Map<String, Long> facts = new LinkedHashMap<>();
+            facts.put("usedBytes", pool.getMemoryUsed());
+            facts.put("capacityBytes", pool.getTotalCapacity());
+            facts.put("buffers", pool.getCount());
+            poolFacts.put(pool.getName(), facts);
+        }
+        result.put("bufferPools", poolFacts);
+        Map<String, Object> collectors = new LinkedHashMap<>();
+        for (GarbageCollectorMXBean collector : ManagementFactory.getGarbageCollectorMXBeans()) {
+            Map<String, Long> facts = new LinkedHashMap<>();
+            facts.put("collections", collector.getCollectionCount());
+            facts.put("milliseconds", collector.getCollectionTime());
+            collectors.put(collector.getName(), facts);
+        }
+        result.put("collectors", collectors);
+        return result;
     }
 
     private static long heapUsedBytes() {
