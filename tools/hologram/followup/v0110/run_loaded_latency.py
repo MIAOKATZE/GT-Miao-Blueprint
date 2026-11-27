@@ -51,6 +51,8 @@ def standard_namespace(path):
 
 
 ROOT = standard_namespace(Path(__file__).resolve()).parents[4]
+sys.path.insert(0, str(ROOT.parent / "tools/testlab"))
+import host
 BUILD = ROOT / "build"
 FIXTURE = BUILD / "hologram-packaged-v018-mui"
 OUTPUTS = BUILD / "verification/render-v0110"
@@ -85,21 +87,35 @@ def save(path, value):
     path.write_text(json.dumps(value, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
-def assert_idle():
-    """Never terminate a pre-existing JVM: all workspace-owned Java must already be stopped."""
-    prefix = ROOT.as_posix().casefold().rstrip("/")
+def validate_runtime(java, *, jvms=2):
+    """Validate the selected Java and the whole run budget before staging either JVM."""
+    java = standard_namespace(host.require_java26(java))
+    host.require_memory(jvms=jvms)
+    return java
+
+
+def assert_idle(targets=None):
+    """Reject only Java using the selected instance directories; never terminate a JVM."""
+    if targets is None:
+        targets = (FIXTURE / "client", FIXTURE / "server")
+    prefixes = tuple(standard_namespace(Path(target).resolve()).as_posix().casefold().rstrip("/")
+                     for target in targets)
     for process in psutil.process_iter(["pid", "name"]):
         if (process.info["name"] or "").casefold() not in ("java.exe", "javaw.exe", "java"):
             continue
         try:
             cwd = standard_namespace(Path(process.cwd()).resolve()).as_posix().casefold().rstrip("/")
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            cwd = ""
+        if any(cwd == prefix or cwd.startswith(prefix + "/") for prefix in prefixes):
+            raise RuntimeError(f"Target instance Java PID {process.pid} still exists; no staging")
+        try:
             command = " ".join(process.cmdline()).replace("\\", "/").casefold()
-        except psutil.NoSuchProcess:
-            continue
-        except psutil.AccessDenied as error:
-            raise RuntimeError(f"Cannot establish Java PID {process.pid} ownership; no staging") from error
-        if cwd == prefix or cwd.startswith(prefix + "/") or prefix in command:
-            raise RuntimeError(f"Workspace-owned Java PID {process.pid} still exists; no staging")
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue  # An unrelated or unidentifiable JVM does not reserve this instance.
+        if any(re.search(r'(?:^|[=@;"\s])' + re.escape(prefix) + r'(?=$|[/;"\s])', command)
+               for prefix in prefixes):
+            raise RuntimeError(f"Target instance Java PID {process.pid} still exists; no staging")
 
 
 def assert_port_available():
@@ -195,11 +211,11 @@ def server_arguments(output, large, cells):
     prepared = argfile_tokens(within(FIXTURE / "server/java9args.txt", FIXTURE, exists=True).read_text(encoding="utf-8"))
     tokens = [value for value in prepared if not value.startswith("-Dgtmb.")
               and not re.match(r"-Xm[sx]", value)]
-    tokens += ["-Xms1G", "-Xmx6G", "-Dhttp.proxyHost=127.0.0.1", "-Dhttp.proxyPort=7890",
+    tokens += ["-Xms1G", "-Xmx4096M", "-Dhttp.proxyHost=127.0.0.1", "-Dhttp.proxyPort=7890",
                "-Dhttps.proxyHost=127.0.0.1", "-Dhttps.proxyPort=7890", *common_flags(output, large, cells),
                "-Dgtmb.v0110.backgroundServer=true", "-Dgtmb.hologram.backgroundProbe=false", "-jar",
                within(FIXTURE / "server/lwjgl3ify-forgePatches.jar", FIXTURE, exists=True).as_posix(), "nogui"]
-    validate_heap(tokens, "-Xmx6G")
+    validate_heap(tokens, "-Xmx4096M")
     return tokens
 
 
@@ -373,9 +389,7 @@ def run(args):
     # Runtime executable is read-only and may live outside the workspace, as recorded by this fixture.
     environment_path = within(fixture / "environment.json", fixture, exists=True)
     environment = json.loads(environment_path.read_text(encoding="utf-8"))
-    java = standard_namespace(Path(environment["java"]).resolve(strict=True))
-    if not java.is_file() or java.name.casefold() not in ("java.exe", "java"):
-        raise ValueError("Fixture environment must identify an existing Java executable")
+    java = validate_runtime(environment["java"])
     assert_idle()
     assert_port_available()
     if within(fixture / "receipts/cut-os-input-bridge.lock", fixture).exists():
@@ -429,7 +443,7 @@ def run(args):
         "fixture": str(fixture), "output": str(output), "receipts": str(output), "world": str(world),
         "normal_source": str(jar), "normal_sha256": sha(jar), "addon_source": str(addon), "addon_sha256": sha(addon),
         "java": str(java), "java_sha256": sha(java), "environment_sha256": sha(environment_path),
-        "client_Xmx": "4096M", "server_Xmx": "6G", "client_peak_rss_bytes": 0,
+        "client_Xmx": "4096M", "server_Xmx": "4096M", "client_peak_rss_bytes": 0,
         "commands": commands, "argfiles_sha256": {"client": sha(client_args), "server": sha(server_args)},
         "port": PORT, "started_unix": time.time(), "timeout_seconds": timeout_seconds,
         "before_files": backups, "processes": {}, "moved_originals": [], "installed": [],

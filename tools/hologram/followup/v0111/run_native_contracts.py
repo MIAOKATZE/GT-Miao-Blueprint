@@ -93,7 +93,7 @@ def arguments(output, world_name, product_sha, addon_sha):
     if any(value in ("-jar", "-cp", "-classpath") for value in prepared):
         raise ValueError("Prepared server/java9args.txt must contain JVM/bootstrap options only")
     tokens = [value for value in prepared if not value.startswith("-Dgtmb.") and not re.match(r"-Xm[sx]", value)]
-    tokens += ["-Xms1G", "-Xmx6G", *common.common_flags(output, False, 0),
+    tokens += ["-Xms1G", "-Xmx4096M", *common.common_flags(output, False, 0),
                "-Dgtmb.hologram.smoketest=false", "-Dgtmb.hologram.extendedCompatibilitySmoke=false",
                "-Dgtmb.hologram.backgroundProbe=false", "-Dgtmb.v0111.nativeContractsOnly=true",
                "-Dgtmb.v0111.nativeContractsSuite=" + SUITE,
@@ -101,7 +101,7 @@ def arguments(output, world_name, product_sha, addon_sha):
                "-Dgtmb.v0111.nativeContractsProductSha256=" + product_sha,
                "-Dgtmb.v0111.nativeContractsAddonSha256=" + addon_sha,
                "-jar", common.within(FIXTURE / "server/lwjgl3ify-forgePatches.jar", FIXTURE, exists=True).as_posix(), "nogui"]
-    common.validate_heap(tokens, "-Xmx6G")
+    common.validate_heap(tokens, "-Xmx4096M")
     return tokens
 
 
@@ -140,10 +140,8 @@ def run(args):
         raise common.IntegrityFailure("GTSWN agent harness must remain disabled for this single selected suite")
     environment_path = common.within(fixture / "environment.json", fixture, exists=True)
     environment = json.loads(environment_path.read_text(encoding="utf-8"))
-    java = common.standard_namespace(Path(environment["java"]).resolve(strict=True))
-    if not java.is_file() or java.name.casefold() not in ("java.exe", "java"):
-        raise ValueError("Prepared environment must identify a Java executable")
-    common.assert_idle()
+    java = common.validate_runtime(environment["java"], jvms=1)
+    common.assert_idle(targets=(server,))
     common.assert_port_available()
     if common.within(fixture / "receipts/cut-os-input-bridge.lock", fixture).exists():
         raise RuntimeError("Existing owned input-bridge lock requires root inspection")
@@ -157,7 +155,7 @@ def run(args):
     result = {"name": args.name, "status": "RUNNING", "scope": SCOPE, "suite": SUITE,
               "selected_helpers": HELPERS.split(","), "full_suite_invoked": False, "fixture": str(fixture),
               "output": str(output), "world": str(world), "world_name": world_name, "port": common.PORT,
-              "server_Xmx": "6G", "client_started": False, "realNetty64kBusinessClaim": False,
+              "server_Xmx": "4096M", "client_started": False, "realNetty64kBusinessClaim": False,
               "user_instance_modified": False, "seed_worlds_copied": False, "existing_worlds_deleted": False,
               "normal_source": str(product), "normal_sha256": common.sha(product),
               "addon_source": str(addon), "addon_sha256": common.sha(addon),
@@ -182,7 +180,7 @@ def run(args):
 
     save(output / "stage.json", result)
     try:
-        common.assert_idle()
+        common.assert_idle(targets=(server,))
         common.assert_port_available()
         touched = True
         props.write_bytes(server_properties(original, world_name))
@@ -208,7 +206,7 @@ def run(args):
                     shutil.copyfileobj(source, target)
             if common.sha(destination) != item["sha256"]:
                 raise common.IntegrityFailure("Installed artifact digest differs")
-        common.assert_idle()
+        common.assert_idle(targets=(server,))
         common.assert_port_available()
         result["dependency_hashes_staged"] = hashes(mods, server, ".jar")
         stdout = (output / "server.log").open("xb")
@@ -279,7 +277,7 @@ def run(args):
                 record_error("close log", error)
         result["processClosed"] = process is None or process.poll() is not None
         try:
-            common.assert_idle()
+            common.assert_idle(targets=(server,))
             common.assert_port_available()
             result["ownedJavaIdleAfter"] = True
         except Exception as error:

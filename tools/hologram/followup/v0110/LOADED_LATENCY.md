@@ -28,7 +28,7 @@ Build using root's Java8 executable and existing FML compile jar into a fresh di
 python tools/hologram/followup/v0110/build_addon.py --javac <root-selected-javac> --fml-compile-jar build/rfg/recompiled_minecraft-1.7.10.jar --source tools/hologram/followup/v0110/V0110LoadedLatencyProbe.java --jar-name gtmb-v0110-loaded-latency-probe.jar --output build/verification/render-v0110/loaded-latency-addon-01
 ```
 
-Run old/new sequentially with fresh case names and the same addon. The independent runner inherits the strict fixture lifecycle and the reviewed atomic receipt reader; port25678, client4096M/server6G and explicit productSHA binding remain mandatory:
+Run old/new sequentially with fresh case names and the same addon. The independent runner inherits the strict fixture lifecycle and the reviewed atomic receipt reader; port25678, Java 26, a fixed4096M (4 GiB) maximum heap for each JVM and explicit productSHA binding remain mandatory. Before staging, the runner checks9 GiB available for both JVMs plus a single1 GiB system reserve; it does not repeat the full two-JVM check after the server starts. Occupancy checks apply only to the target client/server directories; unrelated workspace Java processes may run concurrently when the memory gate passes:
 
 ```powershell
 python tools/hologram/followup/v0110/run_loaded_latency.py --name LOAD019-50k-01 --jar build/libs/gtmb019.jar --expect-product-sha256 c2bfebfc03fb4bdbe48d91f26ce8185ec67b9d21b8cc77166a6264ca65319aa8 --addon build/verification/render-v0110/loaded-latency-addon-01/gtmb-v0110-loaded-latency-probe.jar --cells 50000
