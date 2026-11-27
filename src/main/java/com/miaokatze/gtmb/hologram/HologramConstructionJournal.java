@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -19,7 +20,9 @@ import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
+import net.minecraft.tileentity.TileEntity;
 import net.minecraft.world.World;
+import net.minecraftforge.common.util.BlockSnapshot;
 
 import com.miaokatze.miaokatzecore.api.io.AtomicFilePublisher;
 
@@ -290,7 +293,6 @@ final class HologramConstructionJournal {
             failure.getClass()
                 .getName() + ": "
                 + String.valueOf(failure.getMessage()));
-        journal.setTag("heldInventory", inventory(session.player.inventory.mainInventory, untouchedSlot(journal)));
         NBTTagCompound recovery = new NBTTagCompound();
         for (Object key : owner(session.player).func_150296_c()) {
             String name = String.valueOf(key);
@@ -308,15 +310,63 @@ final class HologramConstructionJournal {
         persist(session.player, journal);
     }
 
+    /** Preserve every extra native write; generic admin rollback must not settle only the primary cell. */
+    static void recordNativeSnapshots(HologramMaterials.Transaction transaction, List<BlockSnapshot> snapshots) {
+        recordNativeSnapshots(transaction, snapshots, null);
+    }
+
+    static void recordNativeSnapshots(HologramMaterials.Transaction transaction, List<BlockSnapshot> snapshots,
+        java.util.function.BooleanSupplier binding) {
+        NBTTagCompound journal = transaction.journalReceipt();
+        if (journal == null || snapshots == null || snapshots.isEmpty()) return;
+        boolean multi = false;
+        for (BlockSnapshot snapshot : snapshots)
+            if (snapshot.dimId != journal.getInteger("dimension") || snapshot.x != journal.getInteger("x")
+                || snapshot.y != journal.getInteger("y")
+                || snapshot.z != journal.getInteger("z")) multi = true;
+        if (!multi) return;
+        NBTTagList evidence = new NBTTagList();
+        for (BlockSnapshot snapshot : snapshots) {
+            NBTTagCompound entry = new NBTTagCompound(), before = new NBTTagCompound();
+            snapshot.writeToNBT(before);
+            entry.setTag("before", before);
+            evidence.appendTag(entry);
+        }
+        // Publish all originals in memory before any TE serialization callback can fail/re-enter.
+        journal.setTag("nativeSnapshots", evidence);
+        journal.setBoolean("nativeMultiCell", true);
+        for (int i = 0; i < snapshots.size(); i++) {
+            BlockSnapshot snapshot = snapshots.get(i);
+            NBTTagCompound entry = evidence.getCompoundTagAt(i);
+            World world = snapshot.getWorld();
+            NBTTagCompound after = new NBTTagCompound();
+            after.setString(
+                "block",
+                String
+                    .valueOf(Block.blockRegistry.getNameForObject(world.getBlock(snapshot.x, snapshot.y, snapshot.z))));
+            after.setInteger("meta", world.getBlockMetadata(snapshot.x, snapshot.y, snapshot.z));
+            TileEntity tile = world.getTileEntity(snapshot.x, snapshot.y, snapshot.z);
+            if (tile != null) {
+                NBTTagCompound data = new NBTTagCompound();
+                tile.writeToNBT(data);
+                after.setTag("tile", data);
+            }
+            entry.setTag("candidate", after);
+        }
+        if (binding == null || binding.getAsBoolean()) transaction.checkpoint();
+    }
+
     static void clear(EntityPlayer player) {
-        NBTTagCompound journal = (NBTTagCompound) owner(player).getCompoundTag(KEY)
-            .copy();
-        journal.setString("phase", "settled");
-        journal.setString(
-            "player",
-            player.getUniqueID()
-                .toString());
-        if (journal.getBoolean("durable")) persist(player, journal);
+        NBTTagCompound journal = owner(player).getCompoundTag(KEY);
+        if (journal.getBoolean("durable")) {
+            journal = (NBTTagCompound) journal.copy();
+            journal.setString("phase", "settled");
+            journal.setString(
+                "player",
+                player.getUniqueID()
+                    .toString());
+            persist(player, journal);
+        }
         owner(player).removeTag(KEY);
         LAST_PUBLICATION.remove(player);
     }
@@ -347,6 +397,8 @@ final class HologramConstructionJournal {
             return "已核定保留现场与已扣材料；未退款，请重新规划";
         }
         if (!"rollback".equals(action)) throw new IllegalStateException("核定操作仅支持 accept / rollback");
+        if (journal.getBoolean("nativeMultiCell"))
+            throw new IllegalStateException("原生多格操作需人工核对 nativeSnapshots；禁止仅恢复主格后退款，核定现场后使用 accept");
         if (journal.hasKey("operation") || journal.getBoolean("settlementStarted")
             || journal.getBoolean("commitStarted"))
             throw new IllegalStateException("原生结果未知或补偿已开始，禁止重放；先核对 operation 并使用 extraction 核定实际量，或人工处理后 accept");

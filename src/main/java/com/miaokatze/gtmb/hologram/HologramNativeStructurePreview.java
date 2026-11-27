@@ -62,6 +62,7 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
     private static final String HATCH = GTStructureChannels.HATCH.get();
     private static final ThreadLocal<HologramNativeStructurePreview> ACTIVE = new ThreadLocal<>();
     private static final VisitedListener LISTENER = new VisitedListener();
+    private static boolean installed;
 
     private final Thread owner = Thread.currentThread();
     private final TileEntity controller;
@@ -69,10 +70,13 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
     private final Object context;
     private final HologramNativePreviewWorld memory;
     private final HologramBlockRendererPreview blockRenderer;
-    private final HologramNativePreviewItems items = new HologramNativePreviewItems();
-    private final ColdCandidateCache coldCandidates = new ColdCandidateCache(items::catalog);
+    private final HologramNativePreviewItems items;
+    private final boolean construction;
+    private ItemStack pieceTrigger;
+    private final Map<Position, ItemStack> pieceTriggers = new HashMap<>();
+    private final ColdCandidateCache coldCandidates;
     private final HologramNativeHatchChooser nativeHatchChooser;
-    private final PresetCandidates presetCandidates = new PresetCandidates(items::catalog);
+    private final PresetCandidates presetCandidates;
     private final ISurvivalBuildEnvironment survivalEnvironment;
     private final AutoPlaceEnvironment candidateEnvironment;
     private final IConstructable constructable;
@@ -93,6 +97,9 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
     private int rounds;
     private int lastSurvivalResult = Integer.MIN_VALUE;
     private HologramNativePreviewWorld complement;
+    private TileEntity complementController;
+    private Object complementContext;
+    private HologramChannelTrace.Report constructionChannels;
     private final ControllerFactory freshController;
     private final com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing previewFacing;
 
@@ -109,6 +116,27 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
     HologramNativeStructurePreview(TileEntity controller, Object context, IConstructable constructable,
         boolean structureCompat, ItemStack trigger, ControllerFactory pristine,
         com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing facing) throws IOException {
+        this(
+            controller,
+            context,
+            constructable,
+            structureCompat,
+            trigger,
+            pristine,
+            facing,
+            new HologramNativePreviewItems(),
+            false);
+    }
+
+    HologramNativeStructurePreview(TileEntity controller, Object context, IConstructable constructable,
+        boolean structureCompat, ItemStack trigger, ControllerFactory pristine,
+        com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing facing, HologramNativePreviewItems source,
+        boolean construction) throws IOException {
+        install();
+        this.items = source;
+        this.construction = construction;
+        coldCandidates = new ColdCandidateCache(items::catalog);
+        presetCandidates = new PresetCandidates(items::catalog);
         freshController = pristine;
         previewFacing = facing;
         this.controller = controller;
@@ -119,10 +147,10 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
         this.trigger = trigger.copy();
         emptyWorld = controller.getWorldObj();
         gregTech = controller instanceof IGregTechTileEntity;
-        modifier = gregTech && context instanceof INEIPreviewModifier supplied ? supplied : null;
+        modifier = !construction && gregTech && context instanceof INEIPreviewModifier supplied ? supplied : null;
         nativeHatchChooser = !gregTech || pristine == null || modifier != null ? null
             : new HologramNativeHatchChooser(items::catalog, () -> pristineHatchQuery(pristine));
-        if (HologramBlockRendererPreview.required(context)) {
+        if (!construction && HologramBlockRendererPreview.required(context)) {
             // Only this implementation requires BlockRenderer's class identity. Other controllers use our memory world.
             blockRenderer = new HologramBlockRendererPreview(controller);
             memory = null;
@@ -132,18 +160,24 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
             blockRenderer = null;
             world = memory;
         }
-        sourceWater = memory != null && context != null
+        sourceWater = !construction && memory != null
+            && context != null
             && HologramNativeSourceWater.reviewedController(context.getClass()) ? new LinkedHashSet<>() : null;
         PreviewPlayer actor = new PreviewPlayer(world);
         survivalEnvironment = ISurvivalBuildEnvironment.create(items, actor);
         candidateEnvironment = AutoPlaceEnvironment.fromLegacy(items, actor, message -> {});
-        if (gregTech) ChannelDataAccessor.setChannelData(this.trigger, HATCH, 1);
+        if (!construction && gregTech) ChannelDataAccessor.setChannelData(this.trigger, HATCH, 1);
+        pieceTrigger = this.trigger.copy();
+        if (memory != null) items.bind(memory);
         // Do not leave the detached controller in an active preview world between client ticks.
         controller.setWorldObj(emptyWorld);
     }
 
-    public static void install() {
-        MinecraftForge.EVENT_BUS.register(LISTENER);
+    public static synchronized void install() {
+        if (!installed) {
+            MinecraftForge.EVENT_BUS.register(LISTENER);
+            installed = true;
+        }
     }
 
     /** Each placement pass is atomic. Additional native passes can run on following client ticks. */
@@ -168,26 +202,42 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
                     repeat = false;
                     long passStart = HologramRuntimeMetrics.start();
                     try {
-                        if (constructable instanceof ISurvivalConstructable survival) {
+                        if (modifier != null) {
+                            // GTGuiMultiblockHandler's NEI lifecycle advances by actual world changes,
+                            // independently of survival completion. A pre-hook may suspend survival with 0;
+                            // its completion hook is still required to produce the display geometry.
+                            if (constructable instanceof ISurvivalConstructable survival) {
+                                lastSurvivalResult = survival
+                                    .survivalConstruct(trigger, Integer.MAX_VALUE, survivalEnvironment);
+                                rounds++;
+                                if (memory == null ? blockRenderer.takeChanged() : memory.takeChanged()) {
+                                    if (rounds >= MAX_ROUNDS) throw new IOException("LOCAL_NATIVE_PREVIEW_UNSTABLE");
+                                    repeat = true;
+                                    continue;
+                                }
+                            } else {
+                                constructable.construct(trigger.copy(), false);
+                                rounds++;
+                            }
+                        } else if (constructable instanceof ISurvivalConstructable survival) {
                             int result = survival.survivalConstruct(trigger, Integer.MAX_VALUE, survivalEnvironment);
                             rounds++;
                             lastSurvivalResult = result;
-                            if (memory == null && structureCompat && result == -2) {
-                                constructable.construct(trigger, false);
-                                break;
-                            }
-                            if (memory == null ? blockRenderer.takeChanged() : memory.takeChanged()) {
-                                if (rounds >= MAX_ROUNDS) throw new IOException("LOCAL_NATIVE_PREVIEW_UNSTABLE");
-                                repeat = true;
-                                continue;
-                            }
-                            // StructureLib: -1 means done; 0 is an unfinished pass, -2 unsupported.
-                            // No writes is stability of this survival prefix, not proof of a complete declaration.
-                            if (result != -1) {
-                                if (memory == null || freshController == null || previewFacing == null)
+                            if (result < -2) throw new IOException("LOCAL_NATIVE_PREVIEW_RESULT:" + result);
+                            // -1 is the only survival completion signal. A cursor may scan many already
+                            // correct slices, returning 0 without touching the world between useful passes.
+                            if (result == -1) break;
+                            if (result == -2) {
+                                if (freshController == null || previewFacing == null || memory == null)
                                     throw new IOException("LOCAL_NATIVE_PREVIEW_INCOMPLETE");
                                 completeNativeFootprint();
+                                break;
                             }
+                            if (rounds >= MAX_ROUNDS) throw new IOException("LOCAL_NATIVE_PREVIEW_UNSTABLE");
+                            if (memory == null) blockRenderer.takeChanged();
+                            else memory.takeChanged();
+                            repeat = true;
+                            continue;
                         } else {
                             constructable.construct(trigger, false);
                             rounds++;
@@ -199,22 +249,41 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
                     break;
                 } while (System.nanoTime() < deadline);
                 if (visitLimit) throw new IOException("LOCAL_NATIVE_PREVIEW_CELL_LIMIT");
-                // A pass whose writes have been consumed still needs a subsequent pass to establish stability.
+                // Nonterminal survival passes remain pending even when they did not write a block.
                 if (repeat) return false;
                 if (modifier != null) modifier.onPreviewStructureComplete(trigger);
+                if (construction && complement == null) {
+                    // Hints contribute only declaration metadata/explicit air. The real placements above
+                    // remain the target authority, including direct custom writes with no visit events.
+                    world.isRemote = true;
+                    memory.hintsOnly(true);
+                    try {
+                        constructable.construct(trigger.copy(), true);
+                    } finally {
+                        memory.hintsOnly(false);
+                        world.isRemote = false;
+                    }
+                }
                 if (visitLimit) throw new IOException("LOCAL_NATIVE_PREVIEW_CELL_LIMIT");
-                placements = memory == null ? blockRenderer.placements(controller) : memory.placements();
+                placements = memory == null ? blockRenderer.placements(controller)
+                    : construction ? memory.currentPlacements() : memory.placements();
                 if (complement != null) {
                     int declarationCells = complement.recordedPlacementCount();
-                    complement.retainOnlyAdditionalTo(memory);
-                    // A no-op or strict subset is not authoritative evidence that the stalled prefix is complete.
-                    if (complement.recordedPlacementCount() == 0
-                        && (declarationCells == 0 || declarationCells < memory.recordedPlacementCount()))
-                        throw new IOException("LOCAL_NATIVE_PREVIEW_INCOMPLETE");
-                    placements = both(placements, complement.placements());
+                    if (construction) {
+                        // Unsupported survival is a separate branch, never a union with its prefix.
+                        placements = complement.currentPlacements();
+                    } else {
+                        complement.retainOnlyAdditionalTo(memory);
+                        // A no-op or strict subset is not authoritative evidence that the stalled prefix is complete.
+                        if (complement.recordedPlacementCount() == 0
+                            && (declarationCells == 0 || declarationCells < memory.recordedPlacementCount()))
+                            throw new IOException("LOCAL_NATIVE_PREVIEW_INCOMPLETE");
+                        placements = both(placements, complement.placements());
+                    }
                 }
                 if (sourceWater != null && !sourceWater.isEmpty()) appendUnplacedSourceWater();
-                if (!placements.hasNext()) throw new IOException("LOCAL_NATIVE_PREVIEW_EMPTY");
+                if (!placements.hasNext() && !(construction && (!elements.isEmpty() || !wideElements.isEmpty())))
+                    throw new IOException("LOCAL_NATIVE_PREVIEW_EMPTY");
                 readDescription();
                 done = true;
                 return true;
@@ -250,16 +319,35 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
             || fresh.zCoord != controller.zCoord) throw new IOException("LOCAL_NATIVE_PREVIEW_COMPLETION_SCOPE");
         IConstructable full = HologramStructureDiscovery.localConstructable(fresh, freshContext, previewFacing);
         if (full == null) throw new IOException("LOCAL_NATIVE_PREVIEW_DECLARATION_UNAVAILABLE");
+        if (construction) {
+            elements.clear();
+            wideElements.clear();
+            pieceTriggers.clear();
+        }
         complement = HologramNativePreviewWorld.open(fresh);
+        complementController = fresh;
+        complementContext = freshContext;
         fresh.setWorldObj(complement);
         ItemStack copy = trigger.copy();
+        HologramChannelTrace.Scope freshTrace = construction ? HologramChannelTrace.begin(freshContext) : null;
         try {
-            INEIPreviewModifier hooks = gregTech && freshContext instanceof INEIPreviewModifier supplied ? supplied
-                : null;
+            INEIPreviewModifier hooks = !construction && gregTech
+                && freshContext instanceof INEIPreviewModifier supplied ? supplied : null;
             if (hooks != null) hooks.onPreviewConstruct(copy);
             full.construct(copy, false);
+            if (construction) {
+                complement.isRemote = true;
+                complement.hintsOnly(true);
+                try {
+                    full.construct(copy.copy(), true);
+                } finally {
+                    complement.hintsOnly(false);
+                    complement.isRemote = false;
+                }
+            }
             if (hooks != null) hooks.onPreviewStructureComplete(copy);
         } finally {
+            if (freshTrace != null) constructionChannels = HologramChannelTrace.end(freshTrace);
             fresh.setWorldObj(base);
         }
     }
@@ -279,6 +367,78 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
         };
     }
 
+    static void piece(IStructureDefinition<?> definition, Object context, ItemStack signal, World world) {
+        HologramNativeStructurePreview run = ACTIVE.get();
+        if (run != null && (run.context == context && run.world == world
+            || run.complementContext == context && run.complement == world)) {
+            run.definition = definition;
+            if (signal != null) run.pieceTrigger = signal.copy();
+        }
+    }
+
+    static void piece(Object context, ItemStack signal) {
+        HologramNativeStructurePreview run = ACTIVE.get();
+        if (run != null && (run.context == context || run.complementContext == context) && signal != null)
+            run.pieceTrigger = signal.copy();
+    }
+
+    static boolean consumesHint(World world) {
+        HologramNativeStructurePreview run = ACTIVE.get();
+        return run != null && (run.world == world || run.complement == world);
+    }
+
+    ItemStack triggerAt(int x, int y, int z) {
+        return pieceTriggers.getOrDefault(new Position(x, y, z), trigger)
+            .copy();
+    }
+
+    boolean checkTargetStructure() {
+        TileEntity tile = targetController();
+        Object target = targetContext();
+        if (!(target instanceof gregtech.api.metatileentity.implementations.MTEMultiBlockBase machine)
+            || !(tile instanceof IGregTechTileEntity nativeTile)) return false;
+        World previous = tile.getWorldObj();
+        boolean updates = RunnableMachineUpdate.isCurrentThreadEnabled();
+        try {
+            tile.setWorldObj(targetWorld());
+            if (updates) RunnableMachineUpdate.setCurrentThreadEnabled(false);
+            return machine.checkStructure(true, nativeTile);
+        } finally {
+            if (RunnableMachineUpdate.isCurrentThreadEnabled() != updates)
+                RunnableMachineUpdate.setCurrentThreadEnabled(updates);
+            tile.setWorldObj(previous);
+        }
+    }
+
+    TileEntity targetController() {
+        return construction && complementController != null ? complementController : controller;
+    }
+
+    Object targetContext() {
+        return construction && complementContext != null ? complementContext : context;
+    }
+
+    HologramNativePreviewWorld targetWorld() {
+        return construction && complement != null ? complement : memory;
+    }
+
+    java.util.Set<HologramNativeTargetPlan.Offset> visitedOffsets() {
+        java.util.Set<HologramNativeTargetPlan.Offset> result = new java.util.LinkedHashSet<>();
+        for (long key : elements.keySet()) {
+            result.add(
+                new HologramNativeTargetPlan.Offset(
+                    CoordinatePacker.unpackX(key) - controller.xCoord,
+                    CoordinatePacker.unpackY(key) - controller.yCoord,
+                    CoordinatePacker.unpackZ(key) - controller.zCoord));
+        }
+        for (Position p : wideElements.keySet()) result.add(
+            new HologramNativeTargetPlan.Offset(
+                p.x() - controller.xCoord,
+                p.y() - controller.yCoord,
+                p.z() - controller.zCoord));
+        return result;
+    }
+
     int passes() {
         return rounds;
     }
@@ -295,7 +455,18 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
         if ((event.getWorld() != world && event.getWorld() != complement) || Thread.currentThread() != owner
             || instrumented && event.getInstrumentIdentifier() != this) return;
         int x = event.getX(), y = event.getY(), z = event.getZ();
-        if (complement != null && event.getWorld() == complement && memory.hasPlacement(x, y, z)) return;
+        boolean known = HologramNativePreviewWorld.packable(x, y, z)
+            ? elements.containsKey(CoordinatePacker.pack(x, y, z))
+            : wideElements.containsKey(new Position(x, y, z));
+        if (elements.size() + wideElements.size() >= HologramBlueprintLimits.MAX_CELLS && !known) {
+            visitLimit = true;
+            return;
+        }
+        pieceTriggers.put(new Position(x, y, z), pieceTrigger.copy());
+        items.position(
+            HologramNativeTargetPlan.position(x - controller.xCoord, y - controller.yCoord, z - controller.zCoord));
+        if (!construction && complement != null && event.getWorld() == complement && memory.hasPlacement(x, y, z))
+            return;
         boolean atLimit = elements.size() + wideElements.size() >= HologramBlueprintLimits.MAX_CELLS;
         if (HologramNativePreviewWorld.packable(x, y, z)) {
             long positionKey = CoordinatePacker.pack(x, y, z);
@@ -345,7 +516,7 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
         };
     }
 
-    private IStructureElement<?> elementAt(int x, int y, int z) {
+    IStructureElement<?> elementAt(int x, int y, int z) {
         return HologramNativePreviewWorld.packable(x, y, z) ? elements.get(CoordinatePacker.pack(x, y, z))
             : wideElements.get(new Position(x, y, z));
     }
@@ -356,7 +527,7 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
     }
 
     HologramChannelTrace.Report channels() {
-        return channels.snapshot();
+        return constructionChannels != null ? constructionChannels : channels.snapshot();
     }
 
     IStructureDefinition<?> definition() {
@@ -368,13 +539,17 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
     }
 
     private void readDescription() {
+        IConstructable source = construction && complementController != null
+            ? HologramStructureDiscovery.localConstructable(complementController, complementContext, previewFacing)
+            : constructable;
         try {
-            definition = constructable.getStructureDefinition();
+            IStructureDefinition<?> available = source.getStructureDefinition();
+            if (available != null) definition = available;
         } catch (RuntimeException | LinkageError unavailable) {
             // A legacy declaration can expose its layout through construction alone.
         }
         try {
-            String[] lines = constructable.getStructureDescription(trigger.copy());
+            String[] lines = source.getStructureDescription(trigger.copy());
             if (lines == null) return;
             for (int i = 0; i < Math.min(32, lines.length); i++) {
                 if (lines[i] != null) description.appendTag(new NBTTagString(bounded(lines[i], 512)));
@@ -397,7 +572,8 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
 
     private HologramCapture.Cell previewCell(HologramNativePreviewWorld.Placement placement,
         IStructureElement<?> element) {
-        HologramCapture.Cell cell = HologramCapture.nativePreviewCell(placement, element, trigger);
+        HologramCapture.Cell cell = HologramCapture
+            .nativePreviewCell(placement, element, triggerAt(placement.x(), placement.y(), placement.z()));
         if (complement != null && complement.hasPlacement(placement.x(), placement.y(), placement.z())) {
             // Native creative display is not a survival quote, writable hatch identity or permission.
             cell.unknown = true;
@@ -410,17 +586,21 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
         return cell;
     }
 
-    /**
-     * Trusted native chooser branches are position independent and use the captured effective trigger.
-     * They are queried on an unfilled controller, not inferred from supplemental browser labels.
-     */
+    /** Public native offers are queried at the exact position on an unfilled controller. */
     List<ItemStack> presetOffers(int x, int y, int z) {
         if (nativeHatchChooser == null) return Collections.emptyList();
-        return presetCandidates.offers(elementAt(x, y, z), trigger);
+        return nativeOffers(elementAt(x, y, z), x, y, z, triggerAt(x, y, z));
+    }
+
+    List<ItemStack> nativeOffers(IStructureElement<?> element, int x, int y, int z, ItemStack signal) {
+        return nativeHatchChooser == null ? Collections.emptyList()
+            : nativeHatchChooser.offers(element, x, y, z, signal);
     }
 
     Object presetSharedKey(int x, int y, int z) {
-        return presetCandidates.sharedKey(elementAt(x, y, z), trigger);
+        IStructureElement<?> element = elementAt(x, y, z);
+        // Reviewed position-independent metadata permits caching; it never controls query eligibility.
+        return reusablePreviewOptions(element) ? presetCandidates.sharedKey(element, triggerAt(x, y, z)) : null;
     }
 
     /** Registry snapshots are capture-owned. Only the exact-version GTSR policy may filter this view. */
@@ -429,7 +609,7 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
     }
 
     HologramCapture.Cell candidateCell(int x, int y, int z, String role) {
-        HologramCapture.Cell cell = new HologramCapture.Cell(elementAt(x, y, z), x, y, z, trigger, true);
+        HologramCapture.Cell cell = new HologramCapture.Cell(elementAt(x, y, z), x, y, z, triggerAt(x, y, z), true);
         cell.role = role;
         readCellCandidates(cell);
         return cell;
@@ -473,7 +653,7 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
                     cell.x,
                     cell.y,
                     cell.z,
-                    trigger.copy(),
+                    cell.elementTrigger.copy(),
                     candidateEnvironment);
             } catch (RuntimeException | LinkageError unavailable) {
                 // An opaque sibling must not suppress separately readable native hatch branches.
@@ -487,6 +667,11 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
                 // A successfully appended native hatch offer can still drive this cell's manual chooser.
                 hatch = cell.nativeCandidateCount >= 0;
             }
+            if (!hatch) for (ItemStack candidate : cell.candidates)
+                if (HologramCellPolicy.hatchTier(candidate) != Integer.MAX_VALUE) {
+                    hatch = true;
+                    break;
+                }
             if (hatch) cell.role = "hatch";
             if (first && reusablePreviewOptions(element)) sharedOptions.put(
                 element,
@@ -508,7 +693,7 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
     private List<ItemStack> hatchSupplements(HologramCapture.Cell cell, IStructureElement<?> element, boolean settled) {
         List<ItemStack> normal = settled ? coldCandidates.offers(element) : Collections.emptyList();
         if (nativeHatchChooser == null) return normal;
-        List<ItemStack> fresh = nativeHatchChooser.offers(element, cell.x, cell.y, cell.z, trigger);
+        List<ItemStack> fresh = nativeHatchChooser.offers(element, cell.x, cell.y, cell.z, cell.elementTrigger);
         if (normal.isEmpty()) return fresh;
         if (fresh.isEmpty()) return normal;
         List<ItemStack> merged = new ArrayList<>(normal.size() + fresh.size());
@@ -557,7 +742,7 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
         return text.length() <= length ? text : text.substring(0, length);
     }
 
-    private static boolean isChain(IStructureElement<?> element) {
+    static boolean isChain(IStructureElement<?> element) {
         for (IStructureElement<?> part : HologramElementCatalog.parts(element))
             if (part instanceof IStructureElementChain) return true;
         return false;
@@ -867,8 +1052,15 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
     @Override
     public void close() {
         closed = true;
-        complement = null;
+        items.bind(null);
+        if (construction) {
+            memory.freeze();
+            if (complement != null) complement.freeze();
+        }
+        // Cells keep their element/trigger metadata; target consumers may query native offers afterwards.
+        if (!construction) complement = null;
         elements.clear();
+        pieceTriggers.clear();
         if (sourceWater != null) sourceWater.clear();
         wideElements.clear();
         observedMaterials.clear();

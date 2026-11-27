@@ -167,6 +167,8 @@ public final class HologramEnergyPayload {
         }
         for (Object raw : new HashSet<Object>(paid.func_150296_c())) {
             String key = (String) raw;
+            // Opaque native copy templates are configuration; only restored physical buffers are payable.
+            if (HologramNativeConfiguration.TAG.equals(key)) continue;
             String lower = key.toLowerCase(Locale.ROOT);
             NBTBase tag = paid.getTag(key);
             String field = path + "." + key;

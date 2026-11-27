@@ -1401,7 +1401,8 @@ public final class HologramClient {
                 localAreaCapture = new com.miaokatze.gtmb.hologram.HologramLocalAreaCapture(
                     mc.theWorld,
                     mc.thePlayer.dimension,
-                    localArea);
+                    localArea,
+                    mc.thePlayer);
                 localAreaFinishing = true;
             } catch (java.io.IOException invalid) {
                 selectionNotice(invalid.getMessage());

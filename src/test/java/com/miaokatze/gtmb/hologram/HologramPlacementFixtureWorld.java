@@ -15,7 +15,9 @@ import net.minecraft.init.Blocks;
 import net.minecraft.item.ItemStack;
 import net.minecraft.world.World;
 import net.minecraft.world.WorldProviderSurface;
+import net.minecraft.world.chunk.Chunk;
 import net.minecraft.world.storage.MapStorage;
+import net.minecraftforge.common.util.BlockSnapshot;
 
 /** In-memory block writes for the real headless placement transaction. It stays read-only until armed. */
 final class HologramPlacementFixtureWorld extends HologramServiceEditRegression.ReadOnlyWorld {
@@ -113,6 +115,8 @@ final class HologramPlacementFixtureWorld extends HologramServiceEditRegression.
     @Override
     public boolean setBlock(int x, int y, int z, Block block, int metadata, int flags) {
         if (!armed) return super.setBlock(x, y, z, block, metadata, flags);
+        if (captureBlockSnapshots) capturedBlockSnapshots
+            .add(new BlockSnapshot(this, x, y, z, getBlock(x, y, z), getBlockMetadata(x, y, z), flags));
         String position = position(x, y, z);
         placed.put(position, new State(block, metadata));
         writes.add(position);
@@ -125,12 +129,19 @@ final class HologramPlacementFixtureWorld extends HologramServiceEditRegression.
         String position = position(x, y, z);
         State saved = placed.get(position);
         if (saved == null) return false;
+        if (captureBlockSnapshots)
+            capturedBlockSnapshots.add(new BlockSnapshot(this, x, y, z, saved.block, saved.metadata, flags));
         placed.put(position, new State(saved.block, metadata));
         return true;
     }
 
     @Override
     public void playSoundEffect(double x, double y, double z, String sound, float volume, float pitch) {}
+
+    @Override
+    public void markAndNotifyBlock(int x, int y, int z, Chunk chunk, Block old, Block placed, int flags) {
+        // This fixture has no chunks/listeners; native notification behavior is covered by the real lab.
+    }
 
     @Override
     public void removeTileEntity(int x, int y, int z) {

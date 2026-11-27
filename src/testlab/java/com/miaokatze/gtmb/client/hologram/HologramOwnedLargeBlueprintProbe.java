@@ -104,7 +104,9 @@ final class HologramOwnedLargeBlueprintProbe {
                 .isEmpty(),
             "Finite fixture uses generated exact inputs only");
         require(!finite || prefix == 0 || prefix == 128, "Finite cancellation uses the explicit 128-cell threshold");
-        performance = finite ? new HologramFourMachinePerformanceProbe(evidence, true) : null;
+        performance = finite || Boolean.getBoolean(FLAG + "Performance")
+            ? new HologramFourMachinePerformanceProbe(evidence, true)
+            : null;
     }
 
     void server(WorldServer world) throws Exception {
@@ -155,7 +157,7 @@ final class HologramOwnedLargeBlueprintProbe {
                 witnessedFirst = true;
             }
             if (terminal == null) return;
-            if (finite && !postObserved) return;
+            if (performance != null && !postObserved) return;
             worldMatches = matches;
             witnessedTerminal = true;
             restoreFixtureActor();
@@ -254,8 +256,12 @@ final class HologramOwnedLargeBlueprintProbe {
                 if (!cleared || !review.localSubmitAvailable()) return false;
                 confirming = System.nanoTime();
                 worldStage = 2;
-                if (performance != null)
-                    performance.submitted("finite-native-blueprint", "fixed", 2, "BLUEPRINT_BUILD", false);
+                if (performance != null) performance.submitted(
+                    finite ? "finite-native-blueprint" : "large-native-blueprint",
+                    "fixed",
+                    2,
+                    "BLUEPRINT_BUILD",
+                    false);
                 review.localAction(LocalAction.SUBMIT);
                 evidence.put("ordinaryMaterialConfirm", 1);
                 clientStage++;
@@ -263,17 +269,28 @@ final class HologramOwnedLargeBlueprintProbe {
             case 3 -> {
                 if (attempt == null) attempt = attempt();
                 if (attempt == null) return false;
+                var result = attempt.result();
+                // Submission is asynchronous. PREPARING is not an admission or permission to close a GUI.
+                if (result.phase == HologramNativeLocalConstruction.Phase.PREPARING) return false;
                 if (!Boolean.TRUE.equals(evidence.get("manuallyClosedDuringConstruction"))) {
+                    int admissionPolls = ((Number) evidence.getOrDefault("admissionClientPolls", 0)).intValue() + 1;
+                    evidence.put("admissionClientPolls", admissionPolls);
+                    // Let the production client observer consume the admitted sequence in its normal tick order.
+                    if (admissionPolls < 2) return false;
+                    boolean automaticallyClosed = mc.currentScreen == null;
+                    evidence.put("automaticallyClosedDuringConstruction", automaticallyClosed);
+                    if (Boolean.getBoolean("gtmb.testlab.nativeConstructionContracts")) require(
+                        automaticallyClosed,
+                        "Candidate construction must close the confirmation UI after admission");
                     require(
-                        mc.currentScreen instanceof HologramLibraryMaterialReviewScreen,
-                        "Construction automatically closed the normal confirmation UI");
-                    require(
+                        automaticallyClosed || mc.currentScreen instanceof HologramLibraryMaterialReviewScreen,
+                        "Construction changed to an unrelated UI");
+                    if (result.phase == HologramNativeLocalConstruction.Phase.EXECUTING) require(
                         placement.worldDisplay(System.nanoTime()) != null,
                         "Active construction did not retain its world projection");
-                    mc.displayGuiScreen(null);
+                    if (!automaticallyClosed) mc.displayGuiScreen(null);
                     evidence.put("manuallyClosedDuringConstruction", true);
                 }
-                var result = attempt.result();
                 if (prefix > 0 && !cancellationSent
                     && result.placed >= prefix
                     && result.phase == HologramNativeLocalConstruction.Phase.EXECUTING) {
@@ -615,8 +632,9 @@ final class HologramOwnedLargeBlueprintProbe {
                             .getAsInt() : 0));
             }
             require(!locations.isEmpty(), "No independent block/metadata witnesses");
-            if (finite) {
-                StringBuilder canonical = new StringBuilder("gtmb-finite-native-1536-three-material-v1\n");
+            if (finite || Boolean.getBoolean(FLAG + "Performance")) {
+                StringBuilder canonical = new StringBuilder(
+                    finite ? "gtmb-finite-native-1536-three-material-v1\n" : "gtmb-large-native-three-material-v1\n");
                 canonical.append(frame.minX)
                     .append(',')
                     .append(frame.minY)
@@ -648,12 +666,12 @@ final class HologramOwnedLargeBlueprintProbe {
                         .append('\n');
                 }
                 evidence.put(
-                    "finiteFixtureSemanticSha256",
+                    finite ? "finiteFixtureSemanticSha256" : "largeFixtureSemanticSha256",
                     HologramBlueprintArtifact.hash(
                         canonical.toString()
                             .getBytes(java.nio.charset.StandardCharsets.UTF_8)));
                 evidence.put(
-                    "finiteFixtureDigestScope",
+                    finite ? "finiteFixtureDigestScope" : "largeFixtureDigestScope",
                     "Actual saved definition frame and every spatial block/meta cell; random catalog identity header excluded; original file hashes retained");
             }
             return new Catalog(

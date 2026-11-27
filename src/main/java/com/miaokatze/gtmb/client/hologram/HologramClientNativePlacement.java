@@ -34,7 +34,8 @@ final class HologramClientNativePlacement {
         long intent = HologramNetwork.nextConstructionIntentSequence();
         if (intent <= 0) return false;
         Attempt attempt = new Attempt(intent);
-        Ticket ticket = HologramBackgroundTasks.beginOwnedPlacement(attempt.id, "原生蓝图施工", attempt::stop);
+        Ticket ticket = HologramBackgroundTasks
+            .beginOwnedPlacement(attempt.id, HologramNativeUiText.reason("原生蓝图施工"), attempt::stop);
         if (ticket == null) return false;
         HologramPlacementTiming.clientRequest("blueprint", attempt.id);
         var job = new Active(attempt, ticket, client.theWorld, connection);
@@ -76,7 +77,7 @@ final class HologramClientNativePlacement {
                     options.getBoolean("voucherRequested"),
                     options.getIntArray("savedBindingSlots"));
             });
-        }, failure -> job.fail(HologramUiText.reason(failure.getMessage())));
+        }, failure -> job.fail(HologramNativeUiText.reason(failure.getMessage())));
         return true;
     }
 
@@ -129,7 +130,7 @@ final class HologramClientNativePlacement {
                         result.placed,
                         result.satisfied,
                         result.total),
-                    result.placed == 0 ? "没有需要放置的方块" : result.detail);
+                    HologramNativeUiText.reason(result.placed == 0 ? "没有需要放置的方块" : result.detail));
                 if (accepted) HologramLocalPlacement.INSTANCE.clear();
                 else HologramLocalPlacement.INSTANCE.retry();
                 job.unpin();
@@ -178,7 +179,14 @@ final class HologramClientNativePlacement {
 
         void finish(Outcome outcome, long serial, int placed, int satisfied, int total, String detail) {
             if (active != this) return;
-            HologramBackgroundTasks.finishOwnedPlacement(ticket, serial, outcome, placed, satisfied, total, detail);
+            HologramBackgroundTasks.finishOwnedPlacement(
+                ticket,
+                serial,
+                outcome,
+                placed,
+                satisfied,
+                total,
+                HologramNativeUiText.reason(detail));
             HologramLocalPlacement.INSTANCE.retry();
             unpin();
             active = null;

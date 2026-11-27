@@ -273,23 +273,8 @@ final class HologramNativeColdAdmissionRegression {
     private static final class Controller extends MTEEnhancedMultiBlockBase<Controller>
         implements ISurvivalConstructable {
 
-        private static final IStructureElement<Controller> AIR = new IStructureElement<Controller>() {
-
-            @Override
-            public boolean check(Controller context, World world, int x, int y, int z) {
-                return world.isAirBlock(x, y, z) && world.getTileEntity(x, y, z) == null;
-            }
-
-            @Override
-            public boolean spawnHint(Controller context, World world, int x, int y, int z, ItemStack trigger) {
-                return true;
-            }
-
-            @Override
-            public boolean placeBlock(Controller context, World world, int x, int y, int z, ItemStack trigger) {
-                return false;
-            }
-        };
+        private static final IStructureElement<Controller> AIR = com.gtnewhorizon.structurelib.structure.StructureUtility
+            .isAir();
         private static final IStructureDefinition<Controller> DEFINITION = StructureDefinition.<Controller>builder()
             .addShape("main", new String[][] { { "A" } })
             .addElement('A', AIR)
@@ -313,7 +298,9 @@ final class HologramNativeColdAdmissionRegression {
         @Override
         public void construct(ItemStack trigger, boolean hints) {
             var tile = getBaseMetaTileEntity();
-            DEFINITION.buildOrHints(
+            // The offline harness has no StructureLib sided proxy or hint mixin. Its real native
+            // AIR leaf would try to dispatch a particle before the manual observation seam below.
+            if (!hints) DEFINITION.buildOrHints(
                 this,
                 trigger,
                 "main",
@@ -325,7 +312,7 @@ final class HologramNativeColdAdmissionRegression {
                 -1,
                 0,
                 0,
-                hints);
+                false);
             // The detached bootstrap does not apply the native buildOrHints observation mixin or
             // Forge event-constructor transformer. Use the same explicit visited-event seam as the
             // existing native preview fixtures, with the one coordinate declared by this test shape.

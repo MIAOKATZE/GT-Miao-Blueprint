@@ -121,7 +121,8 @@ final class HologramArea extends HologramAreaSelection {
                 Block block = world.getBlock(x, y, z);
                 int meta = world.getBlockMetadata(x, y, z);
                 TileEntity tile = world.getTileEntity(x, y, z);
-                if (block != Blocks.air) writer.append(blueprint, block, meta, tile, x - minX, y - minY, z - minZ);
+                if (block != Blocks.air)
+                    writer.append(blueprint, block, meta, tile, x - minX, y - minY, z - minZ, player);
             }
         }
         if (!blockCursor.done()) return false;

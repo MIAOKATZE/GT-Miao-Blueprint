@@ -10,7 +10,6 @@ import com.gtnewhorizon.structurelib.alignment.IAlignment;
 import com.gtnewhorizon.structurelib.alignment.constructable.IConstructable;
 import com.gtnewhorizon.structurelib.alignment.constructable.IConstructableProvider;
 import com.gtnewhorizon.structurelib.alignment.constructable.IMultiblockInfoContainer;
-import com.gtnewhorizon.structurelib.alignment.constructable.ISurvivalConstructable;
 import com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing;
 import com.miaokatze.gtmb.api.StructureSources;
 
@@ -41,27 +40,21 @@ final class HologramStructureDiscovery {
     }
 
     static boolean supportsLocal(TileEntity tile) {
-        if (!(tile instanceof IGregTechTileEntity)) return supports(tile);
-        Object controller = context(tile);
-        return controller instanceof IConstructable || controller instanceof IConstructableProvider
-            || tile instanceof IConstructable
-            || IMultiblockInfoContainer.contains(tile.getClass())
-            || controller instanceof MTEEnhancedMultiBlockBase<?>multi && captureSupported(multi);
+        return supports(tile);
     }
 
     static IConstructable localConstructable(TileEntity tile, Object controller, ExtendedFacing facing) {
-        if (tile instanceof IGregTechTileEntity && controller instanceof ISurvivalConstructable survival)
-            return survival;
-        IMultiblockInfoContainer<TileEntity> container = IMultiblockInfoContainer.get(tile.getClass());
-        if (!(tile instanceof IGregTechTileEntity) && container != null) return container.toConstructable(tile, facing);
-        return constructable(
-            tile,
-            controller,
-            facing.getDirection()
-                .ordinal());
+        if (facing == null) return null;
+        return constructable(tile, controller, facing);
     }
 
     static IConstructable constructable(TileEntity tile, Object controller, int side) {
+        ExtendedFacing facing = tile instanceof IAlignment aligned ? aligned.getExtendedFacing()
+            : ExtendedFacing.of(ForgeDirection.getOrientation(side));
+        return constructable(tile, controller, facing);
+    }
+
+    private static IConstructable constructable(TileEntity tile, Object controller, ExtendedFacing facing) {
         if (tile instanceof IConstructableProvider provider) {
             IConstructable supplied = provider.getConstructable();
             if (supplied != null) return supplied;
@@ -70,8 +63,6 @@ final class HologramStructureDiscovery {
         IMultiblockInfoContainer<TileEntity> container = tile == null ? null
             : IMultiblockInfoContainer.get(tile.getClass());
         if (container != null) {
-            ExtendedFacing facing = tile instanceof IAlignment ? ((IAlignment) tile).getExtendedFacing()
-                : ExtendedFacing.of(ForgeDirection.getOrientation(side));
             IConstructable supplied = container.toConstructable(tile, facing);
             if (supplied != null) return supplied;
         }

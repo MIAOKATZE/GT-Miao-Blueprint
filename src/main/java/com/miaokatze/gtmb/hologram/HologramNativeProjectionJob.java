@@ -99,6 +99,7 @@ final class HologramNativeProjectionJob {
     private final HologramMaterials.Context stock, recovery;
     private final List<HologramNativeTargetPlan.Cell> work;
     private final Map<HologramBlueprintResources.ExactKey, ItemStack> funding = new LinkedHashMap<>();
+    private final HologramNativeConstruction.ProjectionCache placements = new HologramNativeConstruction.ProjectionCache();
     private final boolean creative;
     private int next, placed;
     private boolean funded, anchorDone;
@@ -380,9 +381,9 @@ final class HologramNativeProjectionJob {
         return cell.dx() + "," + cell.dy() + "," + cell.dz();
     }
 
-    private boolean same(HologramNativeTargetPlan.Cell cell) {
+    private boolean same(HologramNativeTargetPlan.Cell cell) throws IOException {
         int x = session.x + cell.dx(), y = session.y + cell.dy(), z = session.z + cell.dz();
-        return HologramWorldTransactions.nativeProjectionStateMatches(endpoint.world, x, y, z, cell);
+        return HologramNativeConstruction.matches(session, placements.get(cell), x, y, z);
     }
 
     private void fund() throws IOException {
@@ -391,7 +392,7 @@ final class HologramNativeProjectionJob {
             if (!endpoint.world.blockExists(x, y, z)) throw new IOException("施工范围包含未加载区块。");
             if (intent.operation() == Operation.DEMOLISH || cell.requiredAir()
                 || cell.material() == null
-                || HologramWorldTransactions.nativeProjectionIdentity(endpoint.world, x, y, z, cell)) continue;
+                || HologramNativeConstruction.identity(endpoint.world, placements.get(cell), x, y, z)) continue;
             ItemStack item = cell.material();
             var id = HologramValues.stackKey(item);
             var aggregate = funding.get(id);
@@ -451,12 +452,17 @@ final class HologramNativeProjectionJob {
                     next++;
                     continue;
                 }
-                if (HologramWorldTransactions.nativeProjectionIdentity(endpoint.world, x, y, z, cell)
+                if (HologramNativeConstruction.identity(endpoint.world, placements.get(cell), x, y, z)
                     && endpoint.world.getTileEntity(x, y, z) != null) {
                     var permit = admission.acquire(gate, lease);
                     if (permit == null) return state;
-                    boolean done = HologramWorldTransactions
-                        .synchronizeNativeProjection(session, cell, () -> current() && gate.transactionCurrent(permit));
+                    boolean done = HologramNativeConstruction.synchronize(
+                        session,
+                        placements.get(cell),
+                        x,
+                        y,
+                        z,
+                        () -> current() && gate.transactionCurrent(permit));
                     if (!settle(permit, done)) return state;
                     placed++;
                     next++;
@@ -471,8 +477,9 @@ final class HologramNativeProjectionJob {
                 }
                 var permit = admission.acquire(gate, lease);
                 if (permit == null) return state;
-                boolean done = HologramWorldTransactions
-                    .placeNativeProjection(session, cell, () -> current() && gate.transactionCurrent(permit));
+                boolean done = HologramNativeConstruction
+                    .place(session, placements.get(cell), x, y, z, () -> current() && gate.transactionCurrent(permit))
+                    != HologramNativeConstruction.Outcome.FAILED;
                 if (!settle(permit, done)) return state;
                 placed++;
                 next++;

@@ -582,6 +582,11 @@ public final class HologramBlueprintNbt {
                 source.getTag(key)
                     .copy());
         }
+        if (source.hasKey(HologramNativeConfiguration.TAG)) {
+            NBTTagCompound configuration = HologramNativeConfiguration.selected(source, selected);
+            if (configuration == null) result.removeTag(HologramNativeConfiguration.TAG);
+            else result.setTag(HologramNativeConfiguration.TAG, configuration);
+        }
         normalizeResourceSelection(result);
         return result;
     }
@@ -637,6 +642,9 @@ public final class HologramBlueprintNbt {
         if (tag == null) return null;
         if (hasMissingItems(tag)) throw new IOException("蓝图NBT包含缺失物品，不能恢复或扣除资源");
         NBTTagCompound copy = (NBTTagCompound) tag.copy();
+        // Applied through the native configuration capability after paid state restoration.
+        // Exact recovery keeps its original persistence tree and does not use this marker.
+        copy.removeTag(HologramNativeConfiguration.TAG);
         removeQuantumVisual(copy);
         removeMarkers(copy);
         return copy;

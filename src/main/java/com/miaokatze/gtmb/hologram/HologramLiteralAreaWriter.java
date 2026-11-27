@@ -8,6 +8,7 @@ import java.util.HashSet;
 import java.util.Set;
 
 import net.minecraft.block.Block;
+import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.tileentity.TileEntity;
@@ -22,10 +23,16 @@ final class HologramLiteralAreaWriter {
 
     void append(HologramPresets.Preset draft, Block block, int meta, TileEntity tile, int x, int y, int z)
         throws IOException {
+        append(draft, block, meta, tile, x, y, z, null);
+    }
+
+    void append(HologramPresets.Preset draft, Block block, int meta, TileEntity tile, int x, int y, int z,
+        EntityPlayer player) throws IOException {
         boolean packed = draft.cells instanceof HologramLiteralCaptureRows;
         if (packed) HologramBlueprintLimits.requireLocal((long) draft.cells.size() + 1);
         else HologramBlueprintLimits.require((long) draft.cells.size() + 1);
         NBTTagCompound data = tile == null ? null : HologramNativeCapture.capture(tile);
+        HologramNativeConfiguration.capture(tile, player, data);
         ItemStack item = HologramArea.serverSample(block, meta, tile, data);
         HologramPresets.Cell cell = item == null ? new HologramPresets.Cell()
             : HologramPresets.cell(item, x, y, z, -1, false);

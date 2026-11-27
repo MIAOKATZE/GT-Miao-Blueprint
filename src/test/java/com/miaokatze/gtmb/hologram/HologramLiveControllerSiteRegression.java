@@ -393,25 +393,29 @@ public final class HologramLiveControllerSiteRegression {
             HologramControllerTarget.TargetKind.MATERIAL);
     }
 
-    /** A survival element rejects further work halfway through a 100 x 10 x 20 declaration. */
+    /** Two native batches complete a 100 x 10 x 20 target; explicit unsupported/stalled modes stay distinct. */
     public static final class LargeController extends TileEntity
         implements com.gtnewhorizon.structurelib.alignment.constructable.ISurvivalConstructable {
 
         static boolean unsupported, emptyNative;
+        private int generated;
 
         @Override
         public int survivalConstruct(ItemStack signal, int budget,
             com.gtnewhorizon.structurelib.structure.ISurvivalBuildEnvironment env) {
             if (unsupported) return -2;
-            if (worldObj.getBlock(xCoord - 50, yCoord + 1, zCoord - 10) != Blocks.air) return 0;
-            for (int i = 0; i < 10000; i++) worldObj.setBlock(
+            if (emptyNative && generated >= 10000) return 0;
+            if (generated == 20000) return -1;
+            int end = generated + 10000;
+            for (int i = generated; i < end; i++) worldObj.setBlock(
                 xCoord + i % 100 - 50,
                 yCoord + i / 2000 + 1,
                 zCoord + (i / 100) % 20 - 10,
                 i == 0 ? Blocks.furnace : Blocks.wool,
                 i == 0 ? 4 : 3,
                 3);
-            return 10000;
+            generated = end;
+            return generated == 20000 ? -1 : 10000;
         }
 
         @Override
@@ -517,8 +521,8 @@ public final class HologramLiveControllerSiteRegression {
                         throw new AssertionError("stalled machine did not report failure");
                     } catch (java.io.IOException expected) {
                         SimpleAssert.that(
-                            "LOCAL_NATIVE_PREVIEW_INCOMPLETE".equals(expected.getMessage()),
-                            "incomplete declaration is surfaced explicitly");
+                            "LOCAL_NATIVE_PREVIEW_UNSTABLE".equals(expected.getMessage()),
+                            "a permanent zero-result cursor cannot publish its incomplete survival prefix");
                     }
                     continue;
                 }
@@ -549,15 +553,18 @@ public final class HologramLiveControllerSiteRegression {
                         ordinal >= 0 && ordinal < occupied.length && !occupied[ordinal],
                         "unique declared coordinate");
                     occupied[ordinal] = true;
-                    boolean extra = LargeController.unsupported || ordinal >= 10000;
+                    boolean extra = LargeController.unsupported;
                     if (extra) displayOnly++;
                     SimpleAssert.that(
                         cell.targetBlock()
                             == (extra ? Blocks.brick_block : ordinal == 0 ? Blocks.furnace : Blocks.wool),
-                        "creative display may fill holes; never substitute for a survival-selected TE/casing");
+                        "a complete native target retains both batches; an unsupported branch remains creative display only");
                     SimpleAssert.that(cell.missingBlock() == extra, "creative-only rows cannot prove a payable target");
                 }
-                SimpleAssert.eq(LargeController.unsupported ? 20000 : 10000, displayOnly, "display-only complement");
+                SimpleAssert.eq(
+                    LargeController.unsupported ? 20000 : 0,
+                    displayOnly,
+                    "only the explicit unsupported-survival branch needs display-only geometry");
                 System.out.println(
                     "LargeController actual-capture→candidate: scenario=" + scenario
                         + " source=20000+anchor"

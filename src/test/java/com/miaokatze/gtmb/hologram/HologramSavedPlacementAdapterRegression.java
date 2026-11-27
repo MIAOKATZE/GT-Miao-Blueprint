@@ -27,8 +27,10 @@ import net.minecraft.tileentity.TileEntity;
 import net.minecraft.tileentity.TileEntitySign;
 import net.minecraft.world.World;
 import net.minecraft.world.WorldProviderSurface;
+import net.minecraft.world.chunk.Chunk;
 import net.minecraft.world.storage.MapStorage;
 import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.common.util.BlockSnapshot;
 import net.minecraftforge.event.world.BlockEvent;
 
 import com.google.gson.JsonObject;
@@ -118,6 +120,7 @@ final class HologramSavedPlacementAdapterRegression {
                 public boolean post(Event event) {
                     if (event instanceof BlockEvent.PlaceEvent place && place.player == player) {
                         world.vetoed++;
+                        place.setCanceled(true);
                         return true;
                     }
                     return prior.post(event);
@@ -522,6 +525,8 @@ final class HologramSavedPlacementAdapterRegression {
 
         @Override
         public boolean setBlock(int x, int y, int z, Block block, int metadata, int flags) {
+            if (captureBlockSnapshots) capturedBlockSnapshots
+                .add(new BlockSnapshot(this, x, y, z, getBlock(x, y, z), getBlockMetadata(x, y, z), flags));
             String at = key(x, y, z);
             if (block == Blocks.air) {
                 placed.remove(at);
@@ -541,6 +546,8 @@ final class HologramSavedPlacementAdapterRegression {
         public boolean setBlockMetadataWithNotify(int x, int y, int z, int metadata, int flags) {
             Block block = getBlock(x, y, z);
             if (block == Blocks.air) return false;
+            if (captureBlockSnapshots)
+                capturedBlockSnapshots.add(new BlockSnapshot(this, x, y, z, block, getBlockMetadata(x, y, z), flags));
             placed.put(key(x, y, z), new State(block, metadata));
             return true;
         }
@@ -563,6 +570,9 @@ final class HologramSavedPlacementAdapterRegression {
 
         @Override
         public void markTileEntityChunkModified(int x, int y, int z, TileEntity tile) {}
+
+        @Override
+        public void markAndNotifyBlock(int x, int y, int z, Chunk chunk, Block old, Block placed, int flags) {}
 
         @Override
         public void func_147453_f(int x, int y, int z, Block block) {}

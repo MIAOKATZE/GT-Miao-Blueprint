@@ -219,9 +219,11 @@ final class HologramLayeredHatchRegression {
         var busA = witnessedAtLeast(Collections.singletonMap(HatchElement.InputBus.or(specialRole()), 1));
         var fluidOnly = witnessedAtLeast(Collections.singletonMap(HatchElement.OutputHatch.or(specialRole()), 1));
         var energyC = witnessedAtLeast(Collections.singletonMap(HatchElement.Energy, 1));
-        IStructureElement<MTEMultiBlockBase> opaque = StructureUtility.onlyIf(
-            context -> { throw new AssertionError("opaque native condition was queried by the chooser"); },
-            energyC);
+        int[] opaqueQueries = { 0 };
+        IStructureElement<MTEMultiBlockBase> opaque = StructureUtility.onlyIf(context -> {
+            opaqueQueries[0]++;
+            return false;
+        }, energyC);
         var a = StructureUtility.withChannel(
             "gtmb_test_mixed_hatch",
             StructureUtility.ofChain(opaque, busA, StructureUtility.ofBlock(Blocks.stone, 0)));
@@ -241,9 +243,11 @@ final class HologramLayeredHatchRegression {
                 factories[0]++;
                 return (element, x, y, z, stack) -> {
                     queries[0]++;
-                    if (element == busA) SimpleAssert.that(
-                        y == 64 && z == 0 && (x == 0 && stack.stackSize == 3 || x == 4 && stack.stackSize == 5),
-                        "native query uses the visited slot and its current effective StructureLib channel");
+                    if (element == a) SimpleAssert.that(
+                        y == 64 && z == 0
+                            && (x == 0 || x == 4)
+                            && ChannelDataAccessor.getChannelData(stack, "gtmb_test_mixed_hatch") >= 3,
+                        "public root query keeps the slot and lets the native channel wrapper transform its signal");
                     return getNativeOffers(element, fresh, x, y, z, stack);
                 };
             });
@@ -286,8 +290,9 @@ final class HologramLayeredHatchRegression {
             "C retains its own settled roles with neither A's buses nor a manual-only marker");
         SimpleAssert.that(
             chooser.offers(a, 4, 64, 0, trigger)
-                .size() == 2 && queries[0] == 2,
-            "the same captured A root reuses only its own plain atLeast result");
+                .size() == 2 && queries[0] == 3
+                && opaqueQueries[0] == 2,
+            "a different A position performs its own complete public native query");
 
         HologramCapture.Cell rowFluid = new HologramCapture.Cell(fluidRow, 6, 64, 0, trigger, true);
         HologramNativeStructurePreview.readCandidates(
@@ -301,7 +306,7 @@ final class HologramLayeredHatchRegression {
                 && !rowFluid.candidateComplete
                 && HologramValues.same(rowFluid.candidates.get(0), extended)
                 && HologramValues.same(rowFluid.candidates.get(1), fluid)
-                && queries[0] == 3
+                && queries[0] == 4
                 && factories[0] == 1,
             "native fluid sibling remains available even without settled candidates and never becomes a preset");
         SimpleAssert.that(
@@ -314,7 +319,7 @@ final class HologramLayeredHatchRegression {
         ChannelDataAccessor.setChannelData(changedTrigger, "gtmb_test_mixed_hatch", 5);
         SimpleAssert.that(
             chooser.offers(a, 4, 64, 0, changedTrigger)
-                .size() == 2 && queries[0] == 4,
+                .size() == 2 && queries[0] == 5,
             "an exact changed trigger does not reuse a prior capture signal's offers");
         chooser.clear();
 
