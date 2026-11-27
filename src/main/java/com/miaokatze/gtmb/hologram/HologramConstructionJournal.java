@@ -6,7 +6,9 @@ package com.miaokatze.gtmb.hologram;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.WeakHashMap;
@@ -28,9 +30,36 @@ final class HologramConstructionJournal {
     private static final String SCOPED_UNCERTAINTY = "scopeUncertainReason";
     private static final String SCOPED_PUBLICATION_FAILED = "scopePublicationFailed";
     private static final Set<EntityPlayer> LOADED = Collections.newSetFromMap(new WeakHashMap<EntityPlayer, Boolean>());
+    private static final Map<EntityPlayer, Publication> LAST_PUBLICATION = new WeakHashMap<>();
     // Package-private storage seam for isolated contract fixtures; production always uses the world's save root.
     static final ThreadLocal<Path> STORAGE_ROOT = new ThreadLocal<>();
-    static long publications, publishNanos;
+    static long publications, publishNanos, publicationCacheHits;
+
+    /** Only bytes published successfully by this player in this exact save root can bypass decoding. */
+    private static final class Publication {
+
+        final Path file;
+        final String player, id;
+        final long revision;
+        final byte[] bytes;
+
+        Publication(Path file, NBTTagCompound journal, byte[] bytes) {
+            this.file = file;
+            player = journal.getString("player");
+            id = journal.getString("id");
+            revision = journal.getLong("revision");
+            this.bytes = bytes;
+        }
+
+        boolean matches(Path candidate, EntityPlayer actor, NBTTagCompound journal, byte[] current) {
+            return file.equals(candidate) && player.equals(
+                actor.getUniqueID()
+                    .toString())
+                && id.equals(journal.getString("id"))
+                && revision == journal.getLong("revision")
+                && Arrays.equals(bytes, current);
+        }
+    }
 
     private HologramConstructionJournal() {}
 
@@ -113,15 +142,23 @@ final class HologramConstructionJournal {
             if (Files.exists(file)) {
                 if (!Files.isRegularFile(file) || Files.isSymbolicLink(file) || Files.size(file) > 32L * 1024 * 1024)
                     throw new IOException("Invalid existing recovery file; no evidence overwritten");
-                NBTTagCompound current = HologramSnapshotCodec.decode(Files.readAllBytes(file));
-                if (!player.getUniqueID()
-                    .toString()
-                    .equals(current.getString("player"))
-                    || (!journal.getString("id")
-                        .equals(current.getString("id")) && !"settled".equals(current.getString("phase")))
-                    || (journal.getString("id")
-                        .equals(current.getString("id")) && journal.getLong("revision") != current.getLong("revision")))
-                    throw new IOException("Construction recovery identity/revision conflict; no evidence overwritten");
+                byte[] currentBytes = Files.readAllBytes(file);
+                Publication previous = LAST_PUBLICATION.get(player);
+                if (previous != null && previous.matches(file, player, journal, currentBytes)) {
+                    publicationCacheHits++;
+                } else {
+                    NBTTagCompound current = HologramSnapshotCodec.decode(currentBytes);
+                    if (!player.getUniqueID()
+                        .toString()
+                        .equals(current.getString("player"))
+                        || (!journal.getString("id")
+                            .equals(current.getString("id")) && !"settled".equals(current.getString("phase")))
+                        || (journal.getString("id")
+                            .equals(current.getString("id"))
+                            && journal.getLong("revision") != current.getLong("revision")))
+                        throw new IOException(
+                            "Construction recovery identity/revision conflict; no evidence overwritten");
+                }
             }
             journal.setBoolean("durable", true);
             NBTTagCompound published = (NBTTagCompound) journal.copy();
@@ -131,6 +168,7 @@ final class HologramConstructionJournal {
             long started = System.nanoTime();
             AtomicFilePublisher.publishAtomic(file, bytes);
             journal.setLong("revision", published.getLong("revision"));
+            LAST_PUBLICATION.put(player, new Publication(file, published, bytes));
             publishNanos += System.nanoTime() - started;
             publications++;
         } catch (IOException failure) {
@@ -175,6 +213,7 @@ final class HologramConstructionJournal {
     }
 
     static void reload(EntityPlayer player) {
+        LAST_PUBLICATION.remove(player);
         LOADED.remove(player);
         pending(player);
     }
@@ -279,6 +318,7 @@ final class HologramConstructionJournal {
                 .toString());
         if (journal.getBoolean("durable")) persist(player, journal);
         owner(player).removeTag(KEY);
+        LAST_PUBLICATION.remove(player);
     }
 
     /** Explicit OP4 adjudication. No replay of unknown external calls; inventory must still match the frozen state. */

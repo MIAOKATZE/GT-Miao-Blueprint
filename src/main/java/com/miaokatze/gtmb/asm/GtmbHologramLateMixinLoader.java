@@ -28,6 +28,7 @@ public final class GtmbHologramLateMixinLoader implements ILateMixinLoader {
             "hologram.MixinHologramChannels",
             "hologram.MixinHologramRecoveryMachines",
             "hologram.MixinHologramRecoveryFrames",
+            "hologram.MixinHologramMachineUpdateBatch",
             "hologram.MixinHologramHatchPolicy");
     }
 }

@@ -122,6 +122,12 @@ public final class HologramDemolition {
     }
 
     private static void advance(Job job, long deadline) {
+        try (var updates = HologramMachineUpdateBatch.open()) {
+            advanceBatch(job, deadline);
+        }
+    }
+
+    private static void advanceBatch(Job job, long deadline) {
         String scopedRefusal = HologramWorkspace.legacyConstructionRefusal(job.player);
         if (scopedRefusal != null) {
             finish(job, scopedRefusal);

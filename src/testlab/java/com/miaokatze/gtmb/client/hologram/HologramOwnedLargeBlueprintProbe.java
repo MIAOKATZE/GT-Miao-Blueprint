@@ -61,6 +61,8 @@ final class HologramOwnedLargeBlueprintProbe {
     private final UUID actorId, toolId = UUID.randomUUID();
     private final String id = "local_" + UUID.randomUUID();
     private final int prefix = Integer.getInteger(FLAG + "Prefix", 0);
+    private final boolean finite = Boolean.getBoolean(FLAG + "Finite");
+    private final HologramFourMachinePerformanceProbe performance;
     private final long started = System.nanoTime();
     private final Map<String, Object> evidence = new LinkedHashMap<>();
 
@@ -69,6 +71,8 @@ final class HologramOwnedLargeBlueprintProbe {
     private ItemStack projector;
     private NBTTagList startingInventory;
     private int startingSlot, toolSlot;
+    private double startingX, startingY, startingZ;
+    private float startingYaw, startingPitch;
     private int ax, ay, az;
     private volatile Catalog catalog;
     private volatile int worldStage;
@@ -81,6 +85,7 @@ final class HologramOwnedLargeBlueprintProbe {
     private Attempt attempt;
     private int clientStage;
     private boolean cancellationSent;
+    private volatile boolean postObserved;
     private long confirming;
 
     @Desugar
@@ -94,6 +99,12 @@ final class HologramOwnedLargeBlueprintProbe {
         this.save = save;
         this.actorId = actorId;
         require(prefix >= 0 && prefix <= SYNTHETIC_MAX, "Invalid prefix");
+        require(
+            !finite || System.getProperty(FLAG + "File", "")
+                .isEmpty(),
+            "Finite fixture uses generated exact inputs only");
+        require(!finite || prefix == 0 || prefix == 128, "Finite cancellation uses the explicit 128-cell threshold");
+        performance = finite ? new HologramFourMachinePerformanceProbe(evidence, true) : null;
     }
 
     void server(WorldServer world) throws Exception {
@@ -144,6 +155,7 @@ final class HologramOwnedLargeBlueprintProbe {
                 witnessedFirst = true;
             }
             if (terminal == null) return;
+            if (finite && !postObserved) return;
             worldMatches = matches;
             witnessedTerminal = true;
             restoreFixtureActor();
@@ -242,6 +254,8 @@ final class HologramOwnedLargeBlueprintProbe {
                 if (!cleared || !review.localSubmitAvailable()) return false;
                 confirming = System.nanoTime();
                 worldStage = 2;
+                if (performance != null)
+                    performance.submitted("finite-native-blueprint", "fixed", 2, "BLUEPRINT_BUILD", false);
                 review.localAction(LocalAction.SUBMIT);
                 evidence.put("ordinaryMaterialConfirm", 1);
                 clientStage++;
@@ -280,6 +294,10 @@ final class HologramOwnedLargeBlueprintProbe {
                 clientStage++;
             }
             case 4 -> {
+                if (performance != null && !postObserved) {
+                    if (!performance.completed(attempt.id.toString())) return false;
+                    postObserved = true;
+                }
                 if (!witnessedTerminal || !restored) return false;
                 require(
                     placement.worldDisplay(System.nanoTime()) == null,
@@ -288,7 +306,7 @@ final class HologramOwnedLargeBlueprintProbe {
                 evidence.put("worldMatches", worldMatches);
                 evidence.put("worldSamples", catalog.witnesses.size());
                 evidence.put("firstObservedWriteNanos", witnessedFirst ? firstWorldNanos - confirming : null);
-                evidence.put("verifyCreativeNoDebit", true);
+                evidence.put("verifyCreativeNoDebit", !finite);
                 require(
                     terminal.total == catalog.expected && terminal.satisfied == 0 && witnessedFirst,
                     "No real world write or incorrect exact construction receipt: " + terminal.detail);
@@ -313,6 +331,7 @@ final class HologramOwnedLargeBlueprintProbe {
     }
 
     void clientCleanup(Minecraft mc) throws Exception {
+        if (performance != null) performance.close();
         HologramLocalPlacement.INSTANCE.clear();
         if (temporaryStore != null && originalStore != null)
             field(HologramLibraryClient.class, "store").set(HologramLibraryClient.INSTANCE, originalStore);
@@ -340,6 +359,34 @@ final class HologramOwnedLargeBlueprintProbe {
             "Cannot stage temporary support in empty test site");
         startingInventory = inventory();
         startingSlot = actor.inventory.currentItem;
+        startingX = actor.posX;
+        startingY = actor.posY;
+        startingZ = actor.posZ;
+        startingYaw = actor.rotationYaw;
+        startingPitch = actor.rotationPitch;
+        if (finite) {
+            var recovery = new NBTTagCompound();
+            recovery.setTag("inventory", startingInventory.copy());
+            recovery.setInteger("selectedSlot", startingSlot);
+            recovery.setString("actorUuid", actorId.toString());
+            recovery.setString("runId", System.getProperty("miaotest.host.runId", ""));
+            recovery.setDouble("x", startingX);
+            recovery.setDouble("y", startingY);
+            recovery.setDouble("z", startingZ);
+            recovery.setFloat("yaw", startingYaw);
+            recovery.setFloat("pitch", startingPitch);
+            try {
+                Files.write(
+                    save.resolve("gtmb-owned-blueprint-actor-recovery.snbt"),
+                    recovery.toString()
+                        .getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                    java.nio.file.StandardOpenOption.CREATE_NEW);
+            } catch (java.io.IOException failure) {
+                throw new IllegalStateException("Cannot retain finite fixture actor recovery before mutation", failure);
+            }
+            for (int i = 0; i < actor.inventory.mainInventory.length; i++)
+                actor.inventory.setInventorySlotContents(i, null);
+        }
         toolSlot = -1;
         for (int i = 0; i < 9; i++) if (actor.inventory.getStackInSlot(i) == null) {
             toolSlot = i;
@@ -353,15 +400,43 @@ final class HologramOwnedLargeBlueprintProbe {
         actor.inventory.setInventorySlotContents(toolSlot, projector);
         actor.inventory.currentItem = toolSlot;
         actor.playerNetServerHandler.sendPacket(new S09PacketHeldItemChange(toolSlot));
-        actor.setGameType(GameType.CREATIVE);
-        actor.capabilities.isFlying = true;
-        actor.sendPlayerAbilities();
-        actor.playerNetServerHandler.setPlayerLocation(ax + .5, ay + 1., az - 2.5, 0F, 0F);
+        if (finite) {
+            require(
+                !actor.canCommandSenderUseCommand(2, "miaotest") && !actor.capabilities.isCreativeMode,
+                "Finite blueprint business actor must be non-OP survival");
+            Block[] blocks = { Blocks.stonebrick, Blocks.quartz_block, Blocks.glowstone };
+            int slot = 1;
+            for (Block block : blocks) for (int stack = 0; stack < 8; stack++)
+                actor.inventory.setInventorySlotContents(slot++, new ItemStack(block, 64, 0));
+            int standZ = Math.toIntExact(lowZ) - 3;
+            for (int dx = -1; dx <= 1; dx++) for (int dz = -1; dz <= 1; dz++) require(
+                owned.isAirBlock(ax + dx, ay, standZ + dz) && owned.setBlock(ax + dx, ay, standZ + dz, Blocks.glass),
+                "Finite actor stand is not empty owned space");
+            actor.playerNetServerHandler.setPlayerLocation(ax + .5, ay + 1., standZ + .5, 0F, 0F);
+            evidence.put("finiteMaterialsSupplied", 1536);
+            evidence.put("finiteMaterialKinds", "512 stonebrick + 512 quartz_block + 512 glowstone; no replenishment");
+        } else {
+            actor.setGameType(GameType.CREATIVE);
+            actor.capabilities.isFlying = true;
+            actor.sendPlayerAbilities();
+            actor.playerNetServerHandler.setPlayerLocation(ax + .5, ay + 1., az - 2.5, 0F, 0F);
+        }
         actor.inventoryContainer.detectAndSendChanges();
     }
 
     private void restoreFixtureActor() {
         require(ours(actor.inventory.getStackInSlot(toolSlot)), "Fixture projector identity changed");
+        if (finite) {
+            verifyFiniteDebit();
+            actor.inventory.readFromNBT((NBTTagList) startingInventory.copy());
+            actor.inventory.currentItem = startingSlot;
+            actor.playerNetServerHandler.sendPacket(new S09PacketHeldItemChange(startingSlot));
+            actor.playerNetServerHandler.setPlayerLocation(startingX, startingY, startingZ, startingYaw, startingPitch);
+            require(startingInventory.equals(inventory()), "Finite fixture inventory restoration differs");
+            evidence.put("finiteActorInventoryRestored", true);
+            actor.inventoryContainer.detectAndSendChanges();
+            return;
+        }
         actor.inventory.setInventorySlotContents(toolSlot, null);
         actor.inventory.currentItem = startingSlot;
         actor.playerNetServerHandler.sendPacket(new S09PacketHeldItemChange(startingSlot));
@@ -369,6 +444,76 @@ final class HologramOwnedLargeBlueprintProbe {
         actor.setGameType(GameType.SURVIVAL);
         actor.sendPlayerAbilities();
         actor.inventoryContainer.detectAndSendChanges();
+    }
+
+    private void verifyFiniteDebit() {
+        boolean journal = recoveryFlag(
+            "HologramConstructionJournal",
+            "pending",
+            net.minecraft.entity.player.EntityPlayer.class);
+        boolean delivery = recoveryFlag("HologramMaterials$Context", "pendingWorldRecovery", EntityPlayerMP.class);
+        boolean known = recoveryFlag("HologramConstructionAuthority", "hasKnownRecovery", EntityPlayerMP.class);
+        boolean active = recoveryFlag("HologramNativeLocalConstruction", "active", EntityPlayerMP.class);
+        boolean demolition = recoveryFlag("HologramDemolition", "active", EntityPlayerMP.class);
+        evidence.put("finiteJournalPending", journal);
+        evidence.put("finiteDeliveryPending", delivery);
+        evidence.put("finiteKnownRecovery", known);
+        evidence.put("finiteServerConstructionActive", active);
+        evidence.put("finiteServerDemolitionActive", demolition);
+        evidence.put("finiteRecoveryClear", !journal && !delivery && !known && !active && !demolition);
+        require(
+            !journal && !delivery && !known && !active && !demolition,
+            "Finite construction still has native recovery or active business ownership; preserve actor and owned world");
+        require(
+            actor.theItemInWorldManager.getGameType() == GameType.SURVIVAL && !actor.capabilities.isCreativeMode
+                && !actor.canCommandSenderUseCommand(2, "miaotest"),
+            "Finite business identity or game mode changed");
+        Block[] blocks = { Blocks.stonebrick, Blocks.quartz_block, Blocks.glowstone };
+        int[] placed = new int[3], remaining = new int[3];
+        for (int n = 0; n < 1536; n++) {
+            int kind = n / 16 % 3, x = ax + n % 32 - 16 - catalog.frame.anchorX,
+                y = ay + n / 1024 - catalog.frame.anchorY, z = az + n / 32 % 32 - 16 - catalog.frame.anchorZ;
+            if (owned.isAirBlock(x, y, z)) continue;
+            require(
+                owned.getBlock(x, y, z) == blocks[kind] && owned.getBlockMetadata(x, y, z) == 0,
+                "Finite blueprint full-world cell mismatch at " + n);
+            placed[kind]++;
+        }
+        for (ItemStack stack : actor.inventory.mainInventory) {
+            if (stack == null || ours(stack)) continue;
+            boolean matched = false;
+            for (int kind = 0; kind < blocks.length; kind++)
+                if (stack.getItem() == new ItemStack(blocks[kind]).getItem() && stack.getItemDamage() == 0
+                    && !stack.hasTagCompound()) {
+                        remaining[kind] += stack.stackSize;
+                        matched = true;
+                        break;
+                    }
+            require(matched, "Unexpected item in finite payment inventory");
+        }
+        int total = 0;
+        for (int kind = 0; kind < blocks.length; kind++) {
+            require(placed[kind] + remaining[kind] == 512, "Finite exact per-material debit/refund mismatch " + kind);
+            total += placed[kind];
+        }
+        require(
+            terminal != null && total == terminal.placed,
+            "Finite full-world count differs from production terminal");
+        evidence.put("finiteWorldPlacedByKind", placed);
+        evidence.put("finiteInventoryRemainingByKind", remaining);
+        evidence.put("finiteFullWorldCellsScanned", 1536);
+        evidence.put("finiteExactDebitAndRefundVerified", true);
+    }
+
+    private boolean recoveryFlag(String type, String name, Class<?> parameter) {
+        try {
+            var method = Class.forName("com.miaokatze.gtmb.hologram." + type)
+                .getDeclaredMethod(name, parameter);
+            method.setAccessible(true);
+            return (Boolean) method.invoke(null, actor);
+        } catch (ReflectiveOperationException failure) {
+            throw new IllegalStateException("Cannot verify native finite recovery guard " + type + "." + name, failure);
+        }
     }
 
     private boolean ours(ItemStack item) {
@@ -401,8 +546,8 @@ final class HologramOwnedLargeBlueprintProbe {
         final String sha;
         String kind;
         if (source.isEmpty()) {
-            int cells = Integer.getInteger(FLAG + "Cells", 32_768);
-            require(cells >= 4096 && cells <= SYNTHETIC_MAX, "Invalid synthetic cell count");
+            int cells = Integer.getInteger(FLAG + "Cells", finite ? 1536 : 32_768);
+            require(finite ? cells == 1536 : cells >= 4096 && cells <= SYNTHETIC_MAX, "Invalid synthetic cell count");
             bytes = synthetic(author, cells);
             sha = HologramBlueprintArtifact.hash(bytes);
             kind = "generated three-material native pressure fixture (not original Nxer/DOT)";
@@ -449,7 +594,9 @@ final class HologramOwnedLargeBlueprintProbe {
                     descriptors.add(entry.getKey());
                 }
             }
-            require(expected >= 4096 && (prefix == 0 || prefix < expected), "Fixture size/prefix not meaningful");
+            require(
+                (finite ? expected == 1536 : expected >= 4096) && (prefix == 0 || prefix < expected),
+                "Fixture size/prefix not meaningful");
             int samples = prefix == 0 ? SAMPLE_LIMIT : Math.min(space.size(), SAMPLE_LIMIT * 2);
             for (int i = 0; i < samples; i++) {
                 // Dense early witnesses cover bounded prefix; distributed witnesses cover a full completion.
@@ -468,6 +615,47 @@ final class HologramOwnedLargeBlueprintProbe {
                             .getAsInt() : 0));
             }
             require(!locations.isEmpty(), "No independent block/metadata witnesses");
+            if (finite) {
+                StringBuilder canonical = new StringBuilder("gtmb-finite-native-1536-three-material-v1\n");
+                canonical.append(frame.minX)
+                    .append(',')
+                    .append(frame.minY)
+                    .append(',')
+                    .append(frame.minZ)
+                    .append(',')
+                    .append(frame.anchorX)
+                    .append(',')
+                    .append(frame.anchorY)
+                    .append(',')
+                    .append(frame.anchorZ)
+                    .append('\n');
+                for (int ordinal = 0; ordinal < space.size(); ordinal++) {
+                    var point = space.atOrdinal(ordinal);
+                    JsonObject row = witnessFields(definition, space, point.descriptor);
+                    canonical.append(point.x)
+                        .append(',')
+                        .append(point.y)
+                        .append(',')
+                        .append(point.z)
+                        .append(':')
+                        .append(
+                            row.get("block")
+                                .getAsString())
+                        .append(':')
+                        .append(
+                            row.has("metadata") ? row.get("metadata")
+                                .getAsInt() : 0)
+                        .append('\n');
+                }
+                evidence.put(
+                    "finiteFixtureSemanticSha256",
+                    HologramBlueprintArtifact.hash(
+                        canonical.toString()
+                            .getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+                evidence.put(
+                    "finiteFixtureDigestScope",
+                    "Actual saved definition frame and every spatial block/meta cell; random catalog identity header excluded; original file hashes retained");
+            }
             return new Catalog(
                 receipt,
                 space.size(),

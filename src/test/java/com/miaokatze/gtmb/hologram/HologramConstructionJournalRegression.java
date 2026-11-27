@@ -75,6 +75,7 @@ public final class HologramConstructionJournalRegression {
             HologramConstructionJournal
                 .suspend(session, payment, new IllegalStateException("injected extraction failure"));
             require(session.job == 4 && session.stopTick, "unknown result stops this batch");
+            verifyPublicationCache(f, root, file, journal);
             HologramConstructionJournal.owner(f.player)
                 .removeTag(HologramConstructionJournal.KEY);
             HologramConstructionJournal.reload(f.player);
@@ -140,6 +141,63 @@ public final class HologramConstructionJournalRegression {
             if (previous == null) HologramConstructionJournal.STORAGE_ROOT.remove();
             else HologramConstructionJournal.STORAGE_ROOT.set(previous);
         }
+    }
+
+    private static void verifyPublicationCache(HologramRecoveryDeliveryRegression.Fixture fixture, Path root, Path file,
+        NBTTagCompound journal) throws Exception {
+        long hits = HologramConstructionJournal.publicationCacheHits;
+        HologramConstructionJournal.persist(fixture.player, journal);
+        require(
+            HologramConstructionJournal.publicationCacheHits == hits + 1,
+            "identical disk bytes avoid old NBT decode");
+
+        // An external writer can change content without changing the journal identity/revision. Such bytes
+        // must use the original decoder and conflict checks, even when the destination path stays the same.
+        NBTTagCompound changed = HologramSnapshotCodec.decode(Files.readAllBytes(file));
+        changed.setString("failure", "external same-revision edit");
+        Files.write(file, HologramSnapshotCodec.compress(changed));
+        hits = HologramConstructionJournal.publicationCacheHits;
+        HologramConstructionJournal.persist(fixture.player, journal);
+        require(
+            HologramConstructionJournal.publicationCacheHits == hits,
+            "changed bytes require original NBT validation");
+
+        byte[] accepted = Files.readAllBytes(file);
+        long revision = journal.getLong("revision");
+        changed = HologramSnapshotCodec.decode(accepted);
+        changed.setLong("revision", revision + 1);
+        byte[] conflict = HologramSnapshotCodec.compress(changed);
+        Files.write(file, conflict);
+        failure(() -> HologramConstructionJournal.persist(fixture.player, journal));
+        require(journal.getLong("revision") == revision, "conflict cannot advance in-memory revision");
+        require(java.util.Arrays.equals(conflict, Files.readAllBytes(file)), "conflict preserves external evidence");
+        Files.write(file, accepted);
+        HologramConstructionJournal.persist(fixture.player, journal);
+        require(
+            HologramConstructionJournal.publicationCacheHits == hits + 1,
+            "failed publication retains last successful bytes");
+
+        // The same actor and exact bytes in another save root must not inherit this root's cache hit.
+        Path otherRoot = Files.createTempDirectory("gtmb-durable-cache-root-");
+        Path otherFile = otherRoot.resolve("gtmb-construction-recovery")
+            .resolve(file.getFileName());
+        Files.createDirectories(otherFile.getParent());
+        Files.write(otherFile, Files.readAllBytes(file));
+        NBTTagCompound other = (NBTTagCompound) journal.copy();
+        hits = HologramConstructionJournal.publicationCacheHits;
+        try {
+            HologramConstructionJournal.STORAGE_ROOT.set(otherRoot);
+            HologramConstructionJournal.persist(fixture.player, other);
+            require(
+                HologramConstructionJournal.publicationCacheHits == hits,
+                "publication cache is bound to exact save root");
+        } finally {
+            HologramConstructionJournal.STORAGE_ROOT.set(root);
+        }
+        HologramConstructionJournal.persist(fixture.player, journal);
+        require(
+            HologramConstructionJournal.publicationCacheHits == hits,
+            "returning roots validates the original file again");
     }
 
     private static HologramSession session(HologramRecoveryDeliveryRegression.Fixture fixture) throws Exception {

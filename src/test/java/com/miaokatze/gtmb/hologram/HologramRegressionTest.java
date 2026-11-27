@@ -69,6 +69,13 @@ public final class HologramRegressionTest {
             return;
         }
         Map<String, Runnable> cases = new LinkedHashMap<>();
+        cases.put("machine_update_seeds_coalesce_without_losing_components", () -> {
+            try {
+                HologramMachineUpdateBatchRegression.run();
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+        });
         cases.put("batch_restore_and_inventory_source_replacement_are_atomic", HologramBatchEditingRegression::run);
         cases.put(
             "native_inventory_keeps_selection_and_root_return_layer",
