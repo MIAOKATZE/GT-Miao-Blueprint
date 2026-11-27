@@ -137,7 +137,7 @@ final class HologramDynamicDefinitionRegression {
         return trigger;
     }
 
-    private static void virtualMemberRebuild(sun.misc.Unsafe unsafe) throws Exception {
+    static void virtualMemberRebuild(sun.misc.Unsafe unsafe) throws ReflectiveOperationException, java.io.IOException {
         int id = 32760;
         IMetaTileEntity previous = gregtech.api.GregTechAPI.METATILEENTITIES[id];
         DynamicController prototype = new DynamicController();
@@ -151,10 +151,22 @@ final class HologramDynamicDefinitionRegression {
             player.inventory = new net.minecraft.entity.player.InventoryPlayer(player);
             player.capabilities = new net.minecraft.entity.player.PlayerCapabilities();
             player.inventory.mainInventory[0] = new ItemStack(Blocks.stone);
+            java.util.UUID identity = java.util.UUID.randomUUID();
+            for (Field field : net.minecraft.entity.Entity.class.getDeclaredFields())
+                if (field.getType() == java.util.UUID.class) {
+                    field.setAccessible(true);
+                    field.set(player, identity);
+                }
+            for (Field field : net.minecraft.entity.player.EntityPlayer.class.getDeclaredFields())
+                if (field.getType() == com.mojang.authlib.GameProfile.class) {
+                    field.setAccessible(true);
+                    field.set(player, new com.mojang.authlib.GameProfile(identity, "VirtualMember"));
+                }
             HologramSession session = new HologramSession(player, 0, 64, 0, false, 2);
             session.virtual = true;
             session.virtualPreset = new HologramPresets.Preset();
             session.virtualPreset.schema = 2;
+            session.virtualPreset.name = "Virtual member fixture";
             HologramPresets.Structure selected = new HologramPresets.Structure();
             selected.id = "selected";
             selected.controllerId = id;
@@ -209,13 +221,40 @@ final class HologramDynamicDefinitionRegression {
             session.mainExplicit = true;
             session.channels = (net.minecraft.nbt.NBTTagCompound) channels.copy();
             HologramBlueprintData.storeStructureConfiguration(session, selected);
-            HologramVirtualStructureEditing.cancel(session, cancelledTask);
+            HologramPresets.Preset originalPreset = session.virtualPreset;
+            session.blueprintDirty = true;
+            session.capturePending = true;
+            HologramControllerCapture.stop(session, "结构采集已停止：已切换目标", null);
             SimpleAssert.that(
                 session.capture == original && session.main == 1
                     && session.channels.hasNoTags()
                     && selected.main == 1
                     && selected.channels.isEmpty(),
                 "retiring an unfinished member edit restores configuration without traversing its original geometry");
+            SimpleAssert.that(
+                session.virtualPreset == originalPreset && session.capture == original
+                    && session.blueprintDirty
+                    && original.cells.size() == 2
+                    && original.cells.get(0) == controller
+                    && original.cells.get(1) == unrelated
+                    && originalPreset.cells.get(0) == saved
+                    && originalPreset.cells.get(1) == other
+                    && session.capture.positions.get("200000,64,0") == unrelated
+                    && "preserved opaque edit".equals(unrelated.itemNbt)
+                    && session.pins.get(1)
+                        .getItem() == net.minecraft.item.Item.getItemFromBlock(Blocks.dirt),
+                "retiring a virtual member task preserves the complete author baseline, saved preset and unsaved edits");
+            SimpleAssert.that(
+                session.virtualStructureTask == null && !session.capturePending
+                    && session.captureError.isEmpty()
+                    && !original.incomplete
+                    && original.sourceCurrent(),
+                "only the disposable virtual member task is retired, not its complete source baseline");
+            net.minecraft.nbt.NBTTagCompound restored = HologramSnapshots.basicState(session);
+            SimpleAssert.that(
+                restored.getBoolean("supported") && restored.getBoolean("geometryEditable")
+                    && !restored.getBoolean("capturePending"),
+                "the retained author baseline can produce an editable snapshot after virtual task cancellation");
             net.minecraft.nbt.NBTTagCompound successorChannels = new net.minecraft.nbt.NBTTagCompound();
             successorChannels.setInteger("shape", 4);
             HologramVirtualStructureEditing.Task successor = new HologramVirtualStructureEditing.Task(
