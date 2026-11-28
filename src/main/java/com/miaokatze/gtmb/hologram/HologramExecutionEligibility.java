@@ -72,11 +72,23 @@ final class HologramExecutionEligibility {
 
     static void validateSaved(Block block, int metadata, ItemStack sample, int facing, boolean controller,
         NBTTagCompound tile, NBTTagCompound item, boolean cleared) throws IOException {
-        validate(block, metadata, sample, facing, controller, tile, item, true, cleared);
+        validateSaved(block, metadata, sample, facing, controller, tile, item, cleared, null);
+    }
+
+    static void validateSaved(Block block, int metadata, ItemStack sample, int facing, boolean controller,
+        NBTTagCompound tile, NBTTagCompound item, boolean cleared, HologramGtNativeItemState.Baseline nativeState)
+        throws IOException {
+        validate(block, metadata, sample, facing, controller, tile, item, true, cleared, nativeState);
     }
 
     private static void validate(Block block, int metadata, ItemStack sample, int facing, boolean controller,
         NBTTagCompound tile, NBTTagCompound item, boolean saved, boolean cleared) throws IOException {
+        validate(block, metadata, sample, facing, controller, tile, item, saved, cleared, null);
+    }
+
+    private static void validate(Block block, int metadata, ItemStack sample, int facing, boolean controller,
+        NBTTagCompound tile, NBTTagCompound item, boolean saved, boolean cleared,
+        HologramGtNativeItemState.Baseline nativeState) throws IOException {
         if (block == null || block == Blocks.air || metadata < 0 || sample == null)
             throw new IOException("服务器无法识别施工方块或耗材");
         if (saved && tile != null
@@ -95,12 +107,15 @@ final class HologramExecutionEligibility {
         forbidSourceAuthority(item);
         validateNetwork(block, sample, tile, saved && cleared);
         if (item != null && item.hasKey(HologramNetworkBindings.GROUP)) throw new IOException("量子绑定只允许用于设备状态");
+        tile = HologramBlueprintNbt.tileStateForPlacement(block, metadata, tile);
         if (sample.getItem() instanceof ItemMachines) {
             if (block != GregTechAPI.sBlockMachines || ItemMachines.getMetaTileEntity(sample) == null
                 || HologramBlockTransforms.isPipe(sample) && (controller || facing != -1)
                 || !HologramCellPolicy.virtualFrontAllowed(sample, facing)) throw new IOException("GT 设备或施工朝向无效");
-            gtState(tile, sample, true, false);
-            gtState(item, sample, false, false);
+            if (nativeState == null && (tile != null || item != null))
+                nativeState = HologramGtNativeItemState.baseline(sample);
+            gtState(tile, sample, true, false, nativeState);
+            gtState(item, sample, false, false, nativeState);
             if (tile != null && tile.hasKey("mFacing") && tile.getInteger("mFacing") != facing)
                 throw new IOException("GT 设备配置与施工朝向不一致");
             return;
@@ -117,8 +132,7 @@ final class HologramExecutionEligibility {
                 throw new IOException("原生设备配置与实际付款材料不符");
             return;
         }
-        if (!(sample.getItem() instanceof ItemBlock) || block.hasTileEntity(metadata)
-            || tile != null && !tile.hasNoTags()
+        if (!(sample.getItem() instanceof ItemBlock) || tile != null && !tile.hasNoTags()
             || item != null && !item.hasNoTags()) throw new IOException("该设备没有已适配的施工状态，请调整保留项或手动放置");
         Block paidBlock = Block.getBlockFromItem(sample.getItem());
         if (!HologramBlockIdentity.sameForPlacement(paidBlock, 0, block, 0)
@@ -126,7 +140,7 @@ final class HologramExecutionEligibility {
             throw new IOException("施工方块与实际付款物品不一致");
         int itemMetadata = sample.getItem()
             .getMetadata(sample.getItemDamage());
-        if (itemMetadata < 0 || block.hasTileEntity(itemMetadata)) throw new IOException("实际付款材料的方块状态无效");
+        if (itemMetadata < 0) throw new IOException("实际付款材料的方块状态无效");
         HologramPresets.validateMaterialVariant(block, metadata, sample);
     }
 
@@ -137,23 +151,42 @@ final class HologramExecutionEligibility {
 
     static NBTTagCompound gtState(NBTTagCompound tag, ItemStack sample, boolean tile, boolean project)
         throws IOException {
+        return gtState(tag, sample, tile, project, null);
+    }
+
+    static NBTTagCompound gtState(NBTTagCompound tag, ItemStack sample, boolean tile, boolean project,
+        HologramGtNativeItemState.Baseline nativeState) throws IOException {
         if (tag == null || tag.hasNoTags()) return null;
         boolean pipe = HologramBlockTransforms.isPipe(sample);
         if (tile || tag.hasKey("id") || tag.hasKey("mID")) HologramPresets
             .validateGtPayload(tag, sample.getItemDamage(), pipe ? "BaseMetaPipeEntity" : "BaseMetaTileEntity");
-        if (tile && project) HologramNativeConfiguration.project(tag, sample);
+        if (tile && project) {
+            tag = HologramGtMeShadow.project(tag);
+            HologramNativeConfiguration.project(tag, sample);
+        }
         if (tag.hasKey(HologramNativeConfiguration.TAG)) {
             if (!tile || pipe) throw new IOException("原生配置只能随 GT 机器状态放置");
             HologramNativeConfiguration.validate(tag, sample);
         }
         HologramNativeConfiguration.validateHatchTexture(tag, sample);
+        if (nativeState == null) nativeState = HologramGtNativeItemState.baseline(sample);
         for (Object raw : new ArrayList<>(tag.func_150296_c())) {
             String key = (String) raw;
             if (project && (GT_CAPTURE_FIELDS.contains(key) || !GT_FIELDS.contains(key) && empty(tag.getTag(key)))) {
                 tag.removeTag(key);
                 continue;
             }
-            if (!GT_FIELDS.contains(key)) throw new IOException("GT 设备配置尚未适配施工：" + key);
+            // Native item placement may expand omitted defaults (notably ME baseCapacity).
+            // Only the exact field actually produced by that independent placement grants credit.
+            boolean intrinsic = nativeState.owns(tag, key);
+            if (!GT_FIELDS.contains(key)) {
+                boolean nativeResources = tile && (HologramGtMeShadow.retainedField(tag, key)
+                    || key.equals("internalInventory") && HologramGtCraftingResources.supports(tag));
+                if (!intrinsic && !nativeResources) throw new IOException("GT 设备配置尚未适配施工：" + key);
+                if (nativeResources) HologramBlueprintResources.plan(tag);
+                if (intrinsic && project) tag.removeTag(key);
+                continue;
+            }
             if (key.equals("mFacing")) {
                 if (!smallNumber(tag, key, -1, 5)) throw new IOException("GT 机器朝向无效");
                 if (pipe) {
@@ -180,6 +213,9 @@ final class HologramExecutionEligibility {
             } else if (key.equals("mTexture") || key.equals("texture") || key.equals("mColor")) {
                 if (!smallNumber(tag, key, -128, 255)) throw new IOException("GT 颜色或外观设置无效");
             }
+            // Existing identity, binding and asset schema checks above always run before deduplicating
+            // state already owned and paid by the exact native material.
+            if (intrinsic && project) tag.removeTag(key);
         }
         return tag;
     }

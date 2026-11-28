@@ -184,10 +184,6 @@ public final class HologramNetwork {
         return sendStockNativeAction(HologramStockNativeWire.probe(confirmation));
     }
 
-    public static boolean sendStockNativeAfterProbe(HologramStockNativeWire.Confirmation confirmation) {
-        return sendStockNativeAction(HologramStockNativeWire.confirmAfterProbe(confirmation));
-    }
-
     public static boolean sendStockNativeControl(HologramStockNativeWire.Key key,
         HologramStockNativeWire.Command command) {
         return sendStockNativeAction(HologramStockNativeWire.control(key, command));
@@ -1560,8 +1556,16 @@ public final class HologramNetwork {
             String action = msg.tag.getString("action");
             if (HologramStockNativeWire.recognizes(msg.tag)) {
                 HologramStockNativeWire.Request request = HologramStockNativeWire.readRequest(msg.tag);
-                if (request != null && ctx != null)
-                    stockNativeServer.enqueue(HologramWorkspace.captureActionEndpoint(ctx.getServerHandler()), request);
+                if (ctx != null) {
+                    var endpoint = HologramWorkspace.captureActionEndpoint(ctx.getServerHandler());
+                    if (request != null) stockNativeServer.enqueue(endpoint, request);
+                    else if (endpoint != null
+                        && msg.tag.getInteger("nativeStockVersion") != HologramStockNativeWire.VERSION)
+                        ServerTaskScheduler.scheduleServerTask(() -> {
+                            if (HologramWorkspace.currentActionEndpoint(endpoint)) endpoint.player
+                                .addChatMessage(new net.minecraft.util.ChatComponentText("施工协议版本不兼容，请同时更新客户端和服务端。"));
+                        });
+                }
                 return null; // Exact marker never falls through to old construction or library actions.
             }
             if ("serverRules".equals(action) || ctx == null) return null;

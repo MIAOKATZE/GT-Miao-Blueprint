@@ -18,6 +18,17 @@ final class HologramActionDispatcher {
         if (HologramWorkspace.stockNativePrivate(player)) return;
         String requested = action.getString("op");
         if (switch (requested) {
+            case "pause", "resume" -> true;
+            default -> false;
+        }) {
+            HologramSession owner = HologramWorkspace.find(player.getUniqueID());
+            if (ownsAction(owner, player, action)) {
+                owner.status = "旧版施工入口已退役，请使用当前结构或保存蓝图施工入口。";
+                HologramSnapshots.sendUi(owner);
+            }
+            return;
+        }
+        if (switch (requested) {
             case "savePreset", "updatePreset", "saveBlueprint", "saveBlueprintAs", "saveBlueprintReplace", "exportDraft", "confirmAeSave" -> true;
             case "exportBlueprint" -> HologramLibraryFacade.enabled();
             default -> false;
@@ -620,29 +631,7 @@ final class HologramActionDispatcher {
                     return;
                 }
                 if (!s.virtual) s.jobVoucherRequested = false;
-                HologramResourcePlanner.refreshResources(s);
-                if (s.planMissing > 0 || !s.planRecoveryFits) {
-                    s.status = s.planMissing > 0 ? "整份计划材料不足，请补齐后重新确认" : "背包无法容纳预计回收，请整理后重新确认";
-                    HologramSnapshots.send(s);
-                    return;
-                }
-                if (HologramWorkspace.refuseLegacyConstruction(s, action)) return;
-                s.cursor = 0;
-                s.completed = 0;
-                s.defer = false;
-                s.stopTick = false;
-                HologramSession.clearPending(s);
-                s.job = 1;
-                s.replacementAuthorized = s.mode == 1;
-                s.work.clear();
-                for (int i = 0; i < s.capture.cells.size(); i++) {
-                    if (HologramSessionPolicy.inScope(s, s.capture.cells.get(i), i)
-                        && "pending".equals(s.planStatus.get(i))) s.work.add(i);
-                }
-                HologramPlacementJobs.spatialWorkOrder(s);
-                s.phase = "RUNNING";
-                HologramSession.resetJobCounts(s, false);
-                s.status = "正在直接施工";
+                HologramPlacementJobs.start(s, action);
             }
         } else if ("native".equals(op) && s.job != 1 && s.job != 2) {
             if (s.mode == 0) HologramBuildPreparation.reviewedBuild(s, action);
@@ -992,7 +981,7 @@ final class HologramActionDispatcher {
             s.materialSettings.priority = HologramValues.clamp(action.getInteger("materialPriority"), 0, 2);
         if (action.hasKey("hatchDowngrade")) s.hatchDowngrade = action.getBoolean("hatchDowngrade");
         if (action.hasKey("recoveryDestination")) s.materialSettings.recoveryDestination = HologramValues
-            .clamp(action.getInteger("recoveryDestination"), 0, 1);
+            .clamp(action.getInteger("recoveryDestination"), 0, 2);
         if (action.hasKey("selectedPresetId")) try {
             String id = action.getString("selectedPresetId");
             if (!id.isEmpty() && HologramLibraryFacade.get(s.player, id) == null)

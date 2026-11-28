@@ -11,7 +11,6 @@ import java.util.Map;
 import java.util.function.BooleanSupplier;
 
 import net.minecraft.block.Block;
-import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.init.Blocks;
 import net.minecraft.item.ItemBlock;
 import net.minecraft.item.ItemStack;
@@ -41,6 +40,7 @@ final class HologramNativeConstruction {
     enum Outcome {
         PLACED,
         SATISFIED,
+        OBSTRUCTED,
         FAILED
     }
 
@@ -57,19 +57,25 @@ final class HologramNativeConstruction {
         final HologramDecorMaterials.Descriptor decoration;
         final boolean saved, nativeTile, retain, cleared, freeShell, fuzzy;
         final NBTTagCompound appearance;
+        final NBTTagCompound nativeItem;
+        final HologramGtNativeItemState.Baseline nativeState;
         final Map<HologramBlueprintResources.ExactKey, Long> assets = new HashMap<>();
         ItemStack sealTemplate;
 
         private Prepared(Block block, int metadata, int facing, ItemStack sample,
             HologramEnergyPayload.Prepared buffers, HologramBlueprintResources.Plan resources, List<ItemStack> covers,
             HologramDecorMaterials.Descriptor decoration, boolean saved, boolean nativeTile, boolean retain,
-            boolean cleared, boolean freeShell, boolean fuzzy, NBTTagCompound appearance, ExtendedFacing alignment) {
+            boolean cleared, boolean freeShell, boolean fuzzy, NBTTagCompound appearance, ExtendedFacing alignment,
+            HologramGtNativeItemState.Baseline baseline) throws IOException {
             this.block = block;
             this.metadata = metadata;
             this.facing = facing;
             this.alignment = alignment;
             this.sample = sample.copy();
             this.sample.stackSize = 1;
+            nativeState = HologramRecovery.hasSeal(this.sample) ? null
+                : baseline == null ? HologramGtNativeItemState.baseline(this.sample) : baseline;
+            nativeItem = nativeState == null ? null : nativeState.item;
             this.buffers = buffers;
             this.resources = resources;
             this.covers = covers;
@@ -157,7 +163,8 @@ final class HologramNativeConstruction {
             false,
             false,
             target.tileData(),
-            alignment);
+            alignment,
+            null);
     }
 
     static Prepared saved(HologramSession session, Block block, int metadata, ItemStack sample, int facing,
@@ -177,6 +184,7 @@ final class HologramNativeConstruction {
         String tileEncoded, String itemEncoded, ExtendedFacing alignment) throws IOException {
         var preset = session.virtualPreset;
         boolean sealed = HologramRecovery.hasSeal(sample);
+        HologramGtNativeItemState.Baseline baseline = sealed ? null : HologramGtNativeItemState.baseline(sample);
         boolean retain = preset.retainNbt;
         NBTTagCompound tile = sealed ? null
             : HologramBlueprintNbt.forPlacement(
@@ -206,8 +214,8 @@ final class HologramNativeConstruction {
                 tile.removeTag("eRotation");
                 tile.removeTag("eFlip");
             }
-            tile = HologramExecutionEligibility.gtState(tile, sample, true, true);
-            item = HologramExecutionEligibility.gtState(item, sample, false, true);
+            tile = HologramExecutionEligibility.gtState(tile, sample, true, true, baseline);
+            item = HologramExecutionEligibility.gtState(item, sample, false, true, baseline);
         }
         HologramExecutionEligibility.validateSaved(
             block,
@@ -217,14 +225,15 @@ final class HologramNativeConstruction {
             false,
             tile,
             item,
-            HologramBlueprintProcessing.quantumCleared(preset));
+            HologramBlueprintProcessing.quantumCleared(preset),
+            baseline);
         HologramCellPolicy.validateGtPayloadIdentity(sample, tile);
         if (item != null && (item.hasKey("mID") || item.hasKey("id")))
             HologramCellPolicy.validateGtPayloadIdentity(sample, item);
         tile = HologramGtMeShadow.project(tile);
         var buffers = HologramEnergyPayload.prepare(block, metadata, tile, item);
         tile = buffers.tileEmpty;
-        boolean nativeTile = HologramNativePlacement.supported(block, tile);
+        boolean nativeTile = tile != null && HologramNativePlacement.supported(block, tile);
         var adapter = nativeTile ? HologramNativePlacement.adapter(block) : null;
         HologramDecorMaterials.Descriptor decoration = null;
         if (!sealed && HologramDecorMaterials.supports(block, tile)) {
@@ -252,7 +261,7 @@ final class HologramNativeConstruction {
                 .extraMaterials(block, sealed ? HologramBlueprintNbt.decode(tileEncoded) : tile));
         List<ItemStack> covers = sealed || !HologramSessionPolicy.placementRetainCovers(session)
             ? Collections.emptyList()
-            : HologramBlueprintCovers.materials(tileEncoded);
+            : HologramBlueprintCovers.materials(tile);
         boolean freeShell = !sealed && HologramGtswnPlacementMaterials.freeShell(block, sample);
         var result = new Prepared(
             block,
@@ -269,8 +278,9 @@ final class HologramNativeConstruction {
             HologramBlueprintProcessing.quantumCleared(preset),
             freeShell,
             HologramMaterialAccess.fuzzyBlueprintShells(session, sample),
-            null,
-            alignment);
+            tile,
+            alignment,
+            baseline);
         if (sealed) result.sealTemplate = HologramCellPolicy
             .sealedPlacementTarget(session, sample, HologramBlueprintNbt.decode(tileEncoded), 0, 0, 0);
         return result;
@@ -352,6 +362,7 @@ final class HologramNativeConstruction {
             && gt.getFrontFacing()
                 .ordinal() != target.facing)
             return false;
+        if (!HologramGtNativeItemState.matchesBaseline(tile, target.sample, target.nativeState)) return false;
         if (!target.saved) return appearanceMatches(tile, target.appearance);
         var data = payload(target, world, x, y, z, Boolean.TRUE.equals(paid));
         if (!HologramNetworkBindings.matchesBinding(tile, data, session.player, session.networkBindings)) return false;
@@ -389,6 +400,31 @@ final class HologramNativeConstruction {
             && actual.getInteger("textureIndex") == appearance.getInteger("textureIndex");
     }
 
+    /** Read-only eligibility for changing only native geometry/casing on the same paid GT instance. */
+    static boolean synchronizable(HologramSession session, Prepared target, int x, int y, int z) throws IOException {
+        World world = session.player.worldObj;
+        TileEntity tile = world.getTileEntity(x, y, z);
+        if (!(tile instanceof IGregTechTileEntity gt) || HologramRecovery.hasSeal(target.sample)
+            || !identity(world, target, x, y, z)
+            || !HologramGtNativeItemState.matchesBaseline(tile, target.sample, target.nativeState)) return false;
+        if (target.facing >= 0 && !gt.getMetaTileEntity()
+            .isFacingValid(ForgeDirection.getOrientation(target.facing))) return false;
+        if (target.alignment != null) {
+            IAlignment aligned = alignment(tile, gt.getMetaTileEntity());
+            if (aligned == null || !aligned.isNewExtendedFacingValid(target.alignment)) return false;
+        }
+        if (!target.saved) return true;
+        NBTTagCompound selected = payload(target, world, x, y, z, false);
+        if (!HologramNetworkBindings.matchesBinding(tile, selected, session.player, session.networkBindings))
+            return false;
+        if (selected != null) {
+            selected.removeTag("mFacing");
+            selected.removeTag("texturePage");
+            selected.removeTag("textureIndex");
+        }
+        return HologramNativeConfiguration.matchesRetained(tile, session.player, target.sample, selected, false);
+    }
+
     /** Preserve the same paid TE and contents when a native structure changes only facing or casing appearance. */
     static boolean synchronize(HologramSession session, Prepared target, int x, int y, int z,
         BooleanSupplier authority) {
@@ -396,49 +432,50 @@ final class HologramNativeConstruction {
         var actor = session.player;
         var inventory = actor.inventory;
         var main = inventory.mainInventory;
-        int selectedSlot = inventory.currentItem;
-        ItemStack heldItem = actor.getHeldItem();
         int dimension = actor.dimension;
         TileEntity tile = world.getTileEntity(x, y, z);
         BooleanSupplier bound = () -> actor.worldObj == world && actor.dimension == dimension
             && actor.inventory == inventory
-            && inventory.mainInventory == main
-            && inventory.currentItem == selectedSlot
-            && actor.getHeldItem() == heldItem
-            && HologramSessionPolicy.jobTool(session) != null;
-        if (target.saved || !(tile instanceof IGregTechTileEntity)
-            || !authorized(authority, bound)
+            && inventory.mainInventory == main;
+        BooleanSupplier forwardAllowed = () -> mayAdvance(session, authority);
+        if (!(tile instanceof IGregTechTileEntity) || !authorized(forwardAllowed, bound)
             || !identity(world, target, x, y, z)
+            || world.captureBlockSnapshots
+            || world.restoringBlockSnapshots
             || !world.canMineBlock(actor, x, y, z)
-            || !actor.canPlayerEdit(x, y, z, 1, actor.getHeldItem())
+            || !actor.canPlayerEdit(x, y, z, 1, target.sample)
             || MinecraftForge.EVENT_BUS
                 .post(new BlockEvent.BreakEvent(x, y, z, world, target.block, target.metadata, actor))
-            || !authorized(authority, bound)
+            || !authorized(forwardAllowed, bound)
             || world.getTileEntity(x, y, z) != tile) return false;
         HologramMaterials.Transaction transaction = null;
+        BooleanSupplier owned = null;
         try {
-            var old = HologramNativeCapture.capture(tile);
-            var before = HologramMaterialAccess.copyInventory(actor, session.slot);
-            if (!authorized(authority, bound) || world.getTileEntity(x, y, z) != tile) return false;
+            if (!synchronizable(session, target, x, y, z)) return false;
+            NBTTagCompound old = HologramNativeCapture.capture(tile);
+            if (!authorized(forwardAllowed, bound) || world.getTileEntity(x, y, z) != tile) return false;
             transaction = session.materialContext.begin();
+            transaction.trackLocalInventory();
             transaction.scopedJournal(
                 HologramConstructionJournal
-                    .begin(actor, x, y, z, target.block, target.metadata, old, before, session.slot));
+                    .beginAction(actor, x, y, z, target.block, target.metadata, old, session.slot));
             var receipt = transaction.journalReceipt();
-            BooleanSupplier owned = () -> bound.getAsBoolean() && HologramConstructionJournal.owner(actor)
+            owned = () -> bound.getAsBoolean() && HologramConstructionJournal.owner(actor)
                 .getTag(HologramConstructionJournal.KEY) == receipt && bound.getAsBoolean();
             transaction.guard(owned);
             transaction.beforeWorldMutation();
-            if (!authorized(authority, owned) || world.getTileEntity(x, y, z) != tile)
+            if (!authorized(forwardAllowed, owned) || world.getTileEntity(x, y, z) != tile)
                 throw new IOException("设备原位同步后身份或施工权限已变化。");
             applyNativeState(session, target, tile, x, y, z, false);
             world.markBlockForUpdate(x, y, z);
-            if (!authorized(authority, owned) || world.getTileEntity(x, y, z) != tile
-                || !inventoryMatches(session, before)
+            if (!authorized(forwardAllowed, owned) || world.getTileEntity(x, y, z) != tile
+                || !transaction.localInventoryCurrent()
                 || !matches(session, target, x, y, z)) throw new IOException("设备原位同步后身份或施工权限已变化。");
             transaction.commit();
             return true;
         } catch (IOException | RuntimeException | LinkageError failure) {
+            // A setter can affect more than this TE. Without a captured native mutation scope, keep
+            // its evidence instead of declaring a single-cell snapshot to be complete compensation.
             if (transaction != null) suspend(session, transaction, world, failure);
             else session.status = failure.getMessage() == null ? "设备原位同步后身份或施工权限已变化。" : failure.getMessage();
             return false;
@@ -450,16 +487,12 @@ final class HologramNativeConstruction {
         var actor = session.player;
         var ownerInventory = actor.inventory;
         var ownerMain = ownerInventory.mainInventory;
-        int selectedSlot = ownerInventory.currentItem;
-        ItemStack heldItem = actor.getHeldItem();
         int dimension = actor.dimension;
         BooleanSupplier bound = () -> actor.worldObj == world && actor.dimension == dimension
             && actor.inventory == ownerInventory
-            && ownerInventory.mainInventory == ownerMain
-            && ownerInventory.currentItem == selectedSlot
-            && actor.getHeldItem() == heldItem
-            && HologramSessionPolicy.jobTool(session) != null;
-        if (!authority.getAsBoolean() || !world.blockExists(x, y, z)) return Outcome.FAILED;
+            && ownerInventory.mainInventory == ownerMain;
+        BooleanSupplier forwardAllowed = () -> mayAdvance(session, authority);
+        if (!authorized(forwardAllowed, bound) || !world.blockExists(x, y, z)) return Outcome.FAILED;
         try {
             if (matches(session, target, x, y, z)) return Outcome.SATISFIED;
         } catch (IOException invalid) {
@@ -468,20 +501,23 @@ final class HologramNativeConstruction {
         }
         if (world.getBlock(x, y, z) != Blocks.air || world.getTileEntity(x, y, z) != null
             || !world.canMineBlock(actor, x, y, z)
-            || !actor.canPlayerEdit(x, y, z, 1, actor.getHeldItem())
+            || !actor.canPlayerEdit(x, y, z, 1, target.sample)
             || world.captureBlockSnapshots
             || world.restoringBlockSnapshots) return Outcome.FAILED;
-        var inventory = HologramMaterialAccess.copyInventory(actor, session.slot);
-        if (!bound.getAsBoolean()) return Outcome.FAILED;
+        int side = placementSide(target);
+        if (!target.nativeTile && target.sample.getItem() instanceof ItemBlock item
+            && !world.canPlaceEntityOnSide(item.field_150939_a, x, y, z, false, side, actor, target.sample))
+            return Outcome.OBSTRUCTED;
+        if (!authorized(forwardAllowed, bound)) return Outcome.FAILED;
         var transaction = session.materialContext.begin();
+        transaction.trackLocalInventory();
         transaction.protectAssets(session.pendingAssetBudget, target.assets);
-        transaction.scopedJournal(
-            HologramConstructionJournal.begin(actor, x, y, z, Blocks.air, 0, null, inventory, session.slot));
+        transaction
+            .scopedJournal(HologramConstructionJournal.beginAction(actor, x, y, z, Blocks.air, 0, null, session.slot));
         BooleanSupplier owned = () -> bound.getAsBoolean() && HologramConstructionJournal.owner(actor)
             .getTag(HologramConstructionJournal.KEY) == transaction.journalReceipt() && bound.getAsBoolean();
         var snapshots = new ArrayList<BlockSnapshot>();
         var candidates = new ArrayList<Candidate>();
-        ItemStack[] paidInventory = null;
         boolean changed = false;
         HologramDecorMaterials.Quote decorationQuote = null;
         try {
@@ -489,11 +525,21 @@ final class HologramNativeConstruction {
             boolean creative = actor.capabilities.isCreativeMode;
             if (creative && HologramRecovery.hasSeal(target.sample) && !transaction.takeOne(target.sample, false))
                 throw new IOException("封存设备必须提供完整原件，本格未施工。");
-            boolean voucher = session.jobVoucherRequested && HologramDecorationVoucher.enabled()
-                && !HologramRecovery.hasSeal(target.sample)
-                && (HologramDecorationVoucher.covered(target.block, target.sample) || target.decoration != null);
-            if (voucher && !creative && !session.jobVoucherConsumed && !HologramDecorationVoucher.reserveMain(actor))
+            boolean voucher = usesVoucher(session, target);
+            if (voucher && !creative && !session.jobVoucherConsumed && !transaction.reserveVoucherMain())
                 throw new IOException("装饰抵用券不足，本格未施工。");
+            boolean shell = !creative && target.decoration == null && !target.freeShell && !voucher;
+            boolean deferredShell = shell && !target.sample.hasTagCompound()
+                && target.covers.isEmpty()
+                && target.resources.items.isEmpty()
+                && target.resources.fluids.isEmpty()
+                && target.resources.essentia.isEmpty()
+                && target.resources.energy.signum() == 0
+                && target.buffers.demand.empty();
+            if (deferredShell
+                && !(target.fuzzy ? transaction.takeOneFuzzy(HologramEssentia.shellMaterial(target.sample), true)
+                    : transaction.takeOne(HologramEssentia.shellMaterial(target.sample), true)))
+                throw new IOException("所选材料来源不足，本格未施工。");
             if (!creative) {
                 if (target.decoration != null) {
                     decorationQuote = session.decorLedger.quote(
@@ -511,7 +557,7 @@ final class HologramNativeConstruction {
                         });
                     for (var payment : decorationQuote.items)
                         if (!transaction.takeAll(payment, false)) throw new IOException("装饰材料不足，本格未施工。");
-                } else if (!target.freeShell && !voucher
+                } else if (shell && !deferredShell
                     && !(target.fuzzy ? transaction.takeOneFuzzy(HologramEssentia.shellMaterial(target.sample), false)
                         : transaction.takeOne(HologramEssentia.shellMaterial(target.sample), false)))
                     throw new IOException("所选材料来源不足，本格未施工。");
@@ -522,13 +568,14 @@ final class HologramNativeConstruction {
             boolean cachePaid = target.buffers.demand.empty()
                 || !creative && transaction.takeCachedEnergy(target.buffers.demand);
             ItemStack material = target.sample.copy();
-            if (target.saved && !HologramRecovery.hasSeal(material))
-                material.setTagCompound(cachePaid ? copy(target.buffers.itemPaid) : copy(target.buffers.itemEmpty));
-            paidInventory = HologramMaterialAccess.copyInventory(actor, session.slot);
-            if (!authorized(authority, owned) || world.getBlock(x, y, z) != Blocks.air
+            if (target.saved && !HologramRecovery.hasSeal(material)) material.setTagCompound(
+                HologramGtNativeItemState.placementItem(
+                    target.sample,
+                    cachePaid ? copy(target.buffers.itemPaid) : copy(target.buffers.itemEmpty)));
+            if (!authorized(forwardAllowed, owned) || world.getBlock(x, y, z) != Blocks.air
                 || world.getTileEntity(x, y, z) != null) throw new IOException("付款期间施工条件已变化。");
             transaction.beforeWorldMutation();
-            if (!authorized(authority, owned) || !inventoryMatches(session, paidInventory)
+            if (!authorized(forwardAllowed, owned) || !transaction.localInventoryCurrent()
                 || world.getBlock(x, y, z) != Blocks.air
                 || world.getTileEntity(x, y, z) != null) throw new IOException("付款期间施工条件已变化。");
             changed = true;
@@ -548,13 +595,19 @@ final class HologramNativeConstruction {
                 throw new IOException("原生放置后的身份、朝向或配置与目标不符。");
             if (snapshots.isEmpty()) throw new IOException("原生放置未提供世界变更凭据。");
             var event = snapshots.size() == 1
-                ? ForgeEventFactory.onPlayerBlockPlace(actor, snapshots.get(0), ForgeDirection.UP)
-                : ForgeEventFactory.onPlayerMultiBlockPlace(actor, snapshots, ForgeDirection.UP);
+                ? ForgeEventFactory.onPlayerBlockPlace(actor, snapshots.get(0), ForgeDirection.getOrientation(side))
+                : ForgeEventFactory.onPlayerMultiBlockPlace(actor, snapshots, ForgeDirection.getOrientation(side));
             boolean intact = candidatesIntact(world, candidates);
             if (!intact) throw new IOException("保护事件已改变施工现场，结果待核定。");
             if (event.isCanceled()) throw new IOException("领地或模组保护取消放置，本格已还原。");
-            if (!authorized(authority, owned) || !inventoryMatches(session, paidInventory))
+            if (!authorized(forwardAllowed, owned) || !transaction.localInventoryCurrent())
                 throw new IOException("保护事件后施工权限或付款库存已变化。");
+            if (deferredShell
+                && !(target.fuzzy ? transaction.takeOneFuzzy(HologramEssentia.shellMaterial(target.sample), false)
+                    : transaction.takeOne(HologramEssentia.shellMaterial(target.sample), false)))
+                throw new IOException("所选材料来源已变化，本格未提交。");
+            if (!authorized(forwardAllowed, owned) || !transaction.localInventoryCurrent()
+                || !candidatesIntact(world, candidates)) throw new IOException("取料后施工条件已变化。");
             var data = payload(target, world, x, y, z, cachePaid);
             if (data != null && "join".equals(data.getString(HologramNetworkBindings.ROLE)))
                 HologramNetworkBindings.bindJoin(world.getTileEntity(x, y, z), data, actor, session.networkBindings);
@@ -573,17 +626,17 @@ final class HologramNativeConstruction {
                     block,
                     snapshot.flag);
             }
-            if (!authorized(authority, owned) || !inventoryMatches(session, paidInventory)
+            if (!authorized(forwardAllowed, owned) || !transaction.localInventoryCurrent()
                 || !candidatesIntact(world, candidates)
                 || !matches(session, target, x, y, z, cachePaid)) throw new IOException("原生通知后施工条件已变化。");
             transaction.commit();
             if (decorationQuote != null) session.decorLedger.commit(decorationQuote);
-            if (voucher) session.jobVoucherConsumed = true;
+            if (voucher && !creative) session.jobVoucherConsumed = true;
             return Outcome.PLACED;
         } catch (IOException | RuntimeException | LinkageError failure) {
             if (transaction.commitStarted() || transaction.uncertain()
                 || !owned.getAsBoolean()
-                || paidInventory != null && !inventoryMatches(session, paidInventory)
+                || !transaction.localInventoryCurrent()
                 || changed && (candidates.size() != snapshots.size() || untrackedMain(world, x, y, z, snapshots)
                     || !candidatesIntact(world, candidates))) {
                 suspend(session, transaction, world, failure);
@@ -602,11 +655,29 @@ final class HologramNativeConstruction {
                 suspend(session, transaction, world, failure);
                 return Outcome.FAILED;
             }
-            if (!HologramWorldTransactions.rollbackNativeMaterials(session, transaction, inventory, owned, world))
+            try {
+                if (!transaction.rollbackAction()) throw new IOException("原生材料退款未完成。");
+            } catch (IOException | RuntimeException | LinkageError refundFailure) {
+                suspend(session, transaction, world, refundFailure);
                 return Outcome.FAILED;
+            }
             session.status = failure.getMessage() == null ? "原生放置未提交。" : failure.getMessage();
             return Outcome.FAILED;
         }
+    }
+
+    static boolean usesVoucher(HologramSession session, Prepared target) {
+        return session.jobVoucherRequested && HologramDecorationVoucher.enabled()
+            && !HologramRecovery.hasSeal(target.sample)
+            && (HologramDecorationVoucher.covered(target.block, target.sample) || target.decoration != null);
+    }
+
+    private static boolean mayAdvance(HologramSession session, BooleanSupplier authority) {
+        // Forward permission is tied to the actual admitted stack; compensation uses owned instead.
+        var tool = session.boundTool;
+        return tool != null && HologramSessionPolicy.jobTool(session) == tool
+            && authority.getAsBoolean()
+            && HologramSessionPolicy.jobTool(session) == tool;
     }
 
     private static boolean authorized(BooleanSupplier authority, BooleanSupplier owned) {
@@ -633,6 +704,7 @@ final class HologramNativeConstruction {
     private static void writeNative(HologramSession session, Prepared target, ItemStack material, int x, int y, int z,
         boolean cachePaid) throws IOException {
         World world = session.player.worldObj;
+        int side = placementSide(target);
         if (target.nativeTile) {
             if (!world.setBlock(x, y, z, target.block, target.metadata, 3)) throw new IOException("原生组合方块拒绝施工。");
         } else if (target.block instanceof ICustomBlockSetting custom) {
@@ -640,20 +712,20 @@ final class HologramNativeConstruction {
             target.block.onBlockPlacedBy(world, x, y, z, session.player, material.copy());
             target.block.onPostBlockPlaced(world, x, y, z, target.metadata);
         } else if (material.getItem() instanceof ItemBlock item) {
-            if (!world.canPlaceEntityOnSide(item.field_150939_a, x, y, z, false, 1, session.player, material))
+            if (!world.canPlaceEntityOnSide(item.field_150939_a, x, y, z, false, side, session.player, material))
                 throw new IOException("原生碰撞检查拒绝施工。");
             boolean placed;
-            if (plainUse(item)) {
+            if (item instanceof ItemMachines || item.getClass() == ItemBlock.class) {
                 int metadata = item.field_150939_a
-                    .onBlockPlaced(world, x, y, z, 1, .5f, .5f, .5f, item.getMetadata(material.getItemDamage()));
-                placed = item.placeBlockAt(material.copy(), session.player, world, x, y, z, 1, .5f, .5f, .5f, metadata);
+                    .onBlockPlaced(world, x, y, z, side, .5f, .5f, .5f, item.getMetadata(material.getItemDamage()));
+                placed = item
+                    .placeBlockAt(material.copy(), session.player, world, x, y, z, side, .5f, .5f, .5f, metadata);
             } else {
                 // Custom use semantics (for example slabs) remain native; Forge event ownership stays here.
-                placed = item.onItemUse(material.copy(), session.player, world, x, y, z, 1, .5f, .5f, .5f);
+                placed = item.onItemUse(material.copy(), session.player, world, x, y, z, side, .5f, .5f, .5f);
             }
             if (!placed) throw new IOException("原生物品拒绝放置。");
-            if (world.getBlock(x, y, z) == target.block && world.getBlockMetadata(x, y, z) != target.metadata)
-                world.setBlockMetadataWithNotify(x, y, z, target.metadata, 2);
+            restoreSavedVanillaPose(world, target, x, y, z);
         } else throw new IOException("该原生目标没有可用的物品放置接口。");
         TileEntity tile = world.getTileEntity(x, y, z);
         if (HologramRecovery.hasSeal(material)) {
@@ -698,15 +770,60 @@ final class HologramNativeConstruction {
         applyNativeState(session, target, tile, x, y, z, cachePaid);
     }
 
+    /** Reuse the exact persisted vanilla schemas already used for blueprint/CUT rotation. */
+    private static boolean savedVanillaPose(Prepared target) {
+        if (!target.saved || target.sample.getItem() instanceof ItemMachines) return false;
+        String id = Block.blockRegistry.getNameForObject(target.block);
+        return id != null && HologramCutTransformMetadata.placementMetadata(
+            target.block,
+            id,
+            target.metadata,
+            new com.miaokatze.gtmb.api.CutTransforms.Transform(0, 0, 0, 0)) == target.metadata;
+    }
+
+    private static int placementSide(Prepared target) {
+        if (!savedVanillaPose(target)) return 1;
+        Block block = target.block;
+        int meta = target.metadata;
+        if (block == Blocks.wall_sign || block == Blocks.ladder) return meta;
+        if (block == Blocks.torch || block == Blocks.redstone_torch
+            || block == Blocks.unlit_redstone_torch
+            || block == Blocks.stone_button
+            || block == Blocks.wooden_button) {
+            return switch (meta & 7) {
+                case 1 -> 5;
+                case 2 -> 4;
+                case 3 -> 3;
+                case 4 -> 2;
+                default -> 1;
+            };
+        }
+        if (block.getClass() == net.minecraft.block.BlockStairs.class) return (meta & 4) == 0 ? 1 : 0;
+        if (block == Blocks.log || block == Blocks.log2 || block == Blocks.hay_block)
+            return (meta & 12) == 4 ? 5 : (meta & 12) == 8 ? 3 : 1;
+        return 1;
+    }
+
+    private static void restoreSavedVanillaPose(World world, Prepared target, int x, int y, int z) throws IOException {
+        // Ordinary native targets must match their native outcome. Only an explicitly saved, known vanilla pose
+        // is restored here; arbitrary mod metadata never acquires a generic post-placement overwrite.
+        if (world.getBlock(x, y, z) != target.block || world.getBlockMetadata(x, y, z) == target.metadata
+            || !savedVanillaPose(target)) return;
+        if (!world.setBlockMetadataWithNotify(x, y, z, target.metadata, 2)) throw new IOException("原生方块拒绝已保存的方向状态。");
+    }
+
     private static void applyNativeState(HologramSession session, Prepared target, TileEntity tile, int x, int y, int z,
         boolean cachePaid) throws IOException {
         World world = session.player.worldObj;
         if (tile instanceof IGregTechTileEntity gt) {
-            if (target.saved)
-                HologramNativeConfiguration.apply(tile, session.player, payload(target, world, x, y, z, cachePaid));
+            if (target.saved) {
+                NBTTagCompound selected = payload(target, world, x, y, z, cachePaid);
+                if (!HologramNativeConfiguration.matches(tile, session.player, selected))
+                    HologramNativeConfiguration.apply(tile, session.player, selected);
+            }
             boolean geometryChange = target.facing >= 0 && gt.getFrontFacing()
                 .ordinal() != target.facing || !alignmentMatches(tile, target.alignment);
-            boolean textureChange = !target.saved && !appearanceMatches(tile, target.appearance);
+            boolean textureChange = !appearanceMatches(tile, target.appearance);
             if (geometryChange || textureChange) {
                 HologramNativeConfiguration.StateGuard preserved = HologramNativeConfiguration.StateGuard.capture(tile);
                 if (geometryChange) applyGeometry(target, tile);
@@ -739,56 +856,10 @@ final class HologramNativeConstruction {
                 .isFacingValid(direction)) throw new IOException("原生设备不接受目标朝向。");
             gt.setFrontFacing(direction);
         }
-        if (target.alignment != null && aligned.getExtendedFacing() != target.alignment)
-            aligned.setExtendedFacing(target.alignment);
+        if (target.alignment != null && aligned.getExtendedFacing() != target.alignment
+            && !aligned.checkedSetExtendedFacing(target.alignment)) throw new IOException("原生设备拒绝目标对齐。");
         if (front >= 0 && gt.getFrontFacing()
             .ordinal() != front || !alignmentMatches(tile, target.alignment)) throw new IOException("原生设备未完整应用目标对齐。");
-    }
-
-    private static final ClassValue<Boolean> PLAIN_USE = new ClassValue<Boolean>() {
-
-        @Override
-        protected Boolean computeValue(Class<?> type) {
-            try {
-                return type
-                    .getMethod(
-                        "onItemUse",
-                        ItemStack.class,
-                        EntityPlayer.class,
-                        World.class,
-                        int.class,
-                        int.class,
-                        int.class,
-                        int.class,
-                        float.class,
-                        float.class,
-                        float.class)
-                    .getDeclaringClass() == ItemBlock.class;
-            } catch (ReflectiveOperationException unavailable) {
-                try {
-                    return type
-                        .getMethod(
-                            "func_77648_a",
-                            ItemStack.class,
-                            EntityPlayer.class,
-                            World.class,
-                            int.class,
-                            int.class,
-                            int.class,
-                            int.class,
-                            float.class,
-                            float.class,
-                            float.class)
-                        .getDeclaringClass() == ItemBlock.class;
-                } catch (ReflectiveOperationException missingRuntimeName) {
-                    return false;
-                }
-            }
-        }
-    };
-
-    private static boolean plainUse(ItemBlock item) {
-        return PLAIN_USE.get(item.getClass());
     }
 
     private static NBTTagCompound copy(NBTTagCompound data) {
@@ -812,14 +883,6 @@ final class HologramNativeConstruction {
             .getCompoundTag(HologramRecovery.TAG)
             .setTag("tile", state);
         return seal;
-    }
-
-    private static boolean inventoryMatches(HologramSession session, ItemStack[] expected) {
-        var actual = session.player.inventory.mainInventory;
-        if (actual.length != expected.length) return false;
-        for (int i = 0; i < actual.length; i++)
-            if (i != session.slot && !ItemStack.areItemStacksEqual(actual[i], expected[i])) return false;
-        return true;
     }
 
     private static final class Candidate {

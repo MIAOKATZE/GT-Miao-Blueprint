@@ -28,7 +28,10 @@ final class HologramBlueprintCovers {
 
     /** One detached item per installed side, including the NBT carried by facade cover items. */
     static List<ItemStack> materials(String tileNbt) throws IOException {
-        NBTTagCompound tile = HologramBlueprintNbt.decode(tileNbt);
+        return materials(HologramBlueprintNbt.decode(tileNbt));
+    }
+
+    static List<ItemStack> materials(NBTTagCompound tile) throws IOException {
         List<ItemStack> costs = new ArrayList<>();
         for (ItemStack cover : materials(tile, HologramBlueprintCovers::resolveRegisteredCover))
             costs.addAll(HologramGtswnPlacementMaterials.coverCosts(tile, cover));

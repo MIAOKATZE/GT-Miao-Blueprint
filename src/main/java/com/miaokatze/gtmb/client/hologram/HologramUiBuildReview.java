@@ -353,8 +353,11 @@ final class HologramUiBuildReview implements LocalView {
 
     @Override
     public String localRecoveryDestinationLabel() {
-        return nativeRecoveryDestination == 0 ? projectorOr("stock.recover_inventory", "回收至背包")
-            : projectorOr("stock.recover_ae", "回收至AE");
+        return switch (nativeRecoveryDestination) {
+            case 1 -> projectorOr("stock.recover_ae", "回收至AE");
+            case 2 -> projectorOr("stock.recover_backpack", "回收至背包容器");
+            default -> projectorOr("stock.recover_inventory", "回收至物品栏");
+        };
     }
 
     int nativeRecoveryDestination() {
@@ -374,7 +377,7 @@ final class HologramUiBuildReview implements LocalView {
             }
             case SUBMIT -> submitLocalMaterials();
             case RECOVERY_DESTINATION -> {
-                if (localRecoveryAvailable()) nativeRecoveryDestination = 1 - nativeRecoveryDestination;
+                if (localRecoveryAvailable()) nativeRecoveryDestination = (nativeRecoveryDestination + 1) % 3;
             }
         }
     }

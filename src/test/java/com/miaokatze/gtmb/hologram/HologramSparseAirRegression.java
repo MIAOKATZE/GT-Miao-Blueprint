@@ -75,13 +75,9 @@ final class HologramSparseAirRegression {
             snapshot(sparse, world);
             world.reads = 0;
             SimpleAssert.that(
-                HologramWorldTransactions.operateChecked(sparse, sparse.capture.cells.get(0), 0),
-                "a defensive direct air operation is a no-op before native/world/payment admission");
-            SimpleAssert.eq(0L, world.reads, "direct air operation cannot observe the world");
-            HologramPlacementJobs.start(sparse);
-            SimpleAssert.eq(SOLID, sparse.work.size(), "only the 1k non-air targets enter the actual work queue");
-            for (int index : sparse.work) SimpleAssert.that(index >= AIR, "air geometry never becomes work");
-            sparse.job = 0;
+                HologramSessionPolicy.ignoredPlacementAir(sparse, sparse.capture.cells.get(0), 0),
+                "mode-zero air is filtered by the source before native/world/payment admission");
+            SimpleAssert.eq(0L, world.reads, "air filtering cannot observe the world");
             safetyAndEditing(sparse, world);
         } finally {
             player.worldObj = originalWorld;

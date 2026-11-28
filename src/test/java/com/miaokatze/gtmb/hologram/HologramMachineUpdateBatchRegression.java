@@ -47,6 +47,7 @@ public final class HologramMachineUpdateBatchRegression {
             RunnableMachineUpdate.setCurrentThreadEnabled(true);
             passThrough(world, handlers);
             threadIsolation(world);
+            handlers.clear(); // thread-isolation terminal flush is a separate fixture, not the next test's work.
             admissionAndCleanup(world, peer, handlers);
             drainWithinSlice(world, handlers);
             drainFailureAndNesting(world, handlers);
@@ -62,87 +63,76 @@ public final class HologramMachineUpdateBatchRegression {
     private static void passThrough(World world, Map<World, RunnableMachineUpdate> handlers) throws Exception {
         seed(world, 0, 64, 0);
         seed(world, 0, 64, 0);
-        SimpleAssert.eq(2, queued(handlers, world), "ordinary GT callers retain duplicate events outside job scope");
+        SimpleAssert.eq(2, queued(handlers, world), "unrelated GT callers retain native queue semantics");
         handlers.clear();
-        try (var outer = HologramMachineUpdateBatch.open()) {
-            seed(world, 0, 64, 0);
-            SimpleAssert.eq(1, queued(handlers, world), "first event is queued immediately, before batch close");
+        var updates = new HologramMachineUpdateBatch.Updates();
+        try (var outer = updates.open()) {
             for (int repeat = 0; repeat < 1000; repeat++) seed(world, 0, 64, 0);
-            try (var inner = HologramMachineUpdateBatch.open()) {
-                seed(world, 0, 64, 0);
+            try (var inner = updates.open()) {
                 seed(world, 100, 64, 0);
             }
-            seed(world, 100, 64, 0);
-            SimpleAssert.eq(2, queued(handlers, world), "nested synchronous slices share exact distinct seeds");
+            SimpleAssert.eq(0, queued(handlers, world), "no construction seed enters GT traversal within a slice");
         }
-        try (var nextSlice = HologramMachineUpdateBatch.open()) {
+        try (var later = updates.open()) {
             seed(world, 0, 64, 0);
+            seed(world, 100, 64, 0);
         }
-        SimpleAssert.eq(3, queued(handlers, world), "later slices retain their own native events");
+        SimpleAssert.eq(0, queued(handlers, world), "yielding does not flush a partly built machine");
+        updates.finish();
+        updates.finish();
+        SimpleAssert.eq(2, queued(handlers, world), "terminal flush publishes each job-local seed once across slices");
         handlers.clear();
     }
 
     private static void admissionAndCleanup(World world, World peer, Map<World, RunnableMachineUpdate> handlers)
         throws Exception {
+        var updates = new HologramMachineUpdateBatch.Updates();
         try {
-            try (var ignored = HologramMachineUpdateBatch.open()) {
-                RunnableMachineUpdate.setCurrentThreadEnabled(false);
-                seed(world, 0, 64, 0);
-                SimpleAssert
-                    .that(!RunnableMachineUpdate.isCurrentThreadEnabled(), "batch leaves disabled thread alone");
-                RunnableMachineUpdate.setCurrentThreadEnabled(true);
+            try (var ignored = updates.open()) {
                 seed(world, 0, 64, 0);
                 seed(peer, 0, 64, 0);
-                RunnableMachineUpdate.setEnabled(false);
-                seed(world, 100, 64, 0);
-                RunnableMachineUpdate.setEnabled(true);
-                seed(world, 100, 64, 0);
                 throw new IllegalArgumentException("callback after partial commit");
             }
         } catch (IllegalArgumentException expected) {
-            SimpleAssert.eq("callback after partial commit", expected.getMessage(), "callback failure is unchanged");
+            updates.finish();
         }
-        SimpleAssert.eq(2, queued(handlers, world), "disabled requests do not poison later enabled admission");
-        SimpleAssert.eq(1, queued(handlers, peer), "same coordinates in another world remain independent");
-        seed(world, 0, 64, 0);
-        SimpleAssert.eq(3, queued(handlers, world), "exception restores pass-through and retains committed seeds");
-        SimpleAssert.that(RunnableMachineUpdate.isEnabled(), "batch does not change global flag");
-        SimpleAssert.that(RunnableMachineUpdate.isCurrentThreadEnabled(), "batch does not change thread flag");
-        // A pre-disabled caller stays disabled even when no mutation succeeds.
-        RunnableMachineUpdate.setCurrentThreadEnabled(false);
-        try (var ignored = HologramMachineUpdateBatch.open()) {
-            seed(world, 500, 64, 0);
-        }
-        SimpleAssert.that(!RunnableMachineUpdate.isCurrentThreadEnabled(), "close preserves pre-disabled thread");
-        RunnableMachineUpdate.setCurrentThreadEnabled(true);
-        RunnableMachineUpdate.setEnabled(false);
-        try (var ignored = HologramMachineUpdateBatch.open()) {
-            seed(world, 500, 64, 0);
-        }
-        SimpleAssert.that(!RunnableMachineUpdate.isEnabled(), "close preserves pre-disabled global flag");
-        RunnableMachineUpdate.setEnabled(true);
+        SimpleAssert.eq(1, queued(handlers, world), "exception terminal flush retains the original world's seed");
+        SimpleAssert.eq(1, queued(handlers, peer), "other callback worlds retain independent seeds");
+        SimpleAssert.that(RunnableMachineUpdate.isCurrentThreadEnabled(), "scope finally restores enabled thread");
         handlers.clear();
+        RunnableMachineUpdate.setCurrentThreadEnabled(false);
+        var disabled = new HologramMachineUpdateBatch.Updates();
+        try (var ignored = disabled.open()) {
+            seed(world, 0, 64, 0);
+        }
+        disabled.finish();
+        SimpleAssert.that(
+            !RunnableMachineUpdate.isCurrentThreadEnabled() && handlers.isEmpty(),
+            "originally disabled updates remain disabled with no invented requests");
+        RunnableMachineUpdate.setCurrentThreadEnabled(true);
     }
 
     private static void threadIsolation(World world) throws InterruptedException {
         var failures = new java.util.concurrent.atomic.AtomicReference<Throwable>();
-        try (var ignored = HologramMachineUpdateBatch.open()) {
-            SimpleAssert.that(!HologramMachineUpdateBatch.suppressDuplicate(world, 0, 64, 0), "first parent seed");
+        var updates = new HologramMachineUpdateBatch.Updates();
+        try (var ignored = updates.open()) {
+            SimpleAssert.that(
+                HologramMachineUpdateBatch.suppressDuplicate(world, 0, 64, 0),
+                "scope captures its first native request");
             var peerThread = new Thread(() -> {
                 try {
                     SimpleAssert.that(
                         !HologramMachineUpdateBatch.suppressDuplicate(world, 0, 64, 0),
-                        "an unrelated thread cannot inherit a construction scope");
+                        "unrelated thread cannot inherit construction suppression");
                 } catch (Throwable failure) {
                     failures.set(failure);
                 }
             });
             peerThread.start();
             peerThread.join();
-            if (failures.get() != null) throw new AssertionError("thread-local batch isolation", failures.get());
-            SimpleAssert
-                .that(HologramMachineUpdateBatch.suppressDuplicate(world, 0, 64, 0), "parent scope remains active");
+            if (failures.get() != null) throw new AssertionError("thread-local isolation", failures.get());
         }
+        updates.finish();
     }
 
     private static void disconnectedNeighbors(HologramServiceEditRegression.ReadOnlyWorld world,
@@ -153,19 +143,20 @@ public final class HologramMachineUpdateBatchRegression {
         world.occupants.put("-1,64,0", left);
         world.occupants.put("101,64,0", right);
         peer.occupants.put("1,64,0", otherWorld);
-        try (var ignored = HologramMachineUpdateBatch.open()) {
-            // Air at two removal sites separates their surviving components. No chosen controller connects them.
+        var updates = new HologramMachineUpdateBatch.Updates();
+        try (var ignored = updates.open()) {
             seed(world, 0, 64, 0);
             seed(world, 100, 64, 0);
-            seed(world, 0, 64, 0);
-            seed(peer, 0, 64, 0);
             seed(peer, 0, 64, 0);
         }
+        updates.finish();
         RunnableMachineUpdate.endTick();
-        SimpleAssert.eq(1, left.updates, "first removed site's surviving neighbor is updated");
-        SimpleAssert.eq(1, right.updates, "disconnected surviving component is also updated");
-        SimpleAssert.eq(1, otherWorld.updates, "callback destination in a second world is also updated");
-        SimpleAssert.that(handlers.isEmpty(), "real GT endTick drains every world normally");
+        SimpleAssert.eq(1, left.updates, "first broken component receives native propagation");
+        SimpleAssert.eq(1, right.updates, "disconnected second component receives native propagation");
+        SimpleAssert.eq(1, otherWorld.updates, "all callback worlds are flushed");
+        SimpleAssert.that(handlers.isEmpty(), "native endTick drains its own complete queue");
+        world.occupants.clear();
+        peer.occupants.clear();
     }
 
     private static void drainWithinSlice(HologramServiceEditRegression.ReadOnlyWorld world,
@@ -175,23 +166,25 @@ public final class HologramMachineUpdateBatchRegression {
         world.occupants.put("-1,64,0", trigger);
         world.occupants.put("100,64,0", duringDrain);
         trigger.action = () -> {
-            try (var nested = HologramMachineUpdateBatch.open()) {
+            try (var callback = HologramMachineUpdateBatch.open()) {
                 seed(world, 100, 64, 0);
                 seed(world, 100, 64, 0);
             }
         };
+        var updates = new HologramMachineUpdateBatch.Updates();
         try {
-            try (var slice = HologramMachineUpdateBatch.open()) {
+            try (var slice = updates.open()) {
                 seed(world, 0, 64, 0);
                 drain();
-                SimpleAssert.that(handlers.isEmpty(), "synchronous endTick clears the real queue inside a slice");
-                SimpleAssert.eq(2, duringDrain.updates, "drain callbacks retain duplicates even in a new nested batch");
+                SimpleAssert
+                    .eq(2, duringDrain.updates, "explicit native drains keep callback updates outside suppression");
+                SimpleAssert
+                    .that(!RunnableMachineUpdate.isCurrentThreadEnabled(), "drain restores the enclosing slice switch");
                 seed(world, 0, 64, 0);
-                seed(world, 0, 64, 0);
-                SimpleAssert.eq(1, queued(handlers, world), "same coordinate is admitted anew after synchronous drain");
-                drain();
-                SimpleAssert.eq(2, trigger.updates, "post-drain seed reaches the same surviving machine again");
             }
+            updates.finish();
+            RunnableMachineUpdate.endTick();
+            SimpleAssert.eq(2, trigger.updates, "post-drain construction requests remain deliverable at terminal");
         } finally {
             world.occupants.clear();
             handlers.clear();
@@ -200,39 +193,25 @@ public final class HologramMachineUpdateBatchRegression {
 
     private static void drainFailureAndNesting(World world, Map<World, RunnableMachineUpdate> handlers)
         throws Exception {
-        try (var slice = HologramMachineUpdateBatch.open()) {
+        var updates = new HologramMachineUpdateBatch.Updates();
+        try (var slice = updates.open()) {
             seed(world, 0, 64, 0);
             try {
-                try (var paused = HologramMachineUpdateBatch.pauseForDrain()) {
-                    try (var nested = HologramMachineUpdateBatch.pauseForDrain();
-                        var callback = HologramMachineUpdateBatch.open()) {
-                        seed(world, 0, 64, 0);
-                        seed(world, 0, 64, 0);
-                    }
-                    seed(world, 0, 64, 0);
-                    SimpleAssert.eq(4, queued(handlers, world), "closing a nested drain leaves its parent paused");
+                try (var paused = HologramMachineUpdateBatch.pauseForDrain();
+                    var nested = HologramMachineUpdateBatch.pauseForDrain()) {
+                    SimpleAssert.that(
+                        RunnableMachineUpdate.isCurrentThreadEnabled(),
+                        "nested drain preserves native callback execution");
                     handlers.clear();
-                    throw new IllegalStateException("failed native drain after queue clear");
+                    throw new IllegalStateException("failed native drain");
                 }
-            } catch (IllegalStateException expected) {
-                SimpleAssert
-                    .eq("failed native drain after queue clear", expected.getMessage(), "drain error propagates");
-            }
-            seed(world, 0, 64, 0);
-            seed(world, 0, 64, 0);
-            SimpleAssert.eq(1, queued(handlers, world), "failed drain clears stale seeds and restores deduplication");
-            RunnableMachineUpdate.setCurrentThreadEnabled(false);
-            RunnableMachineUpdate.setEnabled(false);
-            try (var paused = HologramMachineUpdateBatch.pauseForDrain()) {
-                seed(world, 100, 64, 0);
-            }
-            SimpleAssert.that(!RunnableMachineUpdate.isEnabled(), "drain preserves disabled global state");
-            SimpleAssert.that(!RunnableMachineUpdate.isCurrentThreadEnabled(), "drain preserves disabled thread state");
-            RunnableMachineUpdate.setEnabled(true);
-            RunnableMachineUpdate.setCurrentThreadEnabled(true);
+            } catch (IllegalStateException expected) {}
+            SimpleAssert.that(!RunnableMachineUpdate.isCurrentThreadEnabled(), "failed drain restores enclosing scope");
+            seed(world, 100, 64, 0);
         }
-        seed(world, 0, 64, 0);
-        SimpleAssert.eq(2, queued(handlers, world), "failed drain and outer close leave no pause or batch behind");
+        updates.finish();
+        SimpleAssert.eq(1, queued(handlers, world), "failure does not discard later native requests");
+        SimpleAssert.that(RunnableMachineUpdate.isCurrentThreadEnabled(), "outer finally restores native switch");
         handlers.clear();
     }
 

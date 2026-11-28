@@ -15,7 +15,7 @@ import com.miaokatze.gtmb.hologram.HologramStockNativeWire.Stage;
 final class HologramNativeControllerState {
 
     private long targetRevision = 1;
-    private long observedRevision;
+    private boolean observed;
     private boolean targetReady;
     private Stage stage = Stage.UNKNOWN;
     private Operation action = Operation.BUILD;
@@ -24,10 +24,6 @@ final class HologramNativeControllerState {
 
     long targetRevision() {
         return targetRevision;
-    }
-
-    long observedRevision() {
-        return observedRevision;
     }
 
     Operation action() {
@@ -44,7 +40,7 @@ final class HologramNativeControllerState {
     void targetReady() {
         targetReady = true;
         targetReason = "";
-        if (observedRevision == 0) reason = projectorOr("native.ui.reading_server_structure_state", "正在读取服务器结构状态。");
+        if (!observed) reason = projectorOr("native.ui.reading_server_structure_state", "正在读取服务器结构状态。");
     }
 
     void targetFailed(String failure) {
@@ -54,7 +50,7 @@ final class HologramNativeControllerState {
     }
 
     void invalidateObservation() {
-        observedRevision = 0;
+        observed = false;
         stage = Stage.UNKNOWN;
         reason = projectorOr("native.ui.reading_server_structure_state", "正在读取服务器结构状态。");
     }
@@ -67,9 +63,8 @@ final class HologramNativeControllerState {
     }
 
     boolean observe(ServerObservation observation) {
-        if (observation == null || observation.targetRevision() != targetRevision
-            || observation.observedRevision() <= 0) return false;
-        observedRevision = observation.observedRevision();
+        if (observation == null || observation.targetRevision() != targetRevision) return false;
+        observed = true;
         stage = observation.stage();
         reason = observation.reason();
         if (!allowed(stage, action)) action = defaultAction(stage);
@@ -86,7 +81,7 @@ final class HologramNativeControllerState {
         if (!targetReady && next != Operation.DEMOLISH)
             return targetReason.isEmpty() ? projectorOr("native.ui.updating_the_complete_target", "正在更新当前完整目标。")
                 : HologramNativeUiText.reason(targetReason);
-        if (observedRevision <= 0 || stage == Stage.UNKNOWN) return reason.isEmpty()
+        if (!observed || stage == Stage.UNKNOWN) return reason.isEmpty()
             ? projectorOr("native.ui.server_structure_state_has_not_been_received", "尚未取得服务器结构状态。")
             : HologramNativeUiText.reason(reason);
         if (!reason.isEmpty()) return HologramNativeUiText.reason(reason);
@@ -155,7 +150,6 @@ final class HologramNativeControllerState {
         result.setInteger("mode", legacyMode(action));
         result.setString("nativeStage", stage.name());
         result.setLong("nativeTargetRevision", targetRevision);
-        result.setLong("nativeObservationToken", observedRevision);
         result.setBoolean("nativeTargetReady", targetReady);
         result.setString("nativeObservationReason", reason);
         result.setString("nativeTargetReason", targetReason);

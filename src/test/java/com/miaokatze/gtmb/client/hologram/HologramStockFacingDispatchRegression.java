@@ -78,17 +78,9 @@ public final class HologramStockFacingDispatchRegression {
                 capture.frames.clear();
                 if (!owner.submit(c, ctx, view, 100))
                     throw new AssertionError("probe rejected " + direction + ": " + notices);
-                verify(capture, Command.PROBE, c, 0);
-                var proved = new Key(
-                    c.key()
-                        .request(),
-                    c.key()
-                        .sequence(),
-                    7);
-                owner.receive(new Reply(proved, Phase.CAPABLE, 0, ""), handler, ctx, 101);
-                verify(capture, Command.BEGIN_AFTER_PROBE, c, 7);
-                if (capture.frames.size() != 2) throw new AssertionError("not one probe and one construction");
-                owner.receive(new Reply(proved, Phase.COMPLETE, 1, ""), handler, ctx, 102);
+                verify(capture, Command.BEGIN, c);
+                if (capture.frames.size() != 1) throw new AssertionError("not one direct construction");
+                owner.receive(new Reply(c.key(), Phase.COMPLETE, 1, ""), handler, ctx, 102);
                 ++tested;
             }
             for (int invalid : new int[] { -1, ExtendedFacing.STATES_COUNT, Integer.MAX_VALUE }) {
@@ -101,7 +93,7 @@ public final class HologramStockFacingDispatchRegression {
             }
             System.out.println(
                 "PASS stock-native-facing-dispatch: " + tested
-                    + " alignments, probe + begin bytes/ingress; 3 invalid rejected");
+                    + " alignments, direct begin bytes/ingress; 3 invalid rejected");
         } finally {
             channel.set(null, saved);
         }
@@ -116,7 +108,7 @@ public final class HologramStockFacingDispatchRegression {
             0,
             1).withNativeTargetDigest(String.join("", Collections.nCopies(64, "a")));
         return Confirmation.projection(
-            new Key(UUID.randomUUID(), HologramNetwork.nextConstructionIntentSequence(), 0),
+            new Key(UUID.randomUUID(), HologramNetwork.nextConstructionIntentSequence()),
             0,
             UUID.randomUUID(),
             10,
@@ -132,11 +124,10 @@ public final class HologramStockFacingDispatchRegression {
             target);
     }
 
-    private static void verify(Capture capture, Command cmd, Confirmation c, long gen) {
+    private static void verify(Capture capture, Command cmd, Confirmation c) {
         if (capture.frames.isEmpty()) throw new AssertionError("no frame for " + cmd);
         var tag = capture.frames.get(capture.frames.size() - 1);
         if (tag.getByte("nativeStockCommand") != cmd.ordinal() || tag.getInteger("facing") != c.facing()
-            || tag.getLong("nativeStockGeneration") != gen
             || !tag.getString("tool")
                 .equals(
                     c.tool()

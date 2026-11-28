@@ -77,13 +77,13 @@ public final class HologramMaterialStockWire {
     }
 
     public static HologramMaterials.Settings decode(int mask) {
-        if (mask < 0 || mask >= 64 || (mask >>> 3 & 3) > 2) return null;
+        if (mask < 0 || mask >= 128 || (mask >>> 3 & 3) > 2 || (mask >>> 5 & 3) > 2) return null;
         var settings = new HologramMaterials.Settings();
         settings.main = (mask & 1) != 0;
         settings.containers = (mask & 2) != 0;
         settings.me = (mask & 4) != 0;
         settings.priority = mask >>> 3 & 3;
-        settings.recoveryDestination = mask >>> 5 & 1;
+        settings.recoveryDestination = mask >>> 5 & 3;
         return settings;
     }
 

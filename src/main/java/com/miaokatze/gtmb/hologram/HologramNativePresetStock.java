@@ -93,8 +93,7 @@ public final class HologramNativePresetStock {
         for (String key : INTS) if (!tag.hasKey(key, 3)) return false;
         return tag.getInteger("controller") > 0 && tag.getInteger("controller") <= Short.MAX_VALUE
             && tag.getInteger("facing") >= 0
-            && tag.getInteger("sources") >= 0
-            && tag.getInteger("sources") < 64
+            && HologramMaterialStockWire.decode(tag.getInteger("sources")) != null
             && tag.getInteger("slot") >= 0
             && tag.getInteger("slot") <= 8
             && validIds(tag.getIntArray("ids"));
@@ -170,7 +169,7 @@ public final class HologramNativePresetStock {
         settings.containers = (selected & 2) != 0;
         settings.me = (selected & 4) != 0;
         settings.priority = (selected >>> 3) & 3;
-        settings.recoveryDestination = (selected >>> 5) & 1;
+        settings.recoveryDestination = (selected >>> 5) & 3;
         // A read-only quote may deliberately select no providers. It grants no construction/payment authority.
         if (HologramProjectedMainPolicy.structurePlacementKey(settings, true) != selected) {
             reject(endpoint, id, "sources");

@@ -266,6 +266,19 @@ public final class HologramMaterialReviewRegression {
             review.settings()
                 .getIntArray("selectedIndices").length == 0,
             "the complete reviewed scope stays detached from later local selection changes");
+        NBTTagCompound demolition = (NBTTagCompound) source.copy();
+        demolition.setInteger("nativeAction", 3);
+        demolition.setString("nativeStage", "UNFORMED");
+        demolition.setBoolean("nativeTargetReady", false);
+        demolition.setBoolean("localStructureUnavailable", true);
+        SimpleAssert.that(
+            HologramPlacementConfirmation.localStructureReviewBlocker(new HologramState(demolition))
+                .isEmpty(),
+            "demolition reviews the known current structure without new target geometry or an observation token");
+        demolition.setString("nativeStage", "CONTROLLER_ONLY");
+        SimpleAssert.that(
+            !HologramPlacementConfirmation.nativeDemolitionReview(demolition),
+            "a controller alone has no structure to demolish");
     }
 
     private static NBTTagCompound estimateCell(int x, boolean excluded, boolean known) {
@@ -339,7 +352,6 @@ public final class HologramMaterialReviewRegression {
                 tile.yCoord,
                 tile.zCoord,
                 com.miaokatze.gtmb.hologram.HologramStockNativeWire.Stage.CONTROLLER_ONLY,
-                1,
                 nativeState.targetRevision(),
                 ""));
         NBTTagCompound flags = nativeState.metadata();
@@ -424,7 +436,6 @@ public final class HologramMaterialReviewRegression {
                     tile.yCoord,
                     tile.zCoord,
                     stage,
-                    2 + action.ordinal(),
                     nativeState.targetRevision(),
                     ""));
             SimpleAssert.that(nativeState.select(action), "matching server state offers " + action);
@@ -443,7 +454,6 @@ public final class HologramMaterialReviewRegression {
                 tile.yCoord,
                 tile.zCoord,
                 com.miaokatze.gtmb.hologram.HologramStockNativeWire.Stage.CONTROLLER_ONLY,
-                9,
                 nativeState.targetRevision(),
                 ""));
         NBTTagCompound localWorkspace = (NBTTagCompound) metadata.copy();

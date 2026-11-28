@@ -124,8 +124,6 @@ final class HologramWorkspaceScheduler {
 
     private static void tickSession(HologramSession s) {
         if (s.stockNativePrivate) return;
-        if (HologramNativeCompactStart.tick(s)) return;
-        if (HologramNativeReadyPlacement.tick(s)) return;
         HologramWorkspace.pruneRemovedController(s.player);
         if (HologramWorkspace.find(s.player.getUniqueID()) != s) return;
         if (s.voucherCoverageTask != null) {
@@ -166,6 +164,5 @@ final class HologramWorkspaceScheduler {
         }
         if (HologramStructureProjection.tick(s)) return;
         if (HologramSnapshotPreparation.tick(s)) return;
-        HologramPlacementJobs.tickJob(s);
     }
 }

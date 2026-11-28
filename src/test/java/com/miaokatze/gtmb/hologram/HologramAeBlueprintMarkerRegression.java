@@ -249,23 +249,14 @@ public final class HologramAeBlueprintMarkerRegression {
             false,
             false,
             null);
-        require(
-            selected != null && !selected.hasKey("inv")
-                && !selected.hasKey("patterns")
-                && !selected.hasKey("config")
-                && !selected.hasKey("orientation_forward")
-                && !selected.hasKey("paintedColor")
-                && !selected.hasKey("proxy"),
-            "AE both-disabled filtering yields a canonical empty host without source configuration/identity");
+        require(selected == null, "AE both-disabled filtering leaves native placement with no selected device state");
         HologramBlueprintResources.Plan extras = HologramBlueprintResources.plan(selected);
         require(
             extras.items.isEmpty() && extras.fluids.isEmpty() && extras.energy.signum() == 0,
             "filtered empty canonical pays no omitted inventory/configuration resources");
         require(
-            selected.getInteger("x") == 13 && selected.getInteger("y") == 64
-                && selected.getInteger("z") == -8
-                && raw.equals(before),
-            "filtered shell binds target coordinates without mutating the original payload");
+            raw.equals(before),
+            "omitting empty placement state leaves the original inventory, configuration and identity unchanged");
         require(
             !HologramAeBlueprint.supportsEmptyNativeShell(recognized)
                 && !HologramAeBlueprint.supportsEmptyNativeShell(new InertBlock()),

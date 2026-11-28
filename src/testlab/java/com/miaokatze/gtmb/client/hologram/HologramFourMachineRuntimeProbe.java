@@ -48,7 +48,7 @@ final class HologramFourMachineRuntimeProbe {
 
     private final Path save, output;
     private final UUID actorId;
-    private final boolean fullMatrix;
+    private final boolean fullMatrix, ebfRepairSlice;
     private final List<MachineCase> cases = new ArrayList<>();
     private final List<Map<String, Object>> caseResults = new ArrayList<>();
     private final Map<String, Object> report = new LinkedHashMap<>();
@@ -90,8 +90,11 @@ final class HologramFourMachineRuntimeProbe {
     HologramFourMachineRuntimeProbe(Path save, Path output, UUID actorId, Map<String, Object> parent) {
         require(enabled() && Boolean.getBoolean("miaotest.host.environment"), "Exact isolated host opt-in required");
         String slice = System.getProperty("gtmb.testlab.fourMachineSlice", "ebf");
-        require("ebf".equals(slice) || "all".equals(slice), "Unknown bounded native action matrix");
+        require(
+            "ebf".equals(slice) || "ebf-repair".equals(slice) || "all".equals(slice),
+            "Unknown bounded native action matrix");
         fullMatrix = "all".equals(slice);
+        ebfRepairSlice = "ebf-repair".equals(slice);
         if (fullMatrix) for (HologramFourMachineSpec spec : HologramFourMachineSpec.values())
             for (ExtendedFacing facing : spec.orientations()) cases.add(new MachineCase(spec, facing));
         else cases.add(new MachineCase(HologramFourMachineSpec.EBF, ExtendedFacing.NORTH_NORMAL_NONE));
@@ -99,10 +102,16 @@ final class HologramFourMachineRuntimeProbe {
         this.output = output;
         this.actorId = actorId;
         report.put("schema", "gtmb-four-machine-action-runtime-v1");
+        report.put("slice", slice);
         report.put(
             "scope",
             fullMatrix ? "Four live native machine action matrix including NORTH/EAST, inventory and finite AE"
-                : "EBF vertical slice: default BUILD and LV preset REPAIR; remaining matrix NOT_RUN");
+                : ebfRepairSlice
+                    ? "EBF damage-repair slice: default BUILD, LV preset REPAIR, real body damage, natural UNFORMED and REPAIR to natural FORMED; remaining matrix NOT_RUN"
+                    : "EBF vertical slice: default BUILD and LV preset REPAIR; remaining matrix NOT_RUN");
+        if (ebfRepairSlice) report.put(
+            "remainingMatrix",
+            "NOT_RUN: MV replacement, formed/unformed demolition, other machines/orientations, AE and preset-clear matrix; this EBF slice cannot satisfy four-machine acceptance");
         report.put("runId", System.getProperty("miaotest.host.runId"));
         report.put(
             "artifact",
@@ -230,6 +239,7 @@ final class HologramFourMachineRuntimeProbe {
                 (phase == 28 || phase == 29) && mc.currentScreen == null,
                 "Native machine screen ownership changed");
         }
+        observationEvidence();
         report.put("lastState", screen.ui.session.state().data.toString());
         report.put(
             "lastMaterialDialog",
@@ -420,7 +430,7 @@ final class HologramFourMachineRuntimeProbe {
                     .getBoolean("naturalFormed")) return false;
                 compareWorld(lastAudit, target);
                 record("preset-repair-naturally-formed-world", lastAudit);
-                if (!fullMatrix) {
+                if (!fullMatrix && !ebfRepairSlice) {
                     report.put("ebfSlicePassed", true);
                     report.put("remainingMatrix", "NOT_RUN; this report cannot satisfy four-machine acceptance");
                     report.put("wire", wire.snapshot());
@@ -451,6 +461,9 @@ final class HologramFourMachineRuntimeProbe {
                         new ItemStack(net.minecraft.init.Blocks.cobblestone)));
                 pending = fixture.request(() -> {
                     NBTTagCompound result = fixture.damage(missing.position(), wrong.position());
+                    result.setTag("actualAfter", fixture.cells(new int[][] { missing.position(), wrong.position() }));
+                    result.setTag("controllerAfter", fixture.controller());
+                    actualDamage = (NBTTagCompound) result.copy();
                     record("explicit-fixture-damage", result);
                     return result;
                 });
@@ -460,6 +473,8 @@ final class HologramFourMachineRuntimeProbe {
                 if (pending == null) pending = fixture.request(this::audit);
                 if (lastAudit.getCompoundTag("controller")
                     .getBoolean("naturalFormed") || !targetReady("UNFORMED")) return false;
+                record("damage-naturally-unformed-world", lastAudit);
+                record("damage-unformed-native-ui", screen.ui.session.state().data);
                 pending = fixture.request(() -> {
                     fixture.watch(points(target, true), "DAMAGE_REPAIR");
                     before = fixture.resources();
@@ -488,6 +503,18 @@ final class HologramFourMachineRuntimeProbe {
                 if (pending == null) pending = fixture.request(this::audit);
                 if (!lastAudit.getCompoundTag("controller")
                     .getBoolean("naturalFormed") || !targetReady("FORMED")) return false;
+                compareWorld(lastAudit, target);
+                retainedTiles(unchangedWorld, lastAudit);
+                record("damage-repair-naturally-formed-world", lastAudit);
+                record("damage-repair-formed-native-ui", screen.ui.session.state().data);
+                if (ebfRepairSlice) {
+                    report.put("ebfRepairSlicePassed", true);
+                    report.put("wire", wire.snapshot());
+                    done = true;
+                    observationEvidence();
+                    write();
+                    return true;
+                }
                 unchangedWorld = lastAudit;
                 editPhase = 0;
                 sourcePhase = 0;
@@ -769,7 +796,32 @@ final class HologramFourMachineRuntimeProbe {
         return false;
     }
 
-    private NBTTagCompound lastAudit;
+    private volatile NBTTagCompound lastAudit, actualDamage;
+
+    /** Read-only evidence from the existing server audit and actual client state; never manufactures a stage. */
+    private void observationEvidence() {
+        NBTTagCompound audit = lastAudit, damage = actualDamage;
+        if (audit != null) {
+            report.put("lastAudit", audit.toString());
+            report.put(
+                "serverNaturalFormed",
+                audit.getCompoundTag("controller")
+                    .getBoolean("naturalFormed"));
+            report.put(
+                "lastServerController",
+                audit.getCompoundTag("controller")
+                    .toString());
+        }
+        if (damage != null) report.put("actualDamage", damage.toString());
+        if (screen != null) {
+            NBTTagCompound state = screen.ui.session.state().data;
+            report.put("uiNativeStage", state.getString("nativeStage"));
+            report.put("uiNativeTargetReady", state.getBoolean("nativeTargetReady"));
+            report.put("uiCapturePending", state.getBoolean("capturePending"));
+            report.put("uiNativeTargetRevision", state.getLong("nativeTargetRevision"));
+            report.put("uiNativeTargetDigest", state.getString("nativeTargetDigest"));
+        }
+    }
 
     private NBTTagCompound audit() throws Exception {
         NBTTagCompound result = new NBTTagCompound();
@@ -787,8 +839,7 @@ final class HologramFourMachineRuntimeProbe {
 
     private boolean targetReady(String stage) {
         NBTTagCompound data = screen.ui.session.state().data;
-        return data.getBoolean("nativeTargetReady") && data.getLong("nativeObservationToken") > 0
-            && stage.equals(data.getString("nativeStage"))
+        return data.getBoolean("nativeTargetReady") && stage.equals(data.getString("nativeStage"))
             && !data.getBoolean("capturePending");
     }
 
@@ -1459,11 +1510,12 @@ final class HologramFourMachineRuntimeProbe {
         report.put("cleanupPending", false);
         report.put(
             "passed",
-            fullMatrix && Boolean.TRUE.equals(report.get("allActionsPassed"))
+            (fullMatrix && Boolean.TRUE.equals(report.get("allActionsPassed"))
                 && Boolean.TRUE.equals(report.get("aeOnlyBuildPaid"))
                 && Boolean.TRUE.equals(report.get("aeReplacementRecovered"))
                 && Boolean.TRUE.equals(report.get("presetClearedToCasing"))
                 && Boolean.TRUE.equals(report.get("presetRepairedAfterClear"))
+                || ebfRepairSlice && Boolean.TRUE.equals(report.get("ebfRepairSlicePassed")))
                 && !report.containsKey("failure"));
         restored = true;
         write();
@@ -1474,6 +1526,7 @@ final class HologramFourMachineRuntimeProbe {
         if (report.containsKey("failure")) return;
         report.put("failure", failure);
         report.put("passed", false);
+        observationEvidence();
         if (wire != null) report.put("wire", wire.snapshot());
         write();
     }

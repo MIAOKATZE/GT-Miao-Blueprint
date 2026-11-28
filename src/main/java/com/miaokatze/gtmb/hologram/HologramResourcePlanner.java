@@ -734,7 +734,8 @@ final class HologramResourcePlanner {
                     stacks.put(key, cover);
                     counts.merge(key, 1, Integer::sum);
                 }
-            if (s.mode != 2 && (!s.player.capabilities.isCreativeMode || HologramRecovery.hasSeal(target))) {
+            if (s.mode != 2 && target != null
+                && (!s.player.capabilities.isCreativeMode || HologramRecovery.hasSeal(target))) {
                 try {
                     HologramDecorMaterials.Descriptor descriptor = HologramCellPolicy.decoration(s, c);
                     if (descriptor == null && !HologramMaterialAccess.freeShell(s, c, target)) {

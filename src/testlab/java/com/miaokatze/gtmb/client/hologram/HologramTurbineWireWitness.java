@@ -40,7 +40,7 @@ final class HologramTurbineWireWitness {
                 .key()
                 .request(),
             next.afterProbe() ? "testlab_begin" : "testlab_probe");
-        boolean ok = next.afterProbe() ? HologramNetwork.sendStockNativeAfterProbe(next.confirmation())
+        boolean ok = next.afterProbe() ? HologramNetwork.sendStockNativeConfirmation(next.confirmation())
             : HologramNetwork.sendStockNativeProbe(next.confirmation());
         if (!ok) throw new IllegalStateException("Production native request send refused");
         sent = next;

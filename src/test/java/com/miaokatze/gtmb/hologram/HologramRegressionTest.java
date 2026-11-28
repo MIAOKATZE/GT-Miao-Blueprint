@@ -324,19 +324,9 @@ public final class HologramRegressionTest {
             HologramPlacementRequestRegression::run);
         // Standalone helper contracts; these are not production dispatcher entry tests.
         cases.put("isolated_business_wire_policy", HologramBusinessWirePolicyRegression::run);
-        cases.put("isolated_shared_construction_task_gate", () -> {
-            try {
-                HologramConstructionTaskGateRegression.run();
-            } catch (InterruptedException failure) {
-                Thread.currentThread()
-                    .interrupt();
-                throw new RuntimeException(failure);
-            }
-        });
         cases.put(
             "isolated_owned_placement_progress",
             com.miaokatze.gtmb.client.hologram.HologramOwnedPlacementProgressRegression::run);
-        cases.put("isolated_scoped_world_transactions", HologramWorldTransactionsScopedRegression::run);
         cases.put(
             "accepted_construction_exits_gui_once_and_keeps_cancel_owner",
             com.miaokatze.gtmb.client.hologram.HologramStockNativeClientRegression::acceptedConstructionClosesOnceAndStillCancels);
@@ -435,8 +425,17 @@ public final class HologramRegressionTest {
             }
         });
         cases.put("native_full_target_action_protocol_and_observation", HologramNativeProjectionWireRegression::run);
+        cases.put(
+            "controller_native_packet_notifications_without_rebuilding_geometry",
+            com.miaokatze.gtmb.client.hologram.HologramControllerNotificationsRegression::run);
         cases.put("native_named_channel_capability_publication", HologramNativeChannelCapabilitiesRegression::run);
-        cases.put("native_confirmation_anchor_cannot_be_replaced", HologramNativeAnchorIdentityRegression::run);
+        cases.put("unified_jobs_preserve_actions_cancellation_and_native_updates", () -> {
+            try {
+                HologramConstructionJobsRegression.run();
+            } catch (Exception failure) {
+                throw new IllegalStateException(failure);
+            }
+        });
         cases.put(
             "native_controller_access_is_independent_of_control_permissions",
             HologramNativeControllerAccessRegression::run);
@@ -683,6 +682,14 @@ public final class HologramRegressionTest {
                 throw new IllegalStateException(e);
             }
         });
+        java.util.Set<String> selected = new java.util.LinkedHashSet<>();
+        for (String arg : args) if (arg.startsWith("--case=")) selected.add(arg.substring(7));
+        if (!selected.isEmpty()) {
+            if (!cases.keySet()
+                .containsAll(selected)) throw new IllegalArgumentException("Unknown regression case: " + selected);
+            cases.keySet()
+                .removeIf(name -> !selected.contains(name));
+        }
         TestRunner.run(HologramRegressionTest.class, cases);
         net.minecraft.world.storage.ThreadedFileIOBase.threadedIOInstance.waitForFinish();
     }
@@ -1288,7 +1295,7 @@ public final class HologramRegressionTest {
             10,
             player.inventory.mainInventory[1].getTagCompound()
                 .getInteger("materials"),
-            "even a mutating simulator only receives a bag copy");
+            "the native simulator queries the actual bag without removing material");
         HologramMaterials.Transaction transaction = context.begin();
         SimpleAssert.that(transaction.takeOne(stone, false), "real material is taken through adapter");
         transaction.commit();
@@ -1351,7 +1358,6 @@ public final class HologramRegressionTest {
         player.inventory.mainInventory[1].getTagCompound()
             .setBoolean("throwAfterReport", true);
         HologramMaterials.Context context = materialContext(player);
-        ItemStack[] before = inventoryCopy(player);
         HologramMaterials.Transaction transaction = context.begin();
         boolean failed = false;
         try {
@@ -1360,15 +1366,21 @@ public final class HologramRegressionTest {
             failed = true;
         }
         SimpleAssert.that(failed, "adapter exception reaches caller for world rollback");
-        transaction.rollbackExternal();
-        player.inventory.mainInventory = before;
-        context.afterInventoryRestore();
+        SimpleAssert.that(transaction.uncertain(), "a report followed by an exception remains unresolved");
+        boolean refundRefused = false;
+        try {
+            transaction.rollbackExternal();
+        } catch (IllegalStateException expected) {
+            refundRefused = true;
+        }
+        SimpleAssert
+            .that(refundRefused && transaction.uncertain(), "unknown extraction cannot be automatically refunded");
         SimpleAssert.eq(
             9,
             player.inventory.mainInventory[1].getTagCompound()
                 .getInteger("materials"),
             "reported deduction remains removed from bag after exception");
-        SimpleAssert.eq(1, looseStone(player), "reported material survives exceptional extraction");
+        SimpleAssert.eq(0, looseStone(player), "unknown extraction does not invent a delivered refund");
     }
 
     private static void refundOverflow() {
@@ -1487,12 +1499,15 @@ public final class HologramRegressionTest {
             public int takeFromStack(java.util.function.Predicate<ItemStack> predicate, boolean simulate, int count,
                 com.gtnewhorizon.structurelib.util.InventoryUtility.ItemStackCounter counter, ItemStack source,
                 ItemStack exact, net.minecraft.entity.player.EntityPlayerMP ignored) {
+                SimpleAssert.that(
+                    source == player.inventory.mainInventory[1] && ignored == player,
+                    "native extraction receives the actual provider stack and player");
                 ItemStack stone = new ItemStack(net.minecraft.init.Blocks.stone, 1);
                 if (!predicate.test(stone)) return 0;
                 int available = source.getTagCompound()
                     .getInteger("materials");
                 int taken = Math.min(count, available);
-                source.getTagCompound()
+                if (!simulate) source.getTagCompound()
                     .setInteger("materials", available - taken);
                 counter.add(stone, taken);
                 if (!simulate && source.getTagCompound()

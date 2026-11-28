@@ -287,10 +287,8 @@ public final class HologramCoordinateServiceSmoke {
     private static boolean operate(Object session, HologramCapture.Cell target) throws Exception {
         invoke("refreshPlan", session);
         HologramCapture capture = (HologramCapture) get(session, "capture");
-        Method operate = HologramWorldTransactions.class
-            .getDeclaredMethod("operate", session.getClass(), HologramCapture.Cell.class, int.class);
-        operate.setAccessible(true);
-        return (Boolean) operate.invoke(null, session, target, capture.cells.indexOf(target));
+        return HologramTestLabConstructionDriver
+            .write((HologramSession) session, target, capture.cells.indexOf(target));
     }
 
     private static void fill(EntityPlayerMP actor, Block panel, int metadata, ItemStack[] cards) {

@@ -35,6 +35,7 @@ public final class HologramConstructionJournalRegression {
             nonDurableCleanup(f);
             nativeProviderCoverage();
             callbackBindingCoverage();
+            sparseLocalCoverage();
             Field identity = net.minecraft.entity.Entity.class.getDeclaredField("entityUniqueID");
             identity.setAccessible(true);
             identity.set(f.player, java.util.UUID.randomUUID());
@@ -96,9 +97,48 @@ public final class HologramConstructionJournalRegression {
                 reloaded.getCompoundTag("operation")
                     .getLong("requested") == 7,
                 "durable file restores newer evidence over stale player data");
-            require(
-                !HologramWorldTransactions.operate(session, null, 0),
-                "persisted recovery blocks next cell before admission/world/payment");
+            try {
+                HologramConstructionJobs.start(java.util.UUID.randomUUID(), 0, new HologramConstructionJobs.Source() {
+
+                    public HologramSession session() {
+                        return session;
+                    }
+
+                    public HologramStockNativeWire.Operation operation() {
+                        return HologramStockNativeWire.Operation.BUILD;
+                    }
+
+                    public boolean current() {
+                        throw new AssertionError("recovery must block before source admission");
+                    }
+
+                    public boolean prepare(long deadline) {
+                        throw new AssertionError("unresolved recovery reached preparation");
+                    }
+
+                    public HologramConstructionJobs.Target next(long deadline) {
+                        throw new AssertionError("unresolved recovery reached world work");
+                    }
+
+                    public boolean exhausted() {
+                        return true;
+                    }
+
+                    public long total() {
+                        return 0;
+                    }
+
+                    public void finished(HologramConstructionJobs.Job job) {
+                        throw new AssertionError("unresolved recovery admitted a job");
+                    }
+                });
+                throw new AssertionError("unresolved recovery admitted construction");
+            } catch (java.io.IOException blocked) {
+                require(
+                    blocked.getMessage()
+                        .contains("待核定"),
+                    "persisted recovery blocks the real common admission before world/payment");
+            }
             failure(() -> HologramConstructionJournal.resolve(f.player, reloaded.getString("id"), "rollback"));
             failure(() -> HologramMaterials.Transaction.adjudicateExtraction(reloaded, 8));
             HologramMaterials.Transaction.adjudicateExtraction(reloaded, 3);
@@ -120,15 +160,13 @@ public final class HologramConstructionJournalRegression {
                 .begin(f.player, 1, 64, 1, Blocks.stone, 2, null, original);
             HologramMaterials.Transaction secondPayment = f.context.begin()
                 .journal(second);
-            require(
-                !HologramWorldTransactions.restoreCell(
-                    session,
-                    secondPayment,
-                    () -> { throw new IllegalStateException("world refused restoration again"); }),
-                "second world restoration failure is contained");
+            // The deleted restoreCell lambda seam only tested a legacy wrapper. Exercise the retained production
+            // suspend/resolve contract directly; native writer restoration failures belong to writer tests.
+            HologramConstructionJournal
+                .suspend(session, secondPayment, new IllegalStateException("injected explicit recovery suspension"));
             require(
                 session.job == 4 && second.hasKey("beforeInventory", 9) && second.hasKey("payment", 10),
-                "joint evidence survives world restoration failure");
+                "production suspension preserves legacy world/payment evidence and stops the session");
             HologramConstructionJournal.resolve(f.player, second.getString("id"), "accept");
 
             // A directory at the destination makes strict publication fail before calling the native provider.
@@ -170,6 +208,57 @@ public final class HologramConstructionJournalRegression {
             !HologramConstructionJournal.owner(f.player)
                 .hasKey(HologramConstructionJournal.KEY) && "reserved".equals(journal.getString("phase")),
             "undurable settlement removes the receipt without copying or mutating its full tree");
+    }
+
+    private static void sparseLocalCoverage() throws Exception {
+        var f = new HologramRecoveryDeliveryRegression.Fixture();
+        var settings = new HologramMaterials.Settings();
+        settings.me = settings.containers = false;
+        var context = new HologramMaterials.Context(f.player, settings, java.util.Collections.emptyList());
+        f.player.inventory.mainInventory[1] = new ItemStack(Items.apple, 5);
+        ItemStack unrelated = f.player.inventory.mainInventory[5];
+        var journal = HologramConstructionJournal.beginAction(f.player, 1, 64, 1, Blocks.air, 0, null, 0);
+        var payment = context.begin()
+            .journal(journal)
+            .trackLocalInventory();
+        require(
+            payment.takeAll(new ItemStack(Items.apple, 2), false),
+            "native local extraction pays the requested amount");
+        payment.snapshot();
+        require(
+            !journal.hasKey("beforeInventory") && !journal.hasKey("heldInventory")
+                && journal.getTagList("localSlots", 10)
+                    .tagCount() == 1,
+            "modern payment stores only the one used slot, without whole-inventory evidence");
+        f.player.inventory.mainInventory[6] = new ItemStack(Items.feather, 17);
+        require(payment.localInventoryCurrent(), "unrelated inventory edits do not invalidate the action");
+        var resumed = HologramMaterials.Transaction.resume(f.player, journal);
+        require(
+            resumed.localInventoryCurrent() && resumed.rollbackAction(),
+            "persisted sparse receipt refunds native deductions");
+        require(
+            f.player.inventory.mainInventory[1].stackSize == 5 && f.player.inventory.mainInventory[5] == unrelated
+                && f.player.inventory.mainInventory[6].stackSize == 17,
+            "rollback restores only its owned material slot and preserves unrelated edits");
+        require(
+            !HologramConstructionJournal.pending(f.player),
+            "confirmed world/payment rollback retires its action and permits the next cell");
+
+        journal = HologramConstructionJournal.beginAction(f.player, 1, 64, 1, Blocks.air, 0, null, 0);
+        payment = context.begin()
+            .journal(journal)
+            .trackLocalInventory();
+        require(payment.takeOne(new ItemStack(Items.apple), false), "second action pays one native item");
+        ItemStack replacement = new ItemStack(Items.apple, 4);
+        f.player.inventory.mainInventory[1] = replacement;
+        require(!payment.localInventoryCurrent(), "even an equal replacement loses live slot ownership");
+        failure(payment::rollbackAction);
+        require(
+            f.player.inventory.mainInventory[1] == replacement && replacement.stackSize == 4
+                && HologramConstructionJournal.owner(f.player)
+                    .getTag(HologramConstructionJournal.KEY) == journal,
+            "a later replacement is never overwritten or refunded twice, and its unresolved action stays attached");
+        HologramConstructionJournal.clear(f.player);
     }
 
     private static void nativeProviderCoverage() throws Exception {
@@ -238,6 +327,9 @@ public final class HologramConstructionJournalRegression {
                 public int takeFromStack(java.util.function.Predicate<ItemStack> predicate, boolean simulate, int count,
                     com.gtnewhorizon.structurelib.util.InventoryUtility.ItemStackCounter counter, ItemStack source,
                     ItemStack filter, net.minecraft.entity.player.EntityPlayerMP player) {
+                    require(
+                        source == bag && player == f.player,
+                        "native extractors receive the actual provider source and authenticated player even in simulation");
                     ItemStack stone = new ItemStack(Blocks.stone);
                     if (!predicate.test(stone)) return 0;
                     int taken = Math.min(
@@ -364,6 +456,9 @@ public final class HologramConstructionJournalRegression {
                 public int takeFromStack(java.util.function.Predicate<ItemStack> predicate, boolean simulate, int count,
                     com.gtnewhorizon.structurelib.util.InventoryUtility.ItemStackCounter counter, ItemStack source,
                     ItemStack filter, net.minecraft.entity.player.EntityPlayerMP player) {
+                    require(
+                        (source == first || source == second) && player == f.player,
+                        "native extractors receive the actual provider source and authenticated player even in simulation");
                     ItemStack stone = new ItemStack(Blocks.stone);
                     if (!predicate.test(stone)) return 0;
                     int taken = Math.min(

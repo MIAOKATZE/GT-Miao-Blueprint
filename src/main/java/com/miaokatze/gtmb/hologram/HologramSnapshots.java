@@ -504,10 +504,6 @@ final class HologramSnapshots {
 
     static void sendJob(HologramSession s) {
         if (deferDirectOpening(s)) return;
-        if (!s.nativeCompactRequestId.isEmpty()) {
-            sendCompactNativeJob(s);
-            return;
-        }
         // Final publication must not require the held tool used to admit a new command. In particular,
         // a genuinely invalid running context cannot ever pass full DTO preparation's validity gate.
         if (s.job >= 3 && !HologramSessionPolicy.valid(s)) {
@@ -535,10 +531,6 @@ final class HologramSnapshots {
 
     static void sendStoppedJob(HologramSession s) {
         s.directOpeningPending = false;
-        if (!s.nativeCompactRequestId.isEmpty()) {
-            sendCompactNativeJob(s);
-            return;
-        }
         HologramSnapshotPreparation.cancel(s);
         NBTTagCompound state = new NBTTagCompound();
         state.setBoolean("progressOnly", true);
@@ -546,23 +538,6 @@ final class HologramSnapshots {
         HologramWorkspace.snapshotSink()
             .send(s.player, state);
         s.jobPublication.published(s.player.worldObj.getTotalWorldTime(), s.planRevision, s.uiSequence);
-    }
-
-    private static void sendCompactNativeJob(HologramSession s) {
-        if (s.job == 1 && !s.jobPublication.due(s.player.worldObj.getTotalWorldTime(), s.planRevision, s.uiSequence))
-            return;
-        NBTTagCompound state = new NBTTagCompound();
-        state.setString("placementRequestId", s.nativeCompactRequestId);
-        state.setBoolean("placementRequestAccepted", true);
-        state.setBoolean("nativeCompactJob", true);
-        state.setInteger("job", s.job);
-        state.setString("status", s.status);
-        state.setInteger("total", s.work.size());
-        state.setInteger("completed", s.completed);
-        HologramWorkspace.snapshotSink()
-            .send(s.player, state);
-        s.jobPublication.published(s.player.worldObj.getTotalWorldTime(), s.planRevision, s.uiSequence);
-        if (s.job >= 3) s.nativeCompactRequestId = "";
     }
 
     /**
@@ -1040,7 +1015,8 @@ final class HologramSnapshots {
         state.setBoolean("recoveryFits", s.planRecoveryFits);
         state.setString(
             "recoveryDestinationLabel",
-            s.materialSettings.recoveryDestination == 1 ? "优先 ME；余量回背包或持久暂存" : "主背包；满时持久暂存");
+            s.materialSettings.recoveryDestination == 2 ? "背包；满时持久暂存"
+                : s.materialSettings.recoveryDestination == 1 ? "优先 ME；余量回背包或持久暂存" : "主背包；满时持久暂存");
         state.setBoolean("formationChecked", false);
 
         state.setTag("capabilities", s.capabilities == null ? new NBTTagList() : s.capabilities.toNBT());

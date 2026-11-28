@@ -16,7 +16,6 @@ import net.minecraft.nbt.NBTBase;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.tileentity.TileEntity;
 
-import gregtech.api.GregTechAPI;
 import gregtech.api.enums.Textures;
 import gregtech.api.enums.VoidingMode;
 import gregtech.api.interfaces.IDataCopyable;
@@ -25,7 +24,6 @@ import gregtech.api.interfaces.modularui.IControllerWithOptionalFeatures;
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
 import gregtech.api.interfaces.tileentity.IRecipeLockable;
 import gregtech.api.interfaces.tileentity.IVoidable;
-import gregtech.api.metatileentity.BaseMetaTileEntity;
 import gregtech.api.metatileentity.implementations.MTEHatch;
 import gregtech.api.metatileentity.implementations.MTEMultiBlockBase;
 import gregtech.common.blocks.ItemMachines;
@@ -35,7 +33,6 @@ final class HologramNativeConfiguration {
 
     static final String TAG = "gtmbNativeConfiguration";
     private static final int VERSION = 1;
-    private static final java.util.Map<IMetaTileEntity, Set<Integer>> MODES = new java.util.WeakHashMap<>();
     private static final Set<String> SETTINGS = new HashSet<>(
         Arrays.asList(
             "machineMode",
@@ -123,6 +120,19 @@ final class HologramNativeConfiguration {
         NBTTagCompound config = payload.hasKey(TAG) ? envelope(payload, sample.getItemDamage())
             : header(sample.getItemDamage());
         NBTTagCompound settings = config.getCompoundTag("settings");
+        NBTTagCompound copied = config.getCompoundTag("copied");
+        for (Object raw : new ArrayList<>(copied.func_150296_c())) {
+            String key = (String) raw;
+            if (key.equals("type") || !payload.hasKey(key)
+                || copied.getTag(key)
+                    .getId() >= 9)
+                continue;
+            if (!payload.getTag(key)
+                .equals(copied.getTag(key)))
+                throw new IOException("Conflicting GT native copied configuration: " + key);
+            // The native IDataCopyable setter owns this exact configuration; never raw-load its duplicate.
+            payload.removeTag(key);
+        }
         if (machine instanceof MTEMultiBlockBase) {
             for (String key : SETTINGS) if (payload.hasKey(key)) {
                 if (settings.hasKey(key) && !settings.getTag(key)
@@ -172,6 +182,8 @@ final class HologramNativeConfiguration {
         if (!settings.hasNoTags()) config.setTag("settings", settings);
         if (config.hasKey("settings") || config.hasKey("copied")) payload.setTag(TAG, config);
         validate(payload, sample);
+        if (settings.hasKey("machineMode"))
+            HologramGtNativeItemState.verifyMode(sample, settings.getInteger("machineMode"));
     }
 
     static void validate(NBTTagCompound payload, ItemStack sample) throws IOException {
@@ -180,12 +192,6 @@ final class HologramNativeConfiguration {
         IMetaTileEntity machine = ItemMachines.getMetaTileEntity(sample);
         if (machine == null) throw new IOException("Unregistered GT native configuration");
         validateSettings(machine, config.getCompoundTag("settings"));
-        if (config.getCompoundTag("settings")
-            .hasKey("machineMode"))
-            validateMode(
-                sample.getItemDamage(),
-                config.getCompoundTag("settings")
-                    .getInteger("machineMode"));
         if (config.hasKey("copied") && !(machine instanceof IDataCopyable))
             throw new IOException("GT target does not support native copied configuration");
     }
@@ -502,52 +508,23 @@ final class HologramNativeConfiguration {
         throw new IOException("Unknown GT voiding mode");
     }
 
-    /** The controller's native mode cycle establishes its domain without guessing a mode-count field. */
-    private static void validateMode(int id, int wanted) throws IOException {
-        IMetaTileEntity prototype = GregTechAPI.METATILEENTITIES[id];
-        synchronized (MODES) {
-            Set<Integer> valid = MODES.get(prototype);
-            if (valid != null && valid.contains(wanted)) return;
-        }
-        HologramResourceWorld world = HologramResourceWorld.declarations(GregTechAPI.sBlockMachines, 0);
-        BaseMetaTileEntity tile = new BaseMetaTileEntity();
-        tile.setWorldObj(world);
-        tile.yCoord = 128;
-        world.tile = tile;
-        tile.setInitialValuesAsNBT(null, (short) id);
-        if (!(tile.getMetaTileEntity() instanceof IControllerWithOptionalFeatures features)
-            || tile.getMetaTileEntity() == GregTechAPI.METATILEENTITIES[id])
-            throw new IOException("GT target cannot create a detached native mode validator");
-        Set<Integer> visited = new HashSet<>();
-        for (int step = 0; step < 256; step++) {
-            int current = features.getMachineMode();
-            if (current == wanted) {
-                visited.add(current);
-                synchronized (MODES) {
-                    MODES.computeIfAbsent(prototype, ignored -> new HashSet<>())
-                        .addAll(visited);
-                }
-                return;
-            }
-            if (!visited.add(current)) break;
-            features.setMachineMode(features.nextMachineMode());
-        }
-        throw new IOException("GT machine mode is outside its native mode cycle");
-    }
-
     private static IGregTechTileEntity target(TileEntity tile) throws IOException {
         if (!(tile instanceof IGregTechTileEntity gt) || gt.getMetaTileEntity() == null)
             throw new IOException("GT native configuration target is missing");
         return gt;
     }
 
+    static boolean bindingField(String key) {
+        return HologramNetworkBindings.descriptorKey(key) || BINDINGS.contains(key)
+            || HologramNativeHubData.bindingKey(key);
+    }
+
     private static NBTTagCompound binding(NBTTagCompound state) {
         NBTTagCompound result = new NBTTagCompound();
-        for (String key : new ArrayList<String>(state.func_150296_c()))
-            if (HologramNetworkBindings.descriptorKey(key) || BINDINGS.contains(key)) result.setTag(
-                key,
-                state.getTag(key)
-                    .copy());
+        for (String key : new ArrayList<String>(state.func_150296_c())) if (bindingField(key)) result.setTag(
+            key,
+            state.getTag(key)
+                .copy());
         return result;
     }
 

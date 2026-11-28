@@ -206,14 +206,11 @@ final class HologramServiceEditRegression {
             SimpleAssert.eq(1, get(session, "job"), "active construction rejects clipboard edits");
             Method classify = HologramPlanPolicy.class
                 .getDeclaredMethod("classify", sessionType, HologramCapture.Cell.class, int.class);
-            Method operate = HologramWorldTransactions.class
-                .getDeclaredMethod("operateChecked", sessionType, HologramCapture.Cell.class, int.class);
             Method build = HologramBuildPreparation.class.getDeclaredMethod("directBuild", sessionType, boolean.class);
             Method nativeBuild = HologramBuildPreparation.class.getDeclaredMethod("nativeBuild", sessionType);
             Method member = HologramCellPolicy.class
                 .getDeclaredMethod("originalMember", sessionType, HologramCapture.Cell.class);
-            for (Method method : new Method[] { classify, operate, build, nativeBuild, member })
-                method.setAccessible(true);
+            for (Method method : new Method[] { classify, build, nativeBuild, member }) method.setAccessible(true);
             set(session, "job", 0);
             set(session, "mode", 0);
             set(session, "scope", 0);
@@ -231,14 +228,11 @@ final class HologramServiceEditRegression {
                 "satisfied",
                 classify.invoke(null, session, cell, 0),
                 "construction ignores facing-only differences");
-            SimpleAssert
-                .eq(true, operate.invoke(null, session, cell, 0), "matching construction preserves the existing block");
             map(session, "facingPins").clear();
             HologramServiceEditRegression.<ItemStack>list(session, "planTargets")
                 .set(0, new ItemStack(Blocks.dirt));
             SimpleAssert
                 .eq("blocked", classify.invoke(null, session, cell, 0), "survival explicit target stays blocked");
-            SimpleAssert.eq(false, operate.invoke(null, session, cell, 0), "blocked operation cannot write or consume");
             build.invoke(null, session, false);
             SimpleAssert.eq(0, get(session, "job"), "obstruction rejects the whole selected range");
             SimpleAssert.that(((String) get(session, "status")).contains("1 格结构占位被遮挡"), "blocked count is visible");
@@ -284,8 +278,13 @@ final class HologramServiceEditRegression {
                 .eq("protected", classify.invoke(null, session, cell, 0), "replacement cannot fill empty space");
             world.occupied = Blocks.stone;
             set(session, "replacementAuthorized", false);
-            operate.invoke(null, session, cell, 0);
-            SimpleAssert.eq("protected", cell.status, "replacement needs start authorization");
+            SimpleAssert.eq(
+                "pending",
+                classify.invoke(null, session, cell, 0),
+                "planning identifies replacement work without admitting a mutation");
+            SimpleAssert.that(
+                !HologramConstructionJobs.active(player) && world.occupied == Blocks.stone,
+                "a pending preview alone neither admits a job nor changes the existing world");
             set(session, "mode", 0);
             capture.incomplete = true;
             nativeBuild.invoke(null, session);

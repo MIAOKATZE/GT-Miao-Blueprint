@@ -54,6 +54,24 @@ final class HologramNativeUiText {
 
     static String reason(String raw) {
         if (raw == null || raw.isEmpty()) return "";
+        if (raw.startsWith("GT native persistence did not retain selected machineMode: ")) return projectorOr(
+            "native.reason.item_state.mode_rejected",
+            "原生设备未接受所选模式：%1$s",
+            raw.substring("GT native persistence did not retain selected machineMode: ".length()));
+        if (raw.startsWith("GT native material cannot supply source authority: ")) return projectorOr(
+            "native.reason.item_state.authority",
+            "原生 GT 材料不能携带来源权限：%1$s",
+            raw.substring("GT native material cannot supply source authority: ".length()));
+        String[] nativeItemPrefixes = { "GT native item state differs after native initialization: ",
+            "GT retained state differs from the paid native item: ",
+            "GT selected configuration conflicts with the paid native item: ",
+            "Conflicting GT native copied configuration: " };
+        String[] nativeItemKeys = { "roundtrip", "retained", "selected", "copied" };
+        for (int i = 0; i < nativeItemPrefixes.length; i++)
+            if (raw.startsWith(nativeItemPrefixes[i])) return projectorOr(
+                "native.reason.item_state." + nativeItemKeys[i],
+                "原生物品状态冲突：%1$s",
+                raw.substring(nativeItemPrefixes[i].length()));
         if (raw.startsWith("GT alignment index is invalid: ")) return projectorOr(
             "native.reason.alignment.invalid_index",
             "GT 对齐参数无效：%1$s",
@@ -85,6 +103,71 @@ final class HologramNativeUiText {
                 + " "
                 + raw.substring(16);
         return switch (raw) {
+            case "施工请求已处理，未重复执行。" -> projectorOr("native.reason.job.replayed", raw);
+            case "已有施工任务，请先取消或等待结束。" -> projectorOr("native.reason.job.busy", raw);
+            case "存在待核定或待交付施工记录。" -> projectorOr("native.reason.job.recovery", raw);
+            case "施工上下文已变化。", "施工上下文已变化，未执行部分已停止。" -> projectorOr("native.reason.job.changed", raw);
+            case "施工已取消，已提交结果保留。" -> projectorOr("native.reason.job.cancelled", raw);
+            case "施工完成。" -> projectorOr("native.reason.job.complete", raw);
+            case "施工区块已卸载。" -> projectorOr("native.reason.job.unloaded", raw);
+            case "目标被占用，未替换原方块。" -> projectorOr("native.reason.job.occupied", raw);
+            case "回收队列尚未交付。" -> projectorOr("native.reason.job.delivery", raw);
+            case "原生拆除回调失败，实际掉落已保留。" -> projectorOr("native.reason.job.removal_failed", raw);
+            case "施工异常，已提交结果保留。" -> projectorOr("native.reason.job.failed", raw);
+            case "施工受阻，已提交结果保留。" -> projectorOr("native.reason.job.blocked", raw);
+            case "Selected Backpack recovery destination is unavailable" -> projectorOr(
+                "native.reason.material.backpack_unavailable",
+                raw);
+            case "Native Backpack returned invalid insertion remainder" -> projectorOr(
+                "native.reason.material.backpack_invalid",
+                raw);
+            case "Cannot save Backpack recovery destination" -> projectorOr(
+                "native.reason.material.backpack_save",
+                raw);
+            case "Backpack insertion result is unresolved; retain recovery evidence" -> projectorOr(
+                "native.reason.material.backpack_uncertain",
+                raw);
+            case "Action inventory binding changed" -> projectorOr("native.reason.material.binding", raw);
+            case "Action material slot changed before extraction" -> projectorOr(
+                "native.reason.material.slot_changed",
+                raw);
+            case "Action material source is no longer in the player inventory" -> projectorOr(
+                "native.reason.material.source_changed",
+                raw);
+            case "Action material slots changed; retain recovery evidence" -> projectorOr(
+                "native.reason.material.slots_uncertain",
+                raw);
+            case "Invalid sparse inventory receipt", "Unresolved sparse inventory identity" -> projectorOr(
+                "native.reason.material.receipt",
+                raw);
+            case "GT native item refused sandbox placement" -> projectorOr(
+                "native.reason.item_state.placement_refused",
+                raw);
+            case "GT native placement did not create the paid machine" -> projectorOr(
+                "native.reason.item_state.machine_mismatch",
+                raw);
+            case "GT native item wrote outside its sandbox cell" -> projectorOr(
+                "native.reason.item_state.outside",
+                raw);
+            case "GT native item installed a foreign sandbox tile" -> projectorOr(
+                "native.reason.item_state.foreign_tile",
+                raw);
+            case "所选材料来源已变化，本格未提交。", "取料后施工条件已变化。" -> projectorOr("native.reason.material.conditions_changed", raw);
+            case "原生材料退款未完成。" -> projectorOr("native.reason.material.refund_pending", raw);
+            case "原生方块拒绝已保存的方向状态。" -> projectorOr("native.reason.construction.pose_rejected", raw);
+            case "原生设备拒绝目标对齐。" -> projectorOr("native.reason.alignment.unsupported", raw);
+            case "A sealed original must use the complete recovery contract" -> projectorOr(
+                "native.reason.item_state.sealed",
+                "封存原件必须通过完整恢复流程处理。");
+            case "GT native item is unregistered" -> projectorOr(
+                "native.reason.item_state.unregistered",
+                "原生 GT 物品未注册。");
+            case "GT native item factory did not create an independent machine" -> projectorOr(
+                "native.reason.item_state.factory",
+                "原生 GT 物品未创建独立设备。");
+            case "GT native item state cannot be verified" -> projectorOr(
+                "native.reason.item_state.unverified",
+                "无法核验原生 GT 物品状态。");
             case "GT alignment front has an invalid type" -> projectorOr(
                 "native.reason.alignment.front_type",
                 "GT 朝向数据类型无效。");
@@ -108,6 +191,8 @@ final class HologramNativeUiText {
             case "原生仓室搭配为空。" -> projectorOr("native.reason.preview.empty_hatch_profile", "原生仓室搭配为空。");
             case "所选仓室方向与原生放置结果不同。" -> projectorOr("native.reason.preview.hatch_facing_mismatch", "所选仓室方向与原生放置结果不同。");
             case "所选仓室未被该位置的原生建造流程接受。" -> projectorOr("native.reason.preview.hatch_rejected", "所选仓室未被该位置的原生建造流程接受。");
+            case "原生默认外壳无法放置。" -> projectorOr("native.reason.preview.casing_rejected", "原生默认外壳无法放置。");
+            case "当前原生仓位没有接受所选等级的仓室。" -> projectorOr("native.reason.preview.tier_rejected", "当前原生仓位没有接受所选等级的仓室。");
             case "所选仓室搭配未被完整放入原生目标。" -> projectorOr(
                 "native.reason.preview.hatch_profile_incomplete",
                 "所选仓室搭配未被完整放入原生目标。");
@@ -186,6 +271,7 @@ final class HologramNativeUiText {
             case "AE 附件存在未处理的净化问题" -> projectorOr("native.reason.local.ae_attachment_cleanup", "AE 附件存在未处理的净化问题");
             case "原生蓝图超出此施工方式的坐标范围" -> projectorOr("native.reason.local.coordinate_range", "原生蓝图超出此施工方式的坐标范围");
             case "无法开始原生蓝图施工" -> projectorOr("native.reason.local.cannot_start", "无法开始原生蓝图施工");
+            case "关闭施工界面失败，未开始施工。" -> projectorOr("native.reason.job.close_failed", "关闭施工界面失败，未开始施工。");
             case "施工已取消" -> projectorOr("native.reason.local.cancelled", "施工已取消");
             case "没有需要放置的方块" -> projectorOr("native.reason.local.no_work", "没有需要放置的方块");
             case "开始原生蓝图施工" -> projectorOr("native.reason.local.started", "开始原生蓝图施工");

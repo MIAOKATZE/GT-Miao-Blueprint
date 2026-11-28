@@ -39,7 +39,7 @@ final class HologramDemolitionProtocol {
         if ("demolish".equals(action) && !request.hasKey("areaSelection", 10)) throw new IOException("请先完成拆除框选");
         if (request.hasKey("demolitionDestination")) {
             if (!request.hasKey("demolitionDestination", 3) || request.getInteger("demolitionDestination") < 0
-                || request.getInteger("demolitionDestination") > 1) throw new IOException("无效拆除回收目的地");
+                || request.getInteger("demolitionDestination") > 2) throw new IOException("无效拆除回收目的地");
         }
         return id;
     }

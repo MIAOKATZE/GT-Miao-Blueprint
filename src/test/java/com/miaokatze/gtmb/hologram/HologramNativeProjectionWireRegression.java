@@ -51,7 +51,7 @@ final class HologramNativeProjectionWireRegression {
                         .getInteger("hatchTier") == 2,
                 "confirmed target owns a copy of all channels and preset settings");
             var cold = Confirmation.projection(
-                new Key(UUID.randomUUID(), operation.ordinal() + 1, 0),
+                new Key(UUID.randomUUID(), operation.ordinal() + 1),
                 7,
                 UUID.randomUUID(),
                 10,
@@ -72,9 +72,9 @@ final class HologramNativeProjectionWireRegression {
                     .projection()
                     .equals(target),
                 "every action carries the complete named-channel/preset/hatch/recovery intent");
-            var warm = cold.forGeneration(9);
+            var warm = cold;
             SimpleAssert.that(
-                HologramStockNativeWire.readRequest(HologramStockNativeWire.confirmAfterProbe(warm))
+                HologramStockNativeWire.readRequest(HologramStockNativeWire.confirm(warm))
                     .confirmation()
                     .equals(warm),
                 "confirmed action survives the actual native codec");
@@ -98,7 +98,7 @@ final class HologramNativeProjectionWireRegression {
                     HologramStockNativeWire.readRequest(HologramStockNativeWire.probe(observationOnly)) != null,
                     "an observation can precede publication of a complete target");
                 try {
-                    HologramStockNativeWire.confirmAfterProbe(observationOnly.forGeneration(9));
+                    HologramStockNativeWire.confirm(observationOnly);
                     throw new AssertionError("A construction without its frozen target digest was admitted");
                 } catch (HologramStockNativeWire.InvalidConfirmation expected) {
                     // Reading a stage is deliberately weaker than confirming a mutation.
@@ -125,12 +125,12 @@ final class HologramNativeProjectionWireRegression {
                 HologramStockNativeWire.readRequest(missing) == null,
                 "missing projection identity never falls back to a per-machine implementation");
             for (Stage stage : Stage.values()) {
-                var observation = new ServerObservation(1000, 10, 80, -20, stage, 91, 27, "");
+                var observation = new ServerObservation(1000, 10, 80, -20, stage, 27, "");
                 var reply = new Reply(warm.key(), Phase.CAPABLE, 0, "", observation);
                 SimpleAssert.eq(
                     reply,
                     HologramStockNativeWire.readReply(HologramStockNativeWire.writeReply(reply)),
-                    "observation preserves its exact action request and independent target/world revisions");
+                    "observation preserves its exact action request and target revision without an observation authorization token");
             }
         }
         var forged = new Projection(

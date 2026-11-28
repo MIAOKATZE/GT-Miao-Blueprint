@@ -6,7 +6,6 @@ package com.miaokatze.gtmb.hologram;
 import bartworks.system.material.BWItemMetaGeneratedBlock;
 import bartworks.system.material.BWMetaGeneratedBlocks;
 import bartworks.system.material.BWMetaGeneratedBlocksCasing;
-import gregtech.common.blocks.BlockCasingsAbstract;
 
 /** Reviewed material-type implementations; these rules do not depend on a machine or structure source. */
 final class HologramMaterialDescriptorAdapters {
@@ -14,7 +13,6 @@ final class HologramMaterialDescriptorAdapters {
     private HologramMaterialDescriptorAdapters() {}
 
     static void register() {
-        HologramMaterialDescriptor.registerNative(BlockCasingsAbstract.class, metadata -> metadata);
         HologramMaterialDescriptor.registerExact(
             BWMetaGeneratedBlocksCasing.class,
             BWItemMetaGeneratedBlock.class,

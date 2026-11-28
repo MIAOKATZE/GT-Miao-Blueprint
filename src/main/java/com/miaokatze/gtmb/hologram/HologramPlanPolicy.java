@@ -45,9 +45,9 @@ final class HologramPlanPolicy {
         if (c.anchor) return "protected";
         if (HologramSourcePolicy.targetFailure(s, c, index) != null) return "protected";
         if (s.mode != 2 && HologramCellPolicy.requiredNativeAir(s, c, index)) {
-            if (tile != null) return "protected";
-            return HologramCellPolicy.targetMatches(s, c, index, old, meta) ? "satisfied"
-                : s.mode == 0 ? "blocked" : "protected";
+            if (c.unknown) return "protected";
+            // This is an explicit native empty target. Actual harvest/edit/Forge permissions belong to remove.
+            return HologramCellPolicy.targetMatches(s, c, index, old, meta) ? "satisfied" : "pending";
         }
         // Native payload errors must survive even when their primary material cannot be sampled.
         boolean resourceChecked = s.mode != 2 && s.virtual

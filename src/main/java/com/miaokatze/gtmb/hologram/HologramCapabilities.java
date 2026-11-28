@@ -140,21 +140,6 @@ public final class HologramCapabilities {
             return this;
         }
 
-        Result withFixedSignal(String id, int value) {
-            Row row = rows.get(id);
-            if (row != null) {
-                row.current = value;
-                row.editable = false;
-            }
-            return this;
-        }
-
-        Result withDefaultSignal(String id, int value) {
-            Row row = rows.get(id);
-            if (row != null && !row.explicit) row.current = value;
-            return this;
-        }
-
         /** Bind the complete saved configuration when capture uses a filtered temporary trigger. */
         public Result withSavedChannels(NBTTagCompound saved) {
             for (Object key : previous.func_150296_c()

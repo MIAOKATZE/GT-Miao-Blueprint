@@ -402,6 +402,10 @@ final class HologramSavedPlacementAdapterRegression {
                     HologramProjectedMainPolicy.settingsKey(HologramMaterials.read(player.getHeldItem())),
                     false);
                 ServerTaskScheduler.INSTANCE.onServerTick(new TickEvent.ServerTickEvent(TickEvent.Phase.END));
+                var job = HologramConstructionJobs.find(player);
+                check(
+                    job != null && job.session.materialContext != null && job.session.materialSettings != null,
+                    "the real saved source binds its reviewed material context before native writer admission");
                 HologramNativeLocalConstruction.tick(System.nanoTime() - 1);
                 check(
                     attempt.result().phase == HologramNativeLocalConstruction.Phase.PREPARING
@@ -457,7 +461,7 @@ final class HologramSavedPlacementAdapterRegression {
     }
 
     /** Minimal storage fake: creation and deserialization still use the production registry's actual TileEntity. */
-    private static final class TestWorld extends HologramServiceEditRegression.ReadOnlyWorld {
+    static final class TestWorld extends HologramServiceEditRegression.ReadOnlyWorld {
 
         private static final class State {
 
@@ -471,11 +475,13 @@ final class HologramSavedPlacementAdapterRegression {
         }
 
         private Map<String, State> placed;
+        private Map<String, Chunk> chunks;
         int vetoed;
 
         static TestWorld create(sun.misc.Unsafe unsafe) throws ReflectiveOperationException {
             TestWorld world = (TestWorld) unsafe.allocateInstance(TestWorld.class);
             world.placed = new HashMap<>();
+            world.chunks = new HashMap<>();
             world.occupants = new HashMap<>();
             world.placed.put(key(X, Y - 1, Z), new State(Blocks.stone, 0));
             world.placed.put(key(X + 1, Y - 1, Z), new State(Blocks.stone, 0));
@@ -506,6 +512,16 @@ final class HologramSavedPlacementAdapterRegression {
         public int getBlockMetadata(int x, int y, int z) {
             var state = placed.get(key(x, y, z));
             return state == null ? 0 : state.metadata;
+        }
+
+        @Override
+        public Chunk getChunkFromChunkCoords(int x, int z) {
+            return chunks.computeIfAbsent(x + "," + z, ignored -> new Chunk(this, x, z));
+        }
+
+        @Override
+        public Chunk getChunkFromBlockCoords(int x, int z) {
+            return getChunkFromChunkCoords(x >> 4, z >> 4);
         }
 
         @Override

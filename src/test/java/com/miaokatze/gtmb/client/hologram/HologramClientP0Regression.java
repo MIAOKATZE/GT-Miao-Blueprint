@@ -187,14 +187,14 @@ public final class HologramClientP0Regression {
             "geometry alone never authorizes " + action);
         long revision = state.targetRevision();
         SimpleAssert.that(
-            state.observe(new ServerObservation(236, 0, 64, 0, Stage.CONTROLLER_ONLY, 1, revision, "")),
+            state.observe(new ServerObservation(236, 0, 64, 0, Stage.CONTROLLER_ONLY, revision, "")),
             "an exact server observation binds the current target");
         actions(state, Operation.BUILD);
         SimpleAssert.eq("仅控制器", state.statusCaption(), "server observation replaces the opening progress caption");
-        state.observe(new ServerObservation(236, 0, 64, 0, Stage.UNFORMED, 2, revision, ""));
+        state.observe(new ServerObservation(236, 0, 64, 0, Stage.UNFORMED, revision, ""));
         SimpleAssert.eq(Operation.REPAIR, state.action(), "unfinished structures default to repair");
         actions(state, Operation.REPAIR, Operation.DEMOLISH);
-        state.observe(new ServerObservation(236, 0, 64, 0, Stage.FORMED, 3, revision, ""));
+        state.observe(new ServerObservation(236, 0, 64, 0, Stage.FORMED, revision, ""));
         SimpleAssert.eq(Operation.REPLACE, state.action(), "formed structures default to replacement");
         actions(state, Operation.REPLACE, Operation.DEMOLISH);
         SimpleAssert.eq(
@@ -205,14 +205,14 @@ public final class HologramClientP0Regression {
         SimpleAssert
             .that(state.targetRevision() > revision, "changing configuration advances the complete target revision");
         SimpleAssert.that(
-            !state.observe(new ServerObservation(236, 0, 64, 0, Stage.FORMED, 4, revision, "")),
+            !state.observe(new ServerObservation(236, 0, 64, 0, Stage.FORMED, revision, "")),
             "late server observations cannot authorize a newer target");
         for (Operation action : Operation.values()) SimpleAssert.that(
             !state.blocker(action)
                 .isEmpty(),
             "invalidated world evidence cannot authorize " + action);
         state.targetFailed("Fixture invalid optional preset");
-        state.observe(new ServerObservation(236, 0, 64, 0, Stage.FORMED, 5, state.targetRevision(), ""));
+        state.observe(new ServerObservation(236, 0, 64, 0, Stage.FORMED, state.targetRevision(), ""));
         actions(state, Operation.DEMOLISH);
         SimpleAssert
             .that(state.select(Operation.DEMOLISH), "a bad desired preset does not block whole-machine demolition");
@@ -225,10 +225,9 @@ public final class HologramClientP0Regression {
             Operation.DEMOLISH.ordinal(),
             metadata.getInteger("nativeAction"),
             "the selected action is independent of target configuration");
-        SimpleAssert.eq(
-            5L,
-            metadata.getLong("nativeObservationToken"),
-            "the published state retains its exact observation token");
+        SimpleAssert.that(
+            !metadata.hasKey("nativeObservationToken"),
+            "observation metadata carries diagnostics without an authorization token");
     }
 
     private static void actions(HologramNativeControllerState state, Operation... allowed) {

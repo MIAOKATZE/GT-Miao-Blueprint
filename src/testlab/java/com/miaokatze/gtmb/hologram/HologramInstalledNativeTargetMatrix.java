@@ -105,7 +105,6 @@ public final class HologramInstalledNativeTargetMatrix {
         result.setInteger("targetsWithoutVisitedElement", withoutElement);
         result.setInteger("footprintCells", positions.size());
         result.setString("targetDigest", target.targetDigest());
-        result.setString("footprintDigest", footprint.footprintDigest());
         result.setLong("elapsedNanos", System.nanoTime() - started);
         results.appendTag(result);
         cursor++;

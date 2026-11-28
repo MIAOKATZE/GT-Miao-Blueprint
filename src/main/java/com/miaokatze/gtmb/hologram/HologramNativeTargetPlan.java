@@ -56,11 +56,10 @@ public final class HologramNativeTargetPlan {
     private final ItemStack trigger;
     private final HologramNativeStructurePreview nativeRun;
     private final List<Cell> cells = new ArrayList<>();
-    private HologramNativeTargetPlan candidateBase;
     private HologramChannelTrace.Report channels;
     private IStructureDefinition<?> definition;
     private String failure = "";
-    private final String inputDigest;
+    private String targetDigest;
 
     private HologramNativeTargetPlan(int id, ExtendedFacing orientation, ItemStack signal, NBTTagCompound config,
         java.util.Set<String> mandatory) throws IOException {
@@ -74,17 +73,6 @@ public final class HologramNativeTargetPlan {
         ChannelDataAccessor.iterateChannelData(signal)
             .forEach(entry -> channelValues.setInteger(entry.getKey(), entry.getValue()));
         trigger = canonicalTrigger(signal.stackSize, channelValues);
-        NBTTagCompound identity = new NBTTagCompound();
-        identity.setInteger("controller", id);
-        identity.setInteger("facing", orientation.ordinal());
-        identity.setTag("trigger", trigger.writeToNBT(new NBTTagCompound()));
-        for (String key : new String[] {
-            "presetActive", "hatchTier", "hatchDowngrade", "hatchProfile", "nativeHatchChoices" })
-            if (config.hasKey(key)) identity.setTag(
-                key,
-                config.getTag(key)
-                    .copy());
-        inputDigest = digest(canonical(identity));
         HologramResourceWorld initial = HologramResourceWorld.declarations(GregTechAPI.sBlockMachines, 0);
         controller = new BaseMetaTileEntity();
         controller.setWorldObj(initial);
@@ -98,10 +86,7 @@ public final class HologramNativeTargetPlan {
         if (context instanceof gregtech.api.metatileentity.implementations.MTEEnhancedMultiBlockBase<?>aligned)
             aligned.setExtendedFacing(facing);
         if (context instanceof MTEMultiBlockBase machine) machine.mMachine = false;
-        items = new HologramNativePreviewItems(config, mandatory, () -> installedHatches());
-        if ((config.getBoolean("presetActive") || config.getTagList("nativeHatchChoices", 10)
-            .tagCount() > 0) && !ChannelDataAccessor.hasSubChannel(trigger, "gt_hatch"))
-            ChannelDataAccessor.setChannelData(trigger, "gt_hatch", 1);
+        items = new HologramNativePreviewItems();
         nativeRun = new HologramNativeStructurePreview(
             controller,
             context,
@@ -112,6 +97,7 @@ public final class HologramNativeTargetPlan {
             facing,
             items,
             true);
+        nativeRun.configure(config);
         world = nativeRun.targetWorld();
     }
 
@@ -135,36 +121,7 @@ public final class HologramNativeTargetPlan {
         NBTTagCompound config) throws IOException {
         if (trigger == null || trigger.getItem() == null) throw new IOException("原生投影参数无效。");
         NBTTagCompound owned = config == null ? new NBTTagCompound() : (NBTTagCompound) config.copy();
-        java.util.Set<String> mandatory = Collections.emptySet();
-        HologramNativeTargetPlan base = null;
-        if (owned.getBoolean("presetActive") || owned.getTagList("nativeHatchChoices", 10)
-            .tagCount() > 0 || ChannelDataAccessor.hasSubChannel(trigger, "gt_hatch")) {
-            NBTTagCompound defaults = (NBTTagCompound) owned.copy();
-            defaults.setBoolean("presetActive", false);
-            defaults.removeTag("hatchProfile");
-            defaults.removeTag("nativeHatchChoices");
-            defaults.removeTag("nativeStock");
-            ItemStack baselineTrigger = trigger.copy();
-            ChannelDataAccessor.unsetChannelData(baselineTrigger, "gt_hatch");
-            base = run(controllerId, facing, baselineTrigger, defaults, mandatory);
-            mandatory = new java.util.HashSet<>();
-            for (Cell cell : base.cells) if (HologramCellPolicy.hatchTier(cell.material()) != Integer.MAX_VALUE)
-                mandatory.add(position(cell.dx(), cell.dy(), cell.dz()));
-            NBTTagList forced = new NBTTagList();
-            for (Cell cell : base.cells) if (HologramCellPolicy.hatchTier(cell.material()) != Integer.MAX_VALUE) {
-                NBTTagCompound row = new NBTTagCompound();
-                row.setString("position", position(cell.dx(), cell.dy(), cell.dz()));
-                row.setInteger(
-                    "id",
-                    cell.material()
-                        .getItemDamage());
-                forced.appendTag(row);
-            }
-            owned.setTag("nativeMandatoryDefaults", forced);
-        }
-        HologramNativeTargetPlan result = run(controllerId, facing, trigger, owned, mandatory);
-        result.candidateBase = base;
-        return result;
+        return run(controllerId, facing, trigger, owned, Collections.emptySet());
     }
 
     public static ItemStack canonicalTrigger(int main, NBTTagCompound channels) {
@@ -215,28 +172,16 @@ public final class HologramNativeTargetPlan {
             world = run.targetWorld();
             controller.setWorldObj(world);
             if (!config.getBoolean("footprintOnly") && context instanceof MTEMultiBlockBase machine) {
-                boolean formed = run.checkTargetStructure();
-                if (config.getBoolean("presetActive") && !formed) throw new IOException("所选仓室配置未通过控制器的原生结构检查。");
+                run.checkTargetStructure();
             }
             snapshot(run, config.getBoolean("footprintOnly"));
             if (cells.isEmpty()) throw new IOException("原生流程未提供可构建的完整结构足迹。");
-            items.requireConfiguredChoices(cells);
+            new HologramNativePreviewItems(config, Collections.emptySet(), Collections::emptyMap)
+                .requireConfiguredChoices(cells);
+            targetDigest = computeTargetDigest();
         } catch (RuntimeException | LinkageError broken) {
             throw new IOException("原生投影流程无法生成完整目标。", broken);
         }
-    }
-
-    private Map<Integer, Integer> installedHatches() {
-        Map<Integer, Integer> result = new LinkedHashMap<>();
-        if (world == null) return result;
-        for (var iterator = world.currentPlacements(); iterator.hasNext();) {
-            TileEntity tile = iterator.next()
-                .tile();
-            if (tile instanceof IGregTechTileEntity gt
-                && gt.getMetaTileEntity() instanceof gregtech.api.metatileentity.implementations.MTEHatch)
-                result.merge(gt.getMetaTileID(), 1, Integer::sum);
-        }
-        return result;
     }
 
     @SuppressWarnings({ "rawtypes", "unchecked" })
@@ -260,6 +205,7 @@ public final class HologramNativeTargetPlan {
             int x = controller.xCoord + p.x(), y = controller.yCoord + p.y(), z = controller.zCoord + p.z();
             Block block = actual.getBlock(x, y, z);
             int meta = actual.getBlockMetadata(x, y, z);
+            if (run.optionalWaterAt(x, y, z)) continue;
             TileEntity tile = actual.getTileEntity(x, y, z);
             IStructureElement element = run.elementAt(x, y, z);
             boolean air = block == Blocks.air && element != null
@@ -287,8 +233,6 @@ public final class HologramNativeTargetPlan {
                     && item.getItem() instanceof com.gtnewhorizon.structurelib.structure.ISpecialItemBlock special)
                     item.setItemDamage(special.getItemMetaFromBlockMeta(block, meta));
             }
-            if (!footprintOnly && !air && (item == null || item.getItem() == null))
-                throw new IOException("原生目标没有可支付的物品身份：" + p);
             cells.add(
                 new Cell(
                     p.x(),
@@ -345,31 +289,11 @@ public final class HologramNativeTargetPlan {
         return failure;
     }
 
-    public String inputDigest() {
-        return inputDigest;
-    }
-
-    public String footprintDigest() {
-        List<Offset> sorted = new ArrayList<>(footprint());
-        sorted.sort(
-            java.util.Comparator.comparingInt(Offset::x)
-                .thenComparingInt(Offset::y)
-                .thenComparingInt(Offset::z));
-        StringBuilder value = new StringBuilder();
-        value.append(controller.getMetaTileID())
-            .append(':')
-            .append(facing.ordinal())
-            .append('\n');
-        for (Offset p : sorted) value.append(p.x())
-            .append(',')
-            .append(p.y())
-            .append(',')
-            .append(p.z())
-            .append('\n');
-        return digest(value.toString());
-    }
-
     public String targetDigest() {
+        return targetDigest;
+    }
+
+    private String computeTargetDigest() {
         List<Cell> sorted = new ArrayList<>(cells);
         sorted.sort(
             java.util.Comparator.comparingInt(Cell::dx)
@@ -472,11 +396,6 @@ public final class HologramNativeTargetPlan {
 
     @SuppressWarnings({ "rawtypes", "unchecked" })
     List<ItemStack> offers(Cell cell) {
-        if (candidateBase != null) {
-            for (Cell base : candidateBase.cells)
-                if (base.dx() == cell.dx() && base.dy() == cell.dy() && base.dz() == cell.dz())
-                    return candidateBase.offers(base);
-        }
         return nativeRun.nativeOffers(
             cell.element(),
             controller.xCoord + cell.dx(),

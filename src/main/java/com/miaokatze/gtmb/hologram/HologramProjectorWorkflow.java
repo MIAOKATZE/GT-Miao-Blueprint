@@ -255,6 +255,11 @@ final class HologramProjectorWorkflow {
     }
 
     static void cancel(EntityPlayerMP player) {
+        var running = HologramConstructionJobs.find(player);
+        if (running != null) {
+            HologramConstructionJobs.cancel(player, running.request);
+            return;
+        }
         HologramSession s = HologramWorkspace.find(player.getUniqueID());
         if (s == null || s.player != player || !HologramSessionPolicy.tickValid(s)) return;
         if (HologramSessionPolicy.blockedByAreaImport(s)) {
@@ -266,6 +271,7 @@ final class HologramProjectorWorkflow {
         if (area != null) area.importing = false;
         s.job = 4;
         s.cancelled = true;
+        HologramPlacementJobs.updateJobCounts(s);
         libraryCloseUi(s);
         if (s.virtual) s.virtualLocked = true;
         HologramSession.cancelCaptureRetry(s);

@@ -38,6 +38,17 @@ final class HologramMaterialSources {
         return result;
     }
 
+    /** SL's registered main provider owns the package-private main-slot range constructor. */
+    static Iterable<ItemStack> mainInventory(EntityPlayerMP player) {
+        InventoryUtility.getStackExtractors(player);
+        SortedRegistry<?> registry = SortedRegistry.getRegistry("inventoryProviders");
+        Object main = registry == null ? null : registry.get("5000-main-inventory");
+        if (!(main instanceof InventoryProvider<?>provider))
+            throw new IllegalStateException("Native inventory provider registry unavailable");
+        Iterable<ItemStack> inventory = provider.getInventory(player);
+        return inventory == null ? Collections.emptyList() : inventory;
+    }
+
     static boolean mainInventoryEnabled(EntityPlayerMP player) {
         InventoryUtility.getStackExtractors(player);
         SortedRegistry<?> registry = SortedRegistry.getRegistry("inventoryProviders");
@@ -70,6 +81,39 @@ final class HologramMaterialSources {
         void markDirty() {
             provider.markDirty(inventory);
         }
+    }
+
+    /** A native iterable view: removal still reaches the underlying inventory, with no copied extraction loop. */
+    static Iterable<ItemStack> filtered(Iterable<ItemStack> source, java.util.function.Predicate<ItemStack> allowed) {
+        return () -> new java.util.Iterator<ItemStack>() {
+
+            final java.util.Iterator<ItemStack> nativeIterator = source.iterator();
+            ItemStack next;
+            boolean ready;
+
+            public boolean hasNext() {
+                while (!ready && nativeIterator.hasNext()) {
+                    ItemStack candidate = nativeIterator.next();
+                    if (candidate != null && allowed.test(candidate)) {
+                        next = candidate;
+                        ready = true;
+                    }
+                }
+                return ready;
+            }
+
+            public ItemStack next() {
+                if (!hasNext()) throw new java.util.NoSuchElementException();
+                ItemStack result = next;
+                ready = false;
+                next = null;
+                return result;
+            }
+
+            public void remove() {
+                nativeIterator.remove();
+            }
+        };
     }
 
     static final class FilteredSource implements IItemSource {

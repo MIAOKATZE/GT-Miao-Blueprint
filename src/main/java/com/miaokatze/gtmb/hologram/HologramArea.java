@@ -20,7 +20,6 @@ import net.minecraft.tileentity.TileEntity;
 import net.minecraft.world.World;
 import net.minecraft.world.chunk.storage.ExtendedBlockStorage;
 
-import gregtech.api.GregTechAPI;
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
 import gregtech.api.metatileentity.implementations.MTEEnhancedMultiBlockBase;
 import gregtech.common.blocks.BlockFrameBox;
@@ -122,7 +121,7 @@ final class HologramArea extends HologramAreaSelection {
                 int meta = world.getBlockMetadata(x, y, z);
                 TileEntity tile = world.getTileEntity(x, y, z);
                 if (block != Blocks.air)
-                    writer.append(blueprint, block, meta, tile, x - minX, y - minY, z - minZ, player);
+                    writer.append(blueprint, block, meta, tile, x - minX, y - minY, z - minZ, player, world, x, y, z);
             }
         }
         if (!blockCursor.done()) return false;
@@ -275,8 +274,20 @@ final class HologramArea extends HologramAreaSelection {
     }
 
     static ItemStack serverSample(Block block, int metadata, TileEntity tile, NBTTagCompound data) {
-        if (tile instanceof IGregTechTileEntity)
-            return new ItemStack(GregTechAPI.sBlockMachines, 1, ((IGregTechTileEntity) tile).getMetaTileID());
+        return serverSample(
+            block,
+            metadata,
+            tile,
+            data,
+            tile == null ? null : tile.getWorldObj(),
+            tile == null ? 0 : tile.xCoord,
+            tile == null ? 0 : tile.yCoord,
+            tile == null ? 0 : tile.zCoord);
+    }
+
+    static ItemStack serverSample(Block block, int metadata, TileEntity tile, NBTTagCompound data,
+        net.minecraft.world.World sourceWorld, int x, int y, int z) {
+        if (tile instanceof IGregTechTileEntity gt) return HologramGtNativeItemState.sample(block, gt);
         if (block instanceof BlockFrameBox) return ((BlockFrameBox) block).getStackForm(1, metadata);
         if (HologramAeBlueprint.supports(block, data)) {
             try {
@@ -294,7 +305,10 @@ final class HologramArea extends HologramAreaSelection {
             }
         }
         try {
-            return HologramBlockIdentity.materialStack(block, HologramPresets.materialDamage(block, metadata));
+            Integer actual = sourceWorld == null ? null : HologramMaterialDescriptor.actualDamage(sourceWorld, x, y, z);
+            if (sourceWorld != null && actual == null) return null;
+            return HologramBlockIdentity
+                .materialStack(block, actual == null ? HologramPresets.materialDamage(block, metadata) : actual);
         } catch (IOException unsupported) {
             // Retain the world cell as unsupported instead of publishing a different payable item variant.
             return null;

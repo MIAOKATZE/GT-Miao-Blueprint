@@ -121,7 +121,6 @@ public final class HologramProjectorLocalizationRegression {
                 64,
                 0,
                 stage,
-                1,
                 state.targetRevision(),
                 ""));
         SimpleAssert.eq("Controller only", state.statusCaption(), "server state caption uses English");
@@ -154,7 +153,6 @@ public final class HologramProjectorLocalizationRegression {
                 64,
                 0,
                 com.miaokatze.gtmb.hologram.HologramStockNativeWire.Stage.UNFORMED,
-                2,
                 state.targetRevision(),
                 ""));
         SimpleAssert.eq("Structure incomplete", state.statusCaption(), "incomplete server stage is translated");
@@ -165,7 +163,6 @@ public final class HologramProjectorLocalizationRegression {
                 64,
                 0,
                 com.miaokatze.gtmb.hologram.HologramStockNativeWire.Stage.FORMED,
-                3,
                 state.targetRevision(),
                 "控制器正在运行，请先停止。"));
         SimpleAssert.eq(

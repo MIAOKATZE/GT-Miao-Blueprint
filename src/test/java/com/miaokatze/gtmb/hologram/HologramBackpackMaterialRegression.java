@@ -123,6 +123,25 @@ public final class HologramBackpackMaterialRegression {
             SimpleAssert.that(
                 stock.countLong(stone, Long.MAX_VALUE) == 5 && refunded == 1,
                 "rollback keeps the real saved deduction and refunds exactly one actual item through existing recovery");
+            settings.recoveryDestination = 2;
+            stock.recoverWorld(java.util.Collections.singletonList(new ItemStack(Blocks.stone, 4)));
+            stock.flushRecovery();
+            SimpleAssert.that(
+                stock.countLong(stone, Long.MAX_VALUE) == 9,
+                "explicit backpack recovery inserts and saves through the native sink instead of the player inventory");
+            ItemStack tagged = new ItemStack(Blocks.stone, 3);
+            tagged.setTagCompound(new NBTTagCompound());
+            tagged.getTagCompound()
+                .setString("fixture", "exact native merge");
+            stock.recoverWorld(java.util.Collections.singletonList(tagged));
+            stock.flushRecovery();
+            SimpleAssert.that(
+                stock.countLong(tagged, Long.MAX_VALUE) == 3 && stock.countLong(stone, Long.MAX_VALUE) == 9,
+                "native backpack insertion preserves exact component NBT and does not merge with the plain variant");
+            int remainder = HologramBackpackMaterials.insert(bag, player, new ItemStack(Blocks.stone, 10000));
+            SimpleAssert.that(
+                remainder > 0 && remainder < 10000 && stock.countLong(stone, Long.MAX_VALUE) == 10009 - remainder,
+                "native capacity returns only the actual unaccepted remainder and persists every accepted item");
             Container previousContainer = player.openContainer;
             var open = (Container) Class.forName(ROOT + "inventory.container.ContainerAdvanced")
                 .getConstructor()

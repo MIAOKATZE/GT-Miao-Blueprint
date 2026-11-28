@@ -49,12 +49,51 @@ final class HologramMaterialQuoteRegression {
             headlessAeLongArithmetic();
             boundedObservationGrowth();
             preparedQuotesUseObservedBudgetsAndFenceTheNextBlueprint();
+            nativeCalculationCallbackOwnsTheCurrentRequest();
             craftingDeliveryCannotFeedItsOwnUnfinishedCpu();
             craftingDeliveryFailurePreservesRealReceipts();
             creativeVoucherSelectionAndCommittedPlacement();
         } catch (Exception failure) {
             throw new AssertionError("Material quote regression", failure);
         }
+    }
+
+    private static void nativeCalculationCallbackOwnsTheCurrentRequest() throws Exception {
+        var player = materialPlayer();
+        var order = new HologramAeCraftingOrders.Order(
+            player,
+            null,
+            null,
+            new NBTTagCompound(),
+            Collections.emptyList());
+        var job = (appeng.api.networking.crafting.ICraftingJob) java.lang.reflect.Proxy.newProxyInstance(
+            HologramMaterialQuoteRegression.class.getClassLoader(),
+            new Class<?>[] { appeng.api.networking.crafting.ICraftingJob.class },
+            (proxy, method, args) -> {
+                throw new AssertionError("Callback must retain the native job without probing it");
+            });
+        order.index = 1;
+        order.calculationComplete(0, job);
+        require(
+            order.job == null && !order.calculationFinished,
+            "late previous-row callback cannot supply the next row");
+        order.calculationComplete(1, job);
+        require(
+            order.job == job && order.calculationFinished,
+            "world-synchronized native callback supplies the exact job");
+        order.calculationComplete(1, null);
+        require(order.job == job, "duplicate callback cannot replace an accepted native result");
+        var cancelled = new HologramAeCraftingOrders.Order(
+            player,
+            null,
+            null,
+            new NBTTagCompound(),
+            Collections.emptyList());
+        cancelled.active = false;
+        cancelled.calculationComplete(0, job);
+        require(
+            cancelled.job == null && !cancelled.calculationFinished,
+            "cancelled order never adopts a late native calculation");
     }
 
     @SuppressWarnings("unchecked")
@@ -665,7 +704,14 @@ final class HologramMaterialQuoteRegression {
             HologramSession session = new HologramSession(player, 0, 64, 0, false, 1);
             if (controller) {
                 world.controller = new net.minecraft.tileentity.TileEntity();
+                world.controller.setWorldObj(world);
+                world.controller.xCoord = 0;
+                world.controller.yCoord = 64;
+                world.controller.zCoord = 0;
                 session.target = world.controller;
+                require(
+                    world.getTileEntity(0, 64, 0) == session.target && session.target.getWorldObj() == world,
+                    "native review binds the actual controller tile in its source world and coordinates");
                 session.operationReviewSequence = session.uiSequence;
                 HologramWorkspace.activate(identity, session);
             } else {
@@ -835,12 +881,9 @@ final class HologramMaterialQuoteRegression {
                         && !HologramStructureProjection.operationReviewActive(session),
                     "accepted native build keeps its voucher after closing the material review: " + session.status);
             }
+            require(placeThroughNative(session, cell, stone), "voucher placement commits successfully");
             require(
-                HologramWorldTransactions.operateChecked(session, cell, 0),
-                "voucher placement commits successfully");
-            require(
-                "placed".equals(cell.status) && world.placed == net.minecraft.init.Blocks.stone
-                    && world.writes == 1
+                world.placed == net.minecraft.init.Blocks.stone && world.writes == 1
                     && session.jobVoucherConsumed == !creative
                     && player.inventory.mainInventory[1] == voucher
                     && voucher.stackSize == (creative ? 2 : 1)
@@ -851,7 +894,7 @@ final class HologramMaterialQuoteRegression {
                 world.placed = null;
                 cell.status = "pending";
                 require(
-                    HologramWorldTransactions.operateChecked(session, cell, 0) && world.writes == 2
+                    placeThroughNative(session, cell, stone) && world.writes == 2
                         && voucher.stackSize == 1
                         && player.inventory.mainInventory[2].stackSize == 64,
                     "subsequent native placements reuse the voucher payment");
@@ -889,11 +932,21 @@ final class HologramMaterialQuoteRegression {
         s.planTargets.add(shell);
         world.placed = null;
         require(
-            HologramWorldTransactions.operateChecked(s, cell, 0),
+            placeThroughNative(s, cell, shell),
             "production placement accepts static AE decoration without demanding a nonexistent tile entity");
         require(
-            world.placed == decoration && "placed".equals(cell.status) && world.getTileEntity(0, 64, 0) == null,
+            world.placed == decoration && world.getTileEntity(0, 64, 0) == null,
             "static AE shell commits in creative with its canonical descriptor and no tile");
+    }
+
+    private static boolean placeThroughNative(HologramSession session, HologramCapture.Cell cell, ItemStack material)
+        throws Exception {
+        HologramNativeConstruction.Prepared target = session.virtual
+            ? HologramNativeConstruction.saved(session, cell.block, 0, material, -1, cell.tileNbt, cell.itemNbt)
+            : HologramNativeConstruction.projection(
+                new HologramNativeTargetPlan.Cell(0, 0, 0, cell.block, 0, material, -1, null, null, null, null, false));
+        return HologramNativeConstruction.place(session, target, cell.x, cell.y, cell.z, () -> true)
+            == HologramNativeConstruction.Outcome.PLACED;
     }
 
     private static final class CreativeVoucherWorld extends net.minecraft.world.WorldServer {
@@ -920,6 +973,7 @@ final class HologramMaterialQuoteRegression {
 
         public net.minecraft.block.Block getBlock(int x, int y, int z) {
             reads++;
+            if (controller != null && x == 0 && y == 64 && z == 0) return net.minecraft.init.Blocks.chest;
             return placed == null ? net.minecraft.init.Blocks.air : placed;
         }
 
@@ -942,6 +996,15 @@ final class HologramMaterialQuoteRegression {
         }
 
         public boolean setBlock(int x, int y, int z, net.minecraft.block.Block block, int meta, int flags) {
+            if (captureBlockSnapshots) capturedBlockSnapshots.add(
+                new net.minecraftforge.common.util.BlockSnapshot(
+                    this,
+                    x,
+                    y,
+                    z,
+                    getBlock(x, y, z),
+                    getBlockMetadata(x, y, z),
+                    flags));
             placed = block;
             writes++;
             return true;
@@ -953,6 +1016,11 @@ final class HologramMaterialQuoteRegression {
         }
 
         public void playSoundEffect(double x, double y, double z, String sound, float volume, float pitch) {}
+
+        public void markAndNotifyBlock(int x, int y, int z, net.minecraft.world.chunk.Chunk chunk,
+            net.minecraft.block.Block old, net.minecraft.block.Block current, int flags) {
+            // Detached writer contract: this fixture has no chunks or notification listeners.
+        }
 
         public void removeTileEntity(int x, int y, int z) {
             // This detached fixture has no tile entities.

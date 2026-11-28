@@ -15,13 +15,11 @@ import com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector;
 final class HologramStockNativeEntry {
 
     @Desugar
-    record Intent(HologramConstructionTaskGate.Request request, long generation, int x, int y, int z, int side,
-        int slot, int facing, int main, boolean mainExplicit, boolean noHatches, int sources,
-        HologramStockNativeWire.Projection projection) {
+    record Intent(HologramStockNativeWire.Key request, int x, int y, int z, int side, int slot, int facing, int main,
+        boolean mainExplicit, boolean noHatches, int sources, HologramStockNativeWire.Projection projection) {
 
         boolean valid() {
-            return request != null && request.kind == HologramConstructionTaskGate.Kind.INCREMENTAL_NATIVE
-                && generation > 0
+            return request != null && request.valid()
                 && projection != null
                 && projection.valid()
                 && side >= 0
@@ -32,9 +30,7 @@ final class HologramStockNativeEntry {
                 && facing < ExtendedFacing.STATES_COUNT
                 && main >= 1
                 && main <= 64
-                && sources >= 0
-                && (sources & ~63) == 0
-                && ((sources >>> 3) & 3) <= 2;
+                && HologramMaterialStockWire.decode(sources) != null;
         }
     }
 
@@ -79,54 +75,28 @@ final class HologramStockNativeEntry {
         }
 
         String refusal() {
-            var player = endpoint.player;
             if (!HologramWorkspace.currentActionEndpoint(endpoint)) return "施工连接或所在世界已变化。";
+            return contextRefusal();
+        }
+
+        String contextRefusal() {
+            var player = endpoint.player;
             if (player.isDead || !player.capabilities.allowEdit) return "当前玩家没有施工权限。";
             if (creative != player.capabilities.isCreativeMode) return "游戏模式已变化，请重新确认。";
             if (player.inventory != inventory || inventory.mainInventory != slots
-                || inventory.currentItem != intent.slot
                 || slots[intent.slot] != projector
-                || player.getHeldItem() != projector
                 || !ItemNekoHologramProjector.isProjector(projector)
                 || !toolId.equals(toolId(projector))) return "手持投影仪已变化，请重新确认。";
             return null; // Source selection is this explicit request, not the tool's unrelated saved defaults.
         }
     }
 
-    /** The same workspace object can change epoch and plan during a callback. Never recapture a newer state. */
-    @Desugar
-    private record Prior(HologramSession session, long epoch, long plan) {
-
-        static Prior capture(HologramWorkspace.ActionEndpoint endpoint) {
-            var session = HologramWorkspace.find(endpoint.actor);
-            return session == null ? new Prior(null, 0, 0)
-                : new Prior(session, session.editorWorkspaceEpoch, session.planRevision);
-        }
-
-        boolean unchanged() {
-            return session == null || session.editorWorkspaceEpoch == epoch && session.planRevision == plan;
-        }
-
-        boolean current(HologramWorkspace.ActionEndpoint endpoint) {
-            return HologramWorkspace.find(endpoint.actor) == session && unchanged();
-        }
-
-        HologramSession restorable(HologramWorkspace.ActionEndpoint endpoint) {
-            return HologramWorkspace.currentActionEndpoint(endpoint) && unchanged() ? session : null;
-        }
-    }
-
     private final Submission submission;
-    private final Prior prior;
-    private final HologramSession session;
-    private HologramNativeProjectionJob job;
-    private HologramNativeProjectionJob.State state = HologramNativeProjectionJob.State.ACTIVE;
-    private boolean advancing, retired;
+    private final HologramConstructionJobs.Job job;
 
-    private HologramStockNativeEntry(Submission submission, Prior prior, HologramSession session) {
+    private HologramStockNativeEntry(Submission submission, HologramConstructionJobs.Job job) {
         this.submission = submission;
-        this.prior = prior;
-        this.session = session;
+        this.job = job;
     }
 
     static Ingress inspect(HologramWorkspace.ActionEndpoint endpoint, HologramStockNativeWire.Confirmation confirm) {
@@ -134,9 +104,7 @@ final class HologramStockNativeEntry {
             || confirm.tool() == null
             || confirm.dimension() != endpoint.player.dimension) return Ingress.refused("原生操作的玩家、投影仪或维度已变化。");
         var intent = confirm.intent();
-        if (!intent.valid() || endpoint.constructionScope == null
-            || intent.generation() != endpoint.constructionScope.generation
-            || !HologramWorkspace.currentActionEndpoint(endpoint)) return Ingress.refused("原生操作确认已失效。");
+        if (!intent.valid() || !HologramWorkspace.currentActionEndpoint(endpoint)) return Ingress.refused("原生操作确认已失效。");
         var player = endpoint.player;
         if (player.isDead || !player.capabilities.allowEdit) return Ingress.refused("当前玩家没有施工权限。");
         var inventory = player.inventory;
@@ -147,12 +115,7 @@ final class HologramStockNativeEntry {
         if (!ItemNekoHologramProjector.isProjector(held) || !confirm.tool()
             .toString()
             .equals(id)) return Ingress.refused("投影仪身份未同步，请重新打开结构。");
-        var settings = new HologramMaterials.Settings();
-        settings.main = (intent.sources() & 1) != 0;
-        settings.containers = (intent.sources() & 2) != 0;
-        settings.me = (intent.sources() & 4) != 0;
-        settings.priority = (intent.sources() >>> 3) & 3;
-        settings.recoveryDestination = (intent.sources() >>> 5) & 1;
+        var settings = HologramMaterialStockWire.decode(intent.sources());
         var configured = HologramProjectedMainPolicy.captureSaved(settings, true);
         if (configured == null) return Ingress.refused("当前材料来源选择无效。");
         return new Ingress(
@@ -187,113 +150,62 @@ final class HologramStockNativeEntry {
     }
 
     static HologramStockNativeEntry begin(Submission submission) throws IOException {
-        if (submission == null || !submission.current()) throw new IOException("没有当前有效的原生操作确认。");
+        if (submission == null || !submission.current()) throw new IOException("原生操作确认已失效。");
         var endpoint = submission.endpoint;
+        if (HologramConstructionAuthority.competingWork(endpoint.player, true)) throw new IOException("已有施工或编辑任务。");
         var intent = submission.intent;
-        var gate = HologramWorkspace.constructionGate(endpoint);
-        if (gate == null) throw new IOException("原生操作连接已变化。");
-        var prior = Prior.capture(endpoint);
-        boolean busy = HologramConstructionAuthority.competingWork(endpoint.player, true)
-            || prior.session != null && !HologramSessionPolicy.valid(prior.session);
-        var admission = gate.acquire(
-            endpoint.constructionScope,
-            intent.request(),
-            busy,
-            HologramConstructionAuthority.hasKnownRecovery(endpoint.player));
-        if (admission.decision != HologramConstructionTaskGate.Decision.GRANTED)
-            throw new IOException("未取得原生操作许可：" + admission.decision);
-        HologramSession session = null;
-        boolean retained = false;
-        try {
-            session = new HologramSession(
-                endpoint.player,
-                intent.x(),
-                intent.y(),
-                intent.z(),
-                true,
-                intent.side(),
-                false);
-            // The private seat is part of reservation eligibility, before the atomic workspace handoff.
-            session.stockNativePrivate = true;
-            if (!submission.current() || !prior.current(endpoint)
-                || session.boundTool != submission.projector
-                || !HologramWorkspace.reserveStockNative(endpoint, prior.session, prior.epoch, prior.plan, session))
-                throw new IOException("控制器、工作区或投影仪已变化。");
-            session.main = intent.main();
-            session.mainExplicit = intent.mainExplicit();
-            session.noHatches = intent.noHatches();
-            session.materialSettings = submission.sources();
-            var entry = new HologramStockNativeEntry(submission, prior, session);
-            entry.job = new HologramNativeProjectionJob(
-                endpoint,
-                gate,
-                admission.lease,
-                session,
-                intent.projection(),
-                intent.main(),
-                intent.facing(),
-                submission.creative,
-                () -> submission.current() && prior.unchanged());
-            retained = true;
-            return entry;
-        } finally {
-            if (!retained) {
-                if (session != null) HologramWorkspace.rollbackCompactNative(prior.restorable(endpoint), session);
-                gate.finish(admission.lease, HologramConstructionTaskGate.End.FAILED);
-            }
-        }
+        var session = new HologramSession(
+            endpoint.player,
+            intent.x(),
+            intent.y(),
+            intent.z(),
+            true,
+            intent.side(),
+            false);
+        session.stockNativePrivate = true;
+        session.main = intent.main();
+        session.mainExplicit = intent.mainExplicit();
+        session.noHatches = intent.noHatches();
+        session.materialSettings = submission.sources();
+        var source = new HologramNativeProjectionJob(
+            endpoint,
+            session,
+            intent.projection(),
+            intent.main(),
+            intent.facing(),
+            submission.creative,
+            submission);
+        var job = HologramConstructionJobs.start(
+            intent.request()
+                .request(),
+            0,
+            source);
+        return new HologramStockNativeEntry(submission, job);
     }
 
-    HologramNativeProjectionJob.State tick(long deadline) {
-        return tick(deadline, HologramConstructionTaskGate::beginTransaction);
+    HologramNativeProjectionJob.State state() {
+        if (!job.terminal) return HologramNativeProjectionJob.State.ACTIVE;
+        return job.end == HologramConstructionJobs.End.COMPLETE ? HologramNativeProjectionJob.State.COMPLETE
+            : job.end == HologramConstructionJobs.End.RECOVERY_PENDING
+                ? HologramNativeProjectionJob.State.RECOVERY_PENDING
+                : HologramNativeProjectionJob.State.STOPPED;
     }
 
-    HologramNativeProjectionJob.State tick(long deadline, HologramNativeProjectionJob.PermitAdmission admission) {
-        if (retired) return state;
-        if (advancing) throw new IllegalStateException("Native operation cannot re-enter");
-        advancing = true;
-        try {
-            state = job.drain(deadline, admission);
-            return state;
-        } finally {
-            advancing = false;
-            retireIfSettled();
-        }
-    }
-
-    boolean stop(HologramWorkspace.ActionEndpoint endpoint, HologramConstructionTaskGate.Request request) {
-        if (retired || state != HologramNativeProjectionJob.State.ACTIVE
-            || endpoint != submission.endpoint
-            || !submission.intent.request()
-                .equals(request)
-            || !HologramWorkspace.currentActionEndpoint(endpoint)
-            || !job.cancel()) return false;
-        state = HologramNativeProjectionJob.State.STOPPED;
-        if (!advancing) retireIfSettled();
-        return true;
-    }
-
-    private void retireIfSettled() {
-        if (state == HologramNativeProjectionJob.State.ACTIVE || retired) return;
-        retired = true;
-        if (state != HologramNativeProjectionJob.State.RECOVERY_PENDING)
-            HologramWorkspace.rollbackCompactNative(prior.restorable(submission.endpoint), session);
+    boolean stop(HologramWorkspace.ActionEndpoint endpoint, HologramStockNativeWire.Key request) {
+        return endpoint == submission.endpoint && request.equals(submission.intent.request())
+            && HologramWorkspace.currentActionEndpoint(endpoint)
+            && HologramConstructionJobs.cancel(endpoint.player, request.request());
     }
 
     boolean owns(HologramSession current) {
-        return current == session && (state == HologramNativeProjectionJob.State.ACTIVE
-            || state == HologramNativeProjectionJob.State.RECOVERY_PENDING);
+        return current == job.session && !job.terminal;
     }
 
     int placed() {
-        return job.placed();
+        return (int) job.completed;
     }
 
     String reason() {
-        return job.reason();
-    }
-
-    HologramConstructionTaskGate.Permit unsettled() {
-        return job.unsettled();
+        return job.reason;
     }
 }

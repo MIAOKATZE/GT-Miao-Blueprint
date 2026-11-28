@@ -71,6 +71,7 @@ def linkageAsm = configurations.create('gtnhLinkageAsm') {
 }
 dependencies.add(linkageAsm.name, 'org.ow2.asm:asm-tree:9.9')
 def linkageTasks = []
+def primaryPack = providers.gradleProperty('gtmbTargetGtnh').getOrElse('2.9.2')
 def profiles = compatibilityMatrix.collectEntries { pack, versions ->
     def profile = [version: pack, dependencies: versions]
     def graph = configurations.create('gtnh' + profile.version.replace('.', '') + 'Fixture') {
@@ -128,7 +129,7 @@ def profiles = compatibilityMatrix.collectEntries { pack, versions ->
     }
     ['BwMaterial', 'LittleTiles'].each { kind ->
         def entry = kind == 'BwMaterial' ? 'HologramBwMaterialCompatibilityRegression' : 'HologramLittleTilesCompatibilityRegression'
-        linkageTasks.add(tasks.register('verifyGTNH' + profile.version.replace('.', '') + kind, JavaExec) {
+        def nativeContract = tasks.register('verifyGTNH' + profile.version.replace('.', '') + kind, JavaExec) {
             group = 'verification'
             dependsOn('compileTestJava')
             classpath = graph + fixtureRuntime
@@ -136,7 +137,9 @@ def profiles = compatibilityMatrix.collectEntries { pack, versions ->
             def scratch = layout.buildDirectory.dir(name)
             workingDir(scratch)
             doFirst { scratch.get().asFile.mkdirs() }
-        })
+        }
+        // Secondary packs receive static linkage/ABI inspection only during the normal build.
+        if (profile.version == primaryPack) linkageTasks.add(nativeContract)
     }
     [(profile.version): resolution]
 }

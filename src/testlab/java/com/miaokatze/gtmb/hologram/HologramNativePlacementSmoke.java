@@ -632,13 +632,15 @@ public final class HologramNativePlacementSmoke {
                     s.expectedTiles.add(null);
                     s.expectedFacings.add(-1);
                     s.work.add(0);
-                    s.job = 1;
+                    s.job = 0;
                     fill(player, java.util.Collections.singletonList(primary), false);
+                    HologramPlacementJobs.begin(s, new NBTTagCompound());
+                    require(HologramConstructionJobs.find(player) != null, "background_gt_common_job_admitted");
                     player.inventory.currentItem = 8;
                     require(
                         !HologramSessionPolicy.valid(s) && HologramSessionPolicy.jobValid(s),
                         "background_gt_keeps_admission_strict_" + scenario);
-                    HologramPlacementJobs.tickJob(s);
+                    HologramTestLabConstructionDriver.step(s);
                     require(
                         s.job == 3 && s.completed == 1 && "placed".equals(target.status),
                         "background_gt_actual_job_places_" + id + "_creative_" + creative + "_status_" + s.status);
@@ -806,20 +808,16 @@ public final class HologramNativePlacementSmoke {
                         "large_gt_reopen_keeps_same_session_beyond_reach");
                     lifecycle.setString("op", "pause");
                     HologramService.handle(player, lifecycle);
-                    require(s.job == 2, "large_gt_actual_pause_beyond_reach");
-                    int pausedCursor = s.cursor;
-                    HologramPlacementJobs.tickJob(s);
-                    require(s.cursor == pausedCursor, "large_gt_paused_job_does_not_mutate_world");
-                    lifecycle.setString("op", "resume");
-                    HologramService.handle(player, lifecycle);
-                    require(s.job == 1, "large_gt_actual_resume_beyond_reach");
+                    require(
+                        s.job == 1 && HologramConstructionJobs.active(player),
+                        "retired_pause_does_not_pause_the_common_job");
                     lifecycle.setString("op", "close");
                     HologramService.handle(player, lifecycle);
                     HologramSnapshotPreparation.cancel(s);
                     s.open = false;
                 }
                 if (ticks <= 2) s.stopTick = true; // Walk between genuine slices in spatial construction order.
-                HologramPlacementJobs.tickJob(s);
+                HologramTestLabConstructionDriver.step(s);
             }
             require(walked && s.job == 3 && s.completed == count, "large_gt_64000_actual_transactions_complete");
             for (int i = 0; i < count; i++) {
@@ -1444,10 +1442,7 @@ public final class HologramNativePlacementSmoke {
     }
 
     private static boolean operate(Object session, HologramCapture.Cell cell) throws Exception {
-        Method method = HologramWorldTransactions.class
-            .getDeclaredMethod("operate", session.getClass(), HologramCapture.Cell.class, int.class);
-        method.setAccessible(true);
-        return (Boolean) method.invoke(null, session, cell, 0);
+        return HologramTestLabConstructionDriver.write((HologramSession) session, cell, 0);
     }
 
     private static Object get(Object target, String name) throws Exception {

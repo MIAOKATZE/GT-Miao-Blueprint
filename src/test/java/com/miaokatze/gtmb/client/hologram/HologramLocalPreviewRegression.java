@@ -19,6 +19,7 @@ import com.miaokatze.gtmb.testutil.SimpleAssert;
 public final class HologramLocalPreviewRegression {
 
     public static void run() throws Exception {
+        heldProjectionPolicy();
         rejectStaleAuthoringOwner();
         compactDisplay();
         compactDirectDisplay();
@@ -78,6 +79,54 @@ public final class HologramLocalPreviewRegression {
         expectFailure("{\"blueprint\":{\"cells\":[{\"x\":60000001}]}}");
         expectFailure("{\"blueprint\":{\"cells\":[]}}");
         expectFailure("{\"blueprint\":{\"cells\":[{\"tileNbt\":\"not base64\"}]}}");
+    }
+
+    private static void heldProjectionPolicy() throws ReflectiveOperationException {
+        HologramLocalPlacement placement = new HologramLocalPlacement();
+        HologramHeldProjectionLifetime lifetime = new HologramHeldProjectionLifetime();
+        HologramState target = new HologramState(new NBTTagCompound());
+        var displayField = HologramLocalPlacement.class.getDeclaredField("display");
+        var lifetimeField = HologramLocalPlacement.class.getDeclaredField("lifetime");
+        displayField.setAccessible(true);
+        lifetimeField.setAccessible(true);
+        displayField.set(placement, target);
+        lifetimeField.set(placement, lifetime);
+        var submission = new HologramLocalPlacement.Submission(null, target, 0, HologramLocalPlacement.reviewOptions());
+        long away = HologramHeldProjectionLifetime.AWAY_NANOS;
+        SimpleAssert.that(
+            lifetime.observe(true, 0) && lifetime.observe(true, 100 * away)
+                && placement.worldDisplay(100 * away) == target,
+            "unfinished blueprint world projection stays visible while its original tool is held");
+        SimpleAssert.that(
+            lifetime.observe(false, 100 * away) && placement.worldDisplay(101 * away - 1) == target
+                && lifetime.observe(true, 101 * away - 1),
+            "returning before five seconds preserves the same blueprint placement");
+        placement.finish(submission, false);
+        SimpleAssert.that(
+            placement.worldDisplay(200 * away) == target,
+            "an unsuccessful construction retains its held blueprint projection");
+        SimpleAssert.that(
+            lifetime.observe(false, 200 * away) && !lifetime.observe(true, 201 * away)
+                && placement.worldDisplay(201 * away) == null,
+            "the blueprint projection expires exactly five seconds after switching away");
+        placement.finish(submission, false);
+        SimpleAssert.that(
+            !lifetime.observe(true, 202 * away) && placement.worldDisplay(202 * away) == null,
+            "a retry result or returning to the tool cannot resurrect an expired blueprint projection");
+        var generation = HologramLocalPlacement.class.getDeclaredField("lockGeneration");
+        generation.setAccessible(true);
+        generation.setLong(placement, 1);
+        placement.finish(submission, true);
+        SimpleAssert.that(
+            placement.display() == target,
+            "an older lock generation cannot retire even the same source/display pair");
+        var current = new HologramLocalPlacement.Submission(null, target, 1, HologramLocalPlacement.reviewOptions());
+        placement.finish(current, true);
+        placement.finish(current, true);
+        placement.finish(current, false);
+        SimpleAssert.that(
+            !placement.active() && placement.worldDisplay(203 * away) == null,
+            "current retirement is idempotent and late retries never resurrect its held projection");
     }
 
     private static void rejectStaleAuthoringOwner() {

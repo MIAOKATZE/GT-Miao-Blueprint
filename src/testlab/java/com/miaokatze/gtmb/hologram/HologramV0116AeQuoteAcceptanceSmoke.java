@@ -283,7 +283,7 @@ public final class HologramV0116AeQuoteAcceptanceSmoke implements AutoCloseable 
                 finished = true;
             }
         } else if (stage == 2) {
-            HologramPlacementJobs.tickJob(session);
+            HologramTestLabConstructionDriver.step(session);
             HologramSnapshotPreparation.cancel(session); // Disconnected FakePlayer business delivery is outside this
                                                          // test.
             placementTicks++;

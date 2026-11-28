@@ -1356,20 +1356,15 @@ public final class HologramBlueprintResourcesRegression {
         SimpleAssert.that(
             !(Boolean) fuzzy.invoke(null, session, sealed) && (Boolean) fuzzy.invoke(null, session, plain),
             "level one construction still applies exact sealed payment while allowing ordinary fuzzy shells");
-        java.lang.reflect.Method copyInventory = HologramMaterialAccess.class
-            .getDeclaredMethod("copyInventory", net.minecraft.entity.player.EntityPlayerMP.class);
-        copyInventory.setAccessible(true);
-        ItemStack[] before = (ItemStack[]) copyInventory.invoke(null, player);
-        HologramMaterials.Transaction transaction = context.begin();
+        HologramMaterials.Transaction transaction = context.begin()
+            .trackLocalInventory();
         SimpleAssert.that(
             transaction.takeOneFuzzy(sealed, false),
             "real identical seal is physically reserved via exact fallback");
         SimpleAssert.eq(0, context.count(sealed, 64), "reservation removes the one paid sealed item");
-        java.lang.reflect.Method rollback = HologramWorldTransactions.class
-            .getDeclaredMethod("rollbackMaterials", type, HologramMaterials.Transaction.class, ItemStack[].class);
-        rollback.setAccessible(true);
-        rollback.invoke(null, session, transaction, before);
-        rollback.invoke(null, session, transaction, before);
+        SimpleAssert.that(
+            transaction.rollbackAction() && transaction.rollbackAction(),
+            "sparse action rollback is idempotent after its one confirmed seal refund");
         SimpleAssert.eq(
             1,
             context.count(sealed, 64),

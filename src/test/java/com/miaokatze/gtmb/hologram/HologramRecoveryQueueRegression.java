@@ -4,7 +4,6 @@
 package com.miaokatze.gtmb.hologram;
 
 import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 import java.util.Collections;
 import java.util.UUID;
 
@@ -51,13 +50,19 @@ public final class HologramRecoveryQueueRegression {
 
     public static void run() {
         try {
-            fairnessAndReconnect();
-            legacyIndexReconnect();
-            boundedBacklog(10000);
-            boundedBacklog(100000);
-            exactMerging();
-            exceptionalRemainder();
-            demolitionBackpressure();
+            HologramNativeSavedWorldRegression.withOfflineRegistries(() -> {
+                try {
+                    fairnessAndReconnect();
+                    legacyIndexReconnect();
+                    boundedBacklog(10000);
+                    boundedBacklog(100000);
+                    exactMerging();
+                    exceptionalRemainder();
+                    demolitionBackpressure();
+                } catch (Exception failure) {
+                    throw new AssertionError("Recovery queue native fixture", failure);
+                }
+            });
         } catch (Exception failure) {
             throw new AssertionError("Recovery queue regression", failure);
         }
@@ -249,6 +254,10 @@ public final class HologramRecoveryQueueRegression {
         }
         new NetHandlerPlayServer(null, connection, fixture.player);
         EmptyWorld world = (EmptyWorld) fixture.world;
+        Field worldInfo = net.minecraft.world.World.class.getDeclaredField("worldInfo");
+        worldInfo.setAccessible(true);
+        worldInfo.set(world, new net.minecraft.world.storage.WorldInfo(new NBTTagCompound()));
+        world.provider.worldObj = world;
         Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
         unsafeField.setAccessible(true);
         sun.misc.Unsafe unsafe = (sun.misc.Unsafe) unsafeField.get(null);
@@ -256,21 +265,18 @@ public final class HologramRecoveryQueueRegression {
         HologramAreaSelection selection = new HologramAreaSelection();
         selection.point(1, 0, 64, 0);
         selection.point(2, 0, 65, 0);
-        HologramDemolition.Cursor cursor = new HologramDemolition.Cursor(selection.resolvedRegions(), 256);
-        Class<?> jobType = Class.forName(HologramDemolition.class.getName() + "$Job");
-        Object job = unsafe.allocateInstance(jobType);
-        set(job, "player", fixture.player);
-        set(job, "world", world);
-        set(job, "tool", fixture.player.getHeldItem());
-        set(job, "cursor", cursor);
-        set(job, "materials", fixture.context);
-        Method advance = HologramDemolition.class.getDeclaredMethod("advance", jobType, long.class);
-        advance.setAccessible(true);
+        fixture.player.inventory.mainInventory[0] = new ItemStack(
+            new com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector());
         try {
-            advance.invoke(null, job, System.nanoTime() + 50_000_000L);
-            SimpleAssert
-                .eq(0, world.geometryReads, "backpressure stops before even querying the next geometry section");
-            SimpleAssert.that(!cursor.done(), "backpressure cannot consume the selected geometry");
+            try {
+                HologramDemolition.start(fixture.player, selection);
+                throw new AssertionError("committed pending recovery admitted more demolition");
+            } catch (java.io.IOException blocked) {
+                SimpleAssert.that(
+                    !HologramConstructionJobs.active(fixture.player),
+                    "backpressure admits no paused or executable continuation");
+            }
+            SimpleAssert.eq(0, world.geometryReads, "pending recovery stops before querying a geometry section");
             NBTTagCompound receipt = owner(fixture).getTagList(QUEUE, 10)
                 .getCompoundTagAt(owner(fixture).getInteger(CURSOR));
             ItemStack space = HologramMaterials.recoveryItem(receipt);
@@ -278,10 +284,28 @@ public final class HologramRecoveryQueueRegression {
             fixture.player.inventory.mainInventory[1] = space;
             for (int tick = 0; tick < 8 && fixture.context.recoveryBacklogged(); tick++)
                 fixture.context.flushRecovery();
+            SimpleAssert.that(
+                !fixture.context.recoveryBacklogged() && fixture.pending() > 0,
+                "acknowledged delivery releases entry pressure while retaining the exact undelivered remainder");
+            try {
+                HologramDemolition.start(fixture.player, selection);
+                throw new AssertionError("remaining committed receipts admitted more demolition");
+            } catch (java.io.IOException blocked) {
+                SimpleAssert.eq(0, world.geometryReads, "lowering pressure never bypasses pending-delivery admission");
+            }
+            world.acceptedSpawns = Integer.MAX_VALUE;
+            for (int tick = 0; tick < HologramMaterials.RECOVERY_BACKLOG_ENTRIES * 4 && fixture.pending() > 0; tick++)
+                fixture.context.flushRecovery();
             SimpleAssert
-                .that(!fixture.context.recoveryBacklogged(), "acknowledged delivery releases entry backpressure");
-            advance.invoke(null, job, System.nanoTime() + 50_000_000L);
-            SimpleAssert.that(world.geometryReads > 0, "the same admitted job resumes geometry after pressure clears");
+                .eq(0L, fixture.pending(), "only confirmed native destination delivery clears the remaining receipts");
+            HologramDemolition.start(fixture.player, selection);
+            var job = HologramConstructionJobs.find(fixture.player);
+            SimpleAssert
+                .that(job != null, "an explicit fresh request can enter the common job after recovery is settled");
+            HologramConstructionJobs.tick(Long.MAX_VALUE);
+            SimpleAssert.that(
+                world.geometryReads > 0 && job.end == HologramConstructionJobs.End.COMPLETE,
+                "the real area source then traverses its selection through the common scheduler");
         } finally {
             HologramDemolition.clear();
             connection.channel()

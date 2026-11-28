@@ -8,7 +8,11 @@ import java.util.function.Predicate;
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.inventory.IInventory;
 import net.minecraft.item.ItemStack;
+import net.minecraftforge.common.util.ForgeDirection;
 
+import com.gtnewhorizon.gtnhlib.item.FastImmutableItemStack;
+import com.gtnewhorizon.gtnhlib.item.InventoryItemSink;
+import com.gtnewhorizon.structurelib.util.InventoryIterable;
 import com.gtnewhorizon.structurelib.util.InventoryUtility;
 import com.gtnewhorizon.structurelib.util.InventoryUtility.ItemStackExtractor;
 
@@ -100,29 +104,48 @@ final class HologramBackpackMaterials implements ItemStackExtractor {
                 .getConstructor(String.class, String.class)
                 .newInstance("", "");
             read.invoke(inventory, data);
-            int taken = 0;
-            java.util.List<ItemStack> extracted = new java.util.ArrayList<>();
-            for (int slot = 0; slot < inventory.getSizeInventory() && taken < count; slot++) {
-                ItemStack stack = inventory.getStackInSlot(slot);
-                if (stack == null || stack.stackSize <= 0 || !predicate.test(stack)) continue;
-                int amount = Math.min(count - taken, stack.stackSize);
-                ItemStack part = stack.copy();
-                part.stackSize = amount;
-                extracted.add(part);
-                taken += amount;
-                if (!simulate) inventory.decrStackSize(slot, amount);
-            }
-            if (!simulate && taken > 0) {
-                // Flush once per extraction, before handing real items to the construction transaction.
-                manual.invoke(data);
-                inventory.markDirty();
-                write.invoke(inventory, data);
-                save.invoke(data);
-            }
-            for (ItemStack stack : extracted) counter.add(stack, stack.stackSize);
+            java.util.Map<ItemStack, Integer> extracted = InventoryUtility
+                .takeFromInventory(new InventoryIterable<>(inventory), predicate, simulate, count, false);
+            int taken = extracted.values()
+                .stream()
+                .mapToInt(Integer::intValue)
+                .sum();
+            if (!simulate && taken > 0) flush(inventory, data);
+            for (java.util.Map.Entry<ItemStack, Integer> entry : extracted.entrySet())
+                counter.add(entry.getKey(), entry.getValue());
             return taken;
         } catch (ReflectiveOperationException failure) {
             throw new IllegalStateException("Cannot access Backpack material save", failure);
         }
     }
+
+    private void flush(IInventory inventory, Object data) throws ReflectiveOperationException {
+        manual.invoke(data);
+        inventory.markDirty();
+        write.invoke(inventory, data);
+        save.invoke(data);
+    }
+
+    /** The native sink handles slot validity, exact NBT merging and stack limits on a detached bag inventory. */
+    static int insert(ItemStack source, EntityPlayerMP player, ItemStack offered) {
+        if (INSTANCE == null || !INSTANCE.isValidSource(source, player))
+            throw new IllegalStateException("Selected Backpack recovery destination is unavailable");
+        try {
+            Object data = INSTANCE.saveType.getConstructor(String.class)
+                .newInstance(identity(source));
+            IInventory inventory = (IInventory) Class.forName(ROOT + "inventory.InventoryBackpack")
+                .getConstructor(String.class, String.class)
+                .newInstance("", "");
+            INSTANCE.read.invoke(inventory, data);
+            int remaining = new InventoryItemSink(inventory, ForgeDirection.UNKNOWN)
+                .store(new FastImmutableItemStack(offered.copy()));
+            if (remaining < 0 || remaining > offered.stackSize)
+                throw new IllegalStateException("Native Backpack returned invalid insertion remainder");
+            if (remaining < offered.stackSize) INSTANCE.flush(inventory, data);
+            return remaining;
+        } catch (ReflectiveOperationException failure) {
+            throw new IllegalStateException("Cannot save Backpack recovery destination", failure);
+        }
+    }
+
 }

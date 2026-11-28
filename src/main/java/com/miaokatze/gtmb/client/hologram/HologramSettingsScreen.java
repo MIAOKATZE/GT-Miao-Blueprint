@@ -38,7 +38,7 @@ final class HologramSettingsScreen extends HologramMuiScreen {
         me = snapshot.data.getBoolean("materialMe");
         downgrade = snapshot.data.getBoolean("hatchDowngrade");
         priority = Math.max(0, Math.min(2, snapshot.data.getInteger("materialPriority")));
-        recovery = snapshot.data.getInteger("recoveryDestination") == 1 ? 1 : 0;
+        recovery = Math.max(0, Math.min(2, snapshot.data.getInteger("recoveryDestination")));
         presetIndex = -1;
         NBTTagList presets = presets();
         for (int i = 0; i < presets.tagCount(); i++) if (presets.getCompoundTagAt(i)
@@ -52,12 +52,16 @@ final class HologramSettingsScreen extends HologramMuiScreen {
     }
 
     private String on(boolean enabled) {
-        return enabled ? "开启" : "关闭";
+        return text(enabled ? "on" : "off");
+    }
+
+    private static String text(String key, Object... args) {
+        return net.minecraft.client.resources.I18n.format("gtmb.hologram.projector.settings." + key, args);
     }
 
     @Override
     protected void buildPanel() {
-        HologramMuiTheme.header(panel(), () -> "投影仪设置 · 与编辑界面共享", 300);
+        HologramMuiTheme.header(panel(), () -> text("title"), 300);
         for (int id = 0; id <= 6; id++) {
             final int action = id;
             panel().child(
@@ -65,26 +69,34 @@ final class HologramSettingsScreen extends HologramMuiScreen {
                     .setEnabledIf(widget -> pendingSequence < 0 && (action != 5 || presets().tagCount() > 0)));
         }
         panel().child(
-            HologramMuiTheme.primaryButton(() -> "保存设置", 20, 208, 126, 20, () -> activate(7))
+            HologramMuiTheme.primaryButton(() -> text("save"), 20, 208, 126, 20, () -> activate(7))
                 .setEnabledIf(widget -> pendingSequence < 0));
         panel().child(
-            HologramMuiTheme.button(() -> "返回编辑", 154, 208, 126, 20, () -> activate(8))
+            HologramMuiTheme.button(() -> text("back"), 154, 208, 126, 20, () -> activate(8))
                 .setEnabledIf(widget -> pendingSequence < 0));
-        panel().child(HologramMuiTheme.label(() -> "ME 不可用时回收至主背包；背包满则持久暂存", 12, 234, 276, 20, 0xffbacbd1));
+        panel().child(HologramMuiTheme.label(() -> text("recovery_hint"), 12, 234, 276, 20, 0xffbacbd1));
         panel().child(HologramMuiTheme.label(this::status, 12, 254, 276, 20, 0xffe5c488));
     }
 
     private String label(int id) {
         return switch (id) {
-            case 0 -> "取料 · 主背包：" + on(main);
-            case 1 -> "取料 · 背包容器：" + on(containers);
-            case 2 -> "取料 · ME：" + on(me);
-            case 3 -> "优先取料：" + new String[] { "主背包", "背包容器", "ME" }[priority];
-            case 4 -> "缺料时仓室等级降级：" + on(downgrade);
-            case 5 -> "自定义模板：" + (presetIndex < 0 ? "未选择"
-                : presets().getCompoundTagAt(presetIndex)
-                    .getString("name"));
-            default -> "默认回收：" + (recovery == 1 ? "ME 优先" : "主背包");
+            case 0 -> text("source_inventory", on(main));
+            case 1 -> text("source_containers", on(containers));
+            case 2 -> text("source_ae", on(me));
+            case 3 -> text("priority", text("source_name_" + priority));
+            case 4 -> text("downgrade", on(downgrade));
+            case 5 -> text(
+                "preset",
+                presetIndex < 0 ? text("none")
+                    : presets().getCompoundTagAt(presetIndex)
+                        .getString("name"));
+            default -> net.minecraft.client.resources.I18n.format(
+                "gtmb.hologram.projector.stock.recovery_default",
+                net.minecraft.client.resources.I18n.format("gtmb.hologram.projector.stock." + switch (recovery) {
+                case 1 -> "recover_ae";
+                case 2 -> "recover_backpack";
+                default -> "recover_inventory";
+                }));
         };
     }
 
@@ -97,7 +109,7 @@ final class HologramSettingsScreen extends HologramMuiScreen {
             case 3 -> priority = (priority + 1) % 3;
             case 4 -> downgrade = !downgrade;
             case 5 -> presetIndex = (presetIndex + 1) % presets().tagCount();
-            case 6 -> recovery = 1 - recovery;
+            case 6 -> recovery = (recovery + 1) % 3;
             case 7 -> save();
             case 8 -> HologramClient.openSettings();
             default -> {}
@@ -140,7 +152,7 @@ final class HologramSettingsScreen extends HologramMuiScreen {
         if (waiting != null) return HologramProgressView.summary(waiting, System.nanoTime());
         String error = state.data.getString("presetConfigError");
         return !progressNotice.isEmpty() ? progressNotice
-            : error.isEmpty() ? state.data.getString("status") : "预设列表读取失败：" + error;
+            : error.isEmpty() ? state.data.getString("status") : text("preset_error", error);
     }
 
     @Override

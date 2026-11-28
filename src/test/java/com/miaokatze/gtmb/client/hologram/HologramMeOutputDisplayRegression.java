@@ -66,7 +66,7 @@ public final class HologramMeOutputDisplayRegression {
             editableAuthorRetention();
             live(BUS, MTEHatchOutputBusME.class, 8192L, MTEHatchOutputBusME.DEFAULT_CAPACITY, false);
             live(FLUID, MTEHatchOutputME.class, 2097152L, MTEHatchOutputME.DEFAULT_CAPACITY, true);
-            staysBlocked(host);
+            requiresNativeBaseline(host);
             failClosed(host);
         } finally {
             GregTechAPI.sBlockMachines = previousHost;
@@ -321,22 +321,28 @@ public final class HologramMeOutputDisplayRegression {
         SimpleAssert.that(defaultDisplay.hasNoTags(), "native default remains ordinary");
     }
 
-    private static void staysBlocked(Block host) throws Exception {
+    private static void requiresNativeBaseline(Block host) throws Exception {
         Method gtState = Class.forName("com.miaokatze.gtmb.hologram.HologramExecutionEligibility")
             .getDeclaredMethod("gtState", NBTTagCompound.class, ItemStack.class, boolean.class, boolean.class);
         gtState.setAccessible(true);
         for (boolean tile : new boolean[] { false, true }) {
+            NBTTagCompound payload = tile ? saved(BUS, 8192L) : itemTag(8192L);
+            NBTTagCompound before = (NBTTagCompound) payload.copy();
+            ItemStack material = new ItemStack(host, 1, BUS);
+            ItemStack materialBefore = material.copy();
             try {
-                gtState
-                    .invoke(null, tile ? saved(BUS, 8192L) : itemTag(8192L), new ItemStack(host, 1, BUS), tile, false);
-                throw new AssertionError("display data cannot make a base capacity eligible for execution");
+                gtState.invoke(null, payload, material, tile, false);
+                throw new AssertionError(
+                    "display-only host without a TE factory cannot establish an execution baseline");
             } catch (InvocationTargetException expected) {
                 SimpleAssert.that(
-                    expected.getCause() instanceof IOException && expected.getCause()
-                        .getMessage()
-                        .contains("baseCapacity"),
-                    "execution still rejects baseCapacity itself");
+                    expected.getCause() instanceof IOException,
+                    "the real execution boundary requires successful native initialization, independently of display data");
             }
+            SimpleAssert.eq(before, payload, "failed native initialization leaves the displayed saved NBT unchanged");
+            SimpleAssert.that(
+                ItemStack.areItemStacksEqual(materialBefore, material),
+                "display never supplies a paid upgrade to the uninitialized native host");
         }
     }
 

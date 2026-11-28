@@ -21,7 +21,6 @@ import java.util.function.Predicate;
 import net.minecraft.entity.item.EntityItem;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.entity.player.EntityPlayerMP;
-import net.minecraft.entity.player.InventoryPlayer;
 import net.minecraft.inventory.IInventory;
 import net.minecraft.item.ItemBlock;
 import net.minecraft.item.ItemStack;
@@ -149,7 +148,7 @@ public final class HologramMaterials {
             && containers == (!tag.hasKey("containers") || tag.getBoolean("containers"))
             && me == (!tag.hasKey("me") || tag.getBoolean("me"))
             && priority == Math.max(0, Math.min(2, tag.getInteger("priority")))
-            && recoveryDestination == Math.max(0, Math.min(1, tag.getInteger("recoveryDestination")));
+            && recoveryDestination == Math.max(0, Math.min(2, tag.getInteger("recoveryDestination")));
     }
 
     public static Settings read(ItemStack tool) {
@@ -160,7 +159,7 @@ public final class HologramMaterials {
         result.containers = !tag.hasKey("containers") || tag.getBoolean("containers");
         result.me = !tag.hasKey("me") || tag.getBoolean("me");
         result.priority = Math.max(0, Math.min(2, tag.getInteger("priority")));
-        result.recoveryDestination = Math.max(0, Math.min(1, tag.getInteger("recoveryDestination")));
+        result.recoveryDestination = Math.max(0, Math.min(2, tag.getInteger("recoveryDestination")));
         return result;
     }
 
@@ -172,7 +171,7 @@ public final class HologramMaterials {
         tag.setBoolean("containers", settings.containers);
         tag.setBoolean("me", settings.me);
         tag.setInteger("priority", Math.max(0, Math.min(2, settings.priority)));
-        tag.setInteger("recoveryDestination", Math.max(0, Math.min(1, settings.recoveryDestination)));
+        tag.setInteger("recoveryDestination", Math.max(0, Math.min(2, settings.recoveryDestination)));
         tool.getTagCompound()
             .setTag(SETTINGS, tag);
     }
@@ -187,6 +186,14 @@ public final class HologramMaterials {
         private final List<Container> containers = new ArrayList<>();
         private final List<ItemStackExtractor> adapters = new ArrayList<>();
         private final boolean nativeSources;
+        private List<InventoryUtility.InventoryProvider<?>> providerOrder;
+        private boolean extractorsDiscovered;
+
+        private List<InventoryUtility.InventoryProvider<?>> nativeProviders() {
+            if (providerOrder == null) providerOrder = HologramMaterialSources.inventoryProviders(player);
+            return providerOrder;
+        }
+
         private final Map<Integer, ItemStack> retainedContainers = new LinkedHashMap<>();
         private ItemStack terminalStack;
         private WirelessTerminalGuiObject terminal;
@@ -244,11 +251,14 @@ public final class HologramMaterials {
             java.util.Set<ItemStack> seen = Collections.newSetFromMap(new java.util.IdentityHashMap<>());
             java.util.Set<String> backpackIds = new java.util.HashSet<>();
             if (nativeSources) {
-                adapters.clear();
-                Iterator<? extends ItemStackExtractor> extractors = InventoryUtility.getStackExtractors(player);
-                while (extractors.hasNext()) adapters.add(extractors.next());
-                if (HologramBackpackMaterials.adapter() != null) adapters.add(0, HologramBackpackMaterials.adapter());
-                for (var provider : HologramMaterialSources.inventoryProviders(player)) {
+                if (!extractorsDiscovered) {
+                    Iterator<? extends ItemStackExtractor> extractors = InventoryUtility.getStackExtractors(player);
+                    while (extractors.hasNext()) adapters.add(extractors.next());
+                    if (HologramBackpackMaterials.adapter() != null)
+                        adapters.add(0, HologramBackpackMaterials.adapter());
+                    extractorsDiscovered = true;
+                }
+                for (var provider : nativeProviders()) {
                     if (transaction != null) transaction.checkGuard();
                     NativeInventory inventory = new NativeInventory(provider, player);
                     if (transaction != null) transaction.checkGuard();
@@ -281,7 +291,7 @@ public final class HologramMaterials {
             if (!backpackId.isEmpty() && !backpackIds.add(backpackId)) return;
             for (ItemStackExtractor adapter : adapters) {
                 if (transaction != null) transaction.checkGuard();
-                boolean valid = adapter.isValidSource(source.copy(), player);
+                boolean valid = adapter.isValidSource(source, player);
                 if (transaction != null) transaction.checkGuard();
                 if (!valid) continue;
                 // Only a real container candidate needs the terminal exclusion. Do not initialize
@@ -480,11 +490,15 @@ public final class HologramMaterials {
                 int amount = (int) Math.min(limit - result, HologramEssentia.jarAmount(source, aspect));
                 if (amount <= 0) continue;
                 if (!simulate) {
-                    if (transaction != null) transaction.checkGuard();
+                    if (transaction != null) {
+                        transaction.checkGuard();
+                        transaction.watchLocal(source);
+                    }
                     ItemStack drained = HologramEssentia.drainJar(source, aspect, amount);
                     if (transaction != null) transaction.checkGuard();
                     if (drained == null || player.inventory.mainInventory[slot] != source) continue;
                     player.inventory.mainInventory[slot] = drained;
+                    if (transaction != null) transaction.observeLocal();
                     player.inventory.markDirty();
                 }
                 result += amount;
@@ -763,7 +777,7 @@ public final class HologramMaterials {
                     }
                     for (Container container : new ArrayList<>(containers)) {
                         if (!container.current(player) || !container.adapter.isAPIImplemented(APIType.MAIN)
-                            || !container.adapter.isValidSource(container.source.copy(), player)) continue;
+                            || !container.adapter.isValidSource(container.source, player)) continue;
                         while (result.size() < maximum && System.nanoTime() <= deadline) {
                             int before = result.size();
                             container.adapter.takeFromStack(
@@ -773,7 +787,7 @@ public final class HologramMaterials {
                                 (stack, number) -> {
                                     if (number > 0 && result.size() < maximum) addChoice(result, stack);
                                 },
-                                container.source.copy(),
+                                container.source,
                                 null,
                                 player);
                             if (result.size() == before) break;
@@ -820,9 +834,10 @@ public final class HologramMaterials {
         private boolean exact(ItemStack stack, boolean simulate, Transaction transaction) {
             if (stack == null || stack.getItem() == null || stack.stackSize < 1) return false;
             Predicate<ItemStack> predicate = paymentPredicate(stack);
-            if (count(stack, stack.stackSize) < stack.stackSize) return false;
-            if (simulate) return !coordinatePayment(stack) || transaction == null
-                || amount(take(predicate, stack, true, stack.stackSize, transaction)) == stack.stackSize;
+            if (simulate) return count(stack, stack.stackSize) >= stack.stackSize;
+            // Standalone multi-item IItemSource calls retain their all-or-nothing preflight. Actions already simulated.
+            if (transaction == null && stack.stackSize > 1 && count(stack, stack.stackSize) < stack.stackSize)
+                return false;
             if (transaction != null) transaction.checkGuard();
             int kind = HologramGtswnPlacementMaterials.supplyKind(stack);
             int prepaid = kind < 0 ? 0
@@ -846,8 +861,7 @@ public final class HologramMaterials {
             Predicate<ItemStack> predicate = shellPredicate(stack);
             // A null exact sample is essential: AE must extract the actual matching tag, and the refund ledger
             // must record that actual identity. Exact-only container APIs cannot impersonate fuzzy support.
-            if (amount(take(predicate, null, true, 1, transaction, stack, true)) < 1) return false;
-            return simulate || amount(take(predicate, null, false, 1, transaction, stack, true)) == 1;
+            return amount(take(predicate, null, simulate, 1, transaction, stack, true)) == 1;
         }
 
         private Map<ItemStack, Integer> take(Predicate<ItemStack> predicate, ItemStack exact, boolean simulate,
@@ -878,7 +892,8 @@ public final class HologramMaterials {
                     if (!simulate && transaction != null) transaction.checkGuard();
                     int remaining = count - amount(result);
                     if (remaining <= 0) break;
-                    if (type == 0 && settings.main) fromMain(predicate, simulate, remaining, result, allocation);
+                    if (type == 0 && settings.main)
+                        fromMain(predicate, simulate, remaining, result, allocation, transaction);
                     else if (type == 1 && settings.containers)
                         fromContainers(predicate, nativeExact, simulate, remaining, result, transaction, allocation);
                     else if (type == 2 && settings.me)
@@ -900,22 +915,61 @@ public final class HologramMaterials {
 
         private void fromMain(Predicate<ItemStack> predicate, boolean simulate, int count,
             Map<ItemStack, Integer> result, HologramMaterialReservations.Selection allocation) {
+            fromMain(predicate, simulate, count, result, allocation, null);
+        }
+
+        private void fromMain(Predicate<ItemStack> predicate, boolean simulate, int count,
+            Map<ItemStack, Integer> result, HologramMaterialReservations.Selection allocation,
+            Transaction transaction) {
             if (nativeSources && !HologramMaterialSources.mainInventoryEnabled(player)) return;
-            for (int slot = 0; slot < player.inventory.mainInventory.length && count > 0; slot++) {
-                if (slot == protectedSlot) continue;
-                ItemStack stack = player.inventory.mainInventory[slot];
-                if (stack == null || stack.stackSize <= 0 || !predicate.test(stack)) continue;
-                int taken = Math.min(count, stack.stackSize);
-                if (allocation != null) taken = (int) allocation.allowance(stack, taken);
-                if (taken <= 0) continue;
-                add(result, stack, taken);
-                if (allocation != null) allocation.extracted(stack, taken);
-                count -= taken;
-                if (!simulate) {
-                    stack.stackSize -= taken;
-                    if (stack.stackSize <= 0) player.inventory.mainInventory[slot] = null;
-                }
+            Iterable<ItemStack> inventory = HologramMaterialSources
+                .filtered(HologramMaterialSources.mainInventory(player), stack -> !protectedStack(stack));
+            if (!simulate && transaction != null) transaction.checkGuard();
+            try {
+                takeNativeInventory(inventory, stack -> {
+                    if (!predicate.test(stack)) return false;
+                    if (!simulate && transaction != null) transaction.watchLocal(stack);
+                    return true;
+                }, simulate, count, result, allocation);
+            } finally {
+                if (!simulate && transaction != null) transaction.observeLocal();
             }
+            if (!simulate && transaction != null) transaction.checkGuard();
+        }
+
+        private void takeNativeInventory(Iterable<ItemStack> inventory, Predicate<ItemStack> predicate,
+            boolean simulate, int count, Map<ItemStack, Integer> result,
+            HologramMaterialReservations.Selection allocation) {
+            java.util.Set<HologramBlueprintResources.ExactKey> attempted = new java.util.HashSet<>();
+            do {
+                Predicate<ItemStack> selected = predicate;
+                int permitted = count;
+                if (allocation != null && allocation.guarded) {
+                    Map<ItemStack, Integer> probe = InventoryUtility.takeFromInventory(
+                        inventory,
+                        stack -> predicate.test(stack) && !attempted.contains(HologramValues.lookupKey(stack)),
+                        true,
+                        1,
+                        false);
+                    if (probe.isEmpty()) return;
+                    ItemStack identity = probe.keySet()
+                        .iterator()
+                        .next();
+                    HologramBlueprintResources.ExactKey key = HologramValues.stackKey(identity);
+                    attempted.add(key);
+                    permitted = (int) allocation.allowance(identity, count);
+                    selected = stack -> key.matches(stack) && predicate.test(stack);
+                }
+                if (permitted > 0) {
+                    Map<ItemStack, Integer> extracted = InventoryUtility
+                        .takeFromInventory(inventory, selected, simulate, permitted, false);
+                    for (Map.Entry<ItemStack, Integer> entry : extracted.entrySet()) {
+                        add(result, entry.getKey(), entry.getValue());
+                        if (allocation != null) allocation.extracted(entry.getKey(), entry.getValue());
+                        count -= entry.getValue();
+                    }
+                }
+            } while (count > 0 && allocation != null && allocation.guarded && attempted.size() < 96);
         }
 
         private void fromContainers(Predicate<ItemStack> predicate, ItemStack exact, boolean simulate, int count,
@@ -942,13 +996,14 @@ public final class HologramMaterials {
                     boolean current = container.current(player);
                     if (!simulate && transaction != null) transaction.checkGuard();
                     if (!current) continue;
-                    boolean valid = container.adapter.isValidSource(container.source.copy(), player);
+                    boolean valid = container.adapter.isValidSource(container.source, player);
                     if (!simulate && transaction != null) transaction.checkGuard();
                     if (!valid) continue;
                     final int before = amount(result);
                     final int requestedCount = count;
                     final Container source = container;
-                    final ItemStack beforeSource = simulate ? null : container.source.copy();
+                    final ItemStack beforeSource = simulate || transaction != null && transaction.sparseLocal ? null
+                        : container.source.copy();
                     // MAIN reports actual stack identities as they are extracted, including before a thrown exception.
                     InventoryUtility.ItemStackCounter counter = (stack, number) -> {
                         if (number == 0) return;
@@ -967,7 +1022,7 @@ public final class HologramMaterials {
                     if (!simulate && transaction != null)
                         transaction.requestedContainer(exact, count, container.source);
                     try {
-                        ItemStack supplied = simulate ? container.source.copy() : container.source;
+                        ItemStack supplied = container.source;
                         boolean mainApi = container.adapter.isAPIImplemented(APIType.MAIN);
                         if (!simulate && transaction != null) transaction.checkGuard();
                         if (allocation != null && allocation.guarded && mainApi) {
@@ -984,7 +1039,7 @@ public final class HologramMaterials {
                                     (candidate, number) -> {
                                         if (number > 0 && choice[0] == null) choice[0] = candidate.copy();
                                     },
-                                    supplied.copy(),
+                                    supplied,
                                     null,
                                     player);
                                 if (!simulate && transaction != null) transaction.checkGuard();
@@ -1021,6 +1076,7 @@ public final class HologramMaterials {
                         }
                     } finally {
                         if (!simulate && transaction != null
+                            && !transaction.sparseLocal
                             && source.slot >= 0
                             && (amount(result) > before
                                 || !ItemStack.areItemStacksEqual(beforeSource, source.source))) {
@@ -1042,33 +1098,28 @@ public final class HologramMaterials {
         private void fromNativeInventory(NativeInventory inventory, Predicate<ItemStack> predicate, boolean simulate,
             int count, Map<ItemStack, Integer> result, Transaction transaction,
             HologramMaterialReservations.Selection allocation, java.util.Set<ItemStack> seen) {
-            for (Iterator<ItemStack> iterator = inventory.inventory.iterator(); iterator.hasNext() && count > 0;) {
-                ItemStack stack = iterator.next();
-                if (stack == null || stack.stackSize <= 0 || protectedStack(stack) || !seen.add(stack)) continue;
-                // Main aliases are paid only under the main mask, and restored by the main snapshot.
+            java.util.Set<ItemStack> allowed = Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+            for (ItemStack stack : inventory.inventory) {
+                if (stack == null || protectedStack(stack) || !seen.add(stack)) continue;
                 boolean main = false;
                 for (ItemStack carried : player.inventory.mainInventory) if (carried == stack) main = true;
-                if (main || !predicate.test(stack)) continue;
-                int taken = Math.min(count, stack.stackSize);
-                if (allocation != null) taken = (int) allocation.allowance(stack, taken);
-                if (taken <= 0) continue;
-                if (!simulate && transaction != null) transaction.requestedContainer(stack, taken, stack);
-                ItemStack actual = copy(stack, taken);
-                if (!simulate) {
-                    if (transaction != null) transaction.checkGuard();
-                    stack.stackSize -= taken;
-                    if (transaction != null) {
-                        transaction.containerItems.add(actual);
-                        transaction.paymentChanged();
-                    }
-                    if (stack.stackSize == 0) iterator.remove();
-                    if (transaction != null) transaction.checkGuard();
-                    inventory.markDirty();
-                    if (transaction != null) transaction.acknowledged();
+                if (!main) allowed.add(stack);
+            }
+            Iterable<ItemStack> selected = HologramMaterialSources.filtered(inventory.inventory, allowed::contains);
+            Map<ItemStack, Integer> extracted = new LinkedHashMap<>();
+            if (!simulate && transaction != null) transaction.requestedInventory(count);
+            takeNativeInventory(selected, predicate, simulate, count, extracted, allocation);
+            for (Map.Entry<ItemStack, Integer> entry : extracted.entrySet()) {
+                add(result, entry.getKey(), entry.getValue());
+                if (!simulate && transaction != null) {
+                    transaction.containerItems.add(copy(entry.getKey(), entry.getValue()));
+                    transaction.paymentChanged();
                 }
-                add(result, actual, taken);
-                if (allocation != null) allocation.extracted(actual, taken);
-                count -= taken;
+            }
+            if (!simulate) {
+                if (transaction != null) transaction.checkGuard();
+                if (!extracted.isEmpty()) inventory.markDirty();
+                if (transaction != null) transaction.acknowledged();
             }
         }
 
@@ -1274,10 +1325,53 @@ public final class HologramMaterials {
 
         /** Readiness failures are distinct from a usable destination's capacity overflow. */
         void requireDemolitionDestination(int destination) {
+            if (destination == 2) {
+                if (recoveryBackpacks().isEmpty())
+                    throw new IllegalStateException("Selected Backpack recovery destination is unavailable");
+                return;
+            }
             if (destination != 1) return;
             requireDemolitionMe();
             if (networkPower(1, Actionable.SIMULATE, PowerMultiplier.CONFIG, null) < 1)
                 throw new IllegalStateException("所选 AE 回收的传输电量不足");
+        }
+
+        /** The native providers decide which carried inventories are accessible; UUID aliases share one save. */
+        private List<ItemStack> recoveryBackpacks() {
+            List<ItemStack> result = new ArrayList<>();
+            ItemStackExtractor adapter = HologramBackpackMaterials.adapter();
+            if (adapter == null) return result;
+            java.util.Set<String> ids = new java.util.HashSet<>();
+            List<Iterable<ItemStack>> inventories = new ArrayList<>();
+            if (nativeSources) {
+                for (var provider : nativeProviders()) {
+                    NativeInventory inventory = new NativeInventory(provider, player);
+                    if (inventory.inventory != null) inventories.add(inventory.inventory);
+                }
+            } else inventories.add(HologramMaterialSources.mainInventory(player));
+            for (Iterable<ItemStack> inventory : inventories) for (ItemStack source : inventory) {
+                String id = HologramBackpackMaterials.identity(source);
+                if (!id.isEmpty() && !protectedStack(source) && ids.add(id) && adapter.isValidSource(source, player))
+                    result.add(source);
+            }
+            return result;
+        }
+
+        private void deliverToBackpacks(ItemStack stack, NBTTagCompound receipt) {
+            if (receipt.hasKey(RECOVERY_UNCERTAIN))
+                throw new IllegalStateException("Backpack insertion result is unresolved; retain recovery evidence");
+            List<ItemStack> destinations = recoveryBackpacks();
+            if (destinations.isEmpty())
+                throw new IllegalStateException("Selected Backpack recovery destination is unavailable");
+            for (ItemStack source : destinations) {
+                if (stack.stackSize <= 0) break;
+                // A save may have succeeded before an external callback throws. Never replay that offered amount.
+                setRecoveryUncertain(receipt, stack.stackSize);
+                int remaining = HologramBackpackMaterials.insert(source, player, stack);
+                stack.stackSize = remaining;
+                receipt.setInteger(RECOVERY_COUNT, remaining);
+                setRecoveryUncertain(receipt, 0);
+            }
         }
 
         private DemolitionItemAccess demolitionMe() {
@@ -1354,7 +1448,14 @@ public final class HologramMaterials {
 
         /** Enqueue only committed world drops. Delivery must never trigger a world/inventory rollback. */
         public void recoverWorld(List<ItemStack> stacks) {
-            for (ItemStack stack : stacks) if (stack != null) recover(stack.copy(), settings.recoveryDestination == 1);
+            for (ItemStack stack : stacks) if (stack != null && stack.stackSize > 0) {
+                if (settings.recoveryDestination != 2) recover(stack.copy(), settings.recoveryDestination == 1);
+                else {
+                    NBTTagCompound entry = itemReceipt(stack);
+                    entry.setInteger(DEMOLITION_DESTINATION, 2);
+                    enqueueRecovery(entry);
+                }
+            }
         }
 
         /** Compatibility entrypoint: committed drops retain AE, backpack, then feet delivery. */
@@ -1364,7 +1465,7 @@ public final class HologramMaterials {
 
         /** Explicit demolition destinations never fall through to the other inventory. */
         public void recoverWorldAtPlayer(List<ItemStack> stacks, int destination) {
-            if (destination < -1 || destination > 1)
+            if (destination < -1 || destination > 2)
                 throw new IllegalArgumentException("Invalid demolition destination");
             for (ItemStack stack : stacks) if (stack != null && stack.stackSize > 0) {
                 NBTTagCompound entry = itemReceipt(stack);
@@ -1440,11 +1541,12 @@ public final class HologramMaterials {
                     throw new IllegalStateException("Invalid persisted demolition destination; receipt retained");
                 boolean explicit = receipt.hasKey(DEMOLITION_DESTINATION, 3);
                 int destination = explicit ? receipt.getInteger(DEMOLITION_DESTINATION) : -1;
-                if (explicit && (destination < 0 || destination > 1))
+                if (explicit && (destination < 0 || destination > 2))
                     throw new IllegalStateException("Invalid persisted demolition destination; receipt retained");
                 long beforeBytes = receipt.getLong(RECOVERY_BYTES);
                 try {
                     if (destination == 1) deliverDemolitionToMe(demolitionMe(), stack, receipt);
+                    else if (destination == 2) deliverToBackpacks(stack, receipt);
                     else {
                         boolean meFirst = receipt.getBoolean(RECOVERY_ME);
                         if (!explicit && meFirst) {
@@ -1462,6 +1564,8 @@ public final class HologramMaterials {
                             stack);
                     }
                 } finally {
+                    // Keep each confirmed remainder even if a later destination/save callback fails.
+                    receipt.setInteger(RECOVERY_COUNT, stack.stackSize);
                     // Only the small quarantine tag changes size; never reserialize a large existing item payload.
                     owner.setLong(
                         RECOVERY_BYTES,
@@ -1582,61 +1686,6 @@ public final class HologramMaterials {
         }
     }
 
-    /** One exact survival shell, held logically until the driver has finished every world callback. */
-    static final class ScopedMainClaim {
-
-        private final InventoryPlayer inventory;
-        private final ItemStack[] slots;
-        private final int index, count;
-        private final ItemStack live, before;
-
-        private ScopedMainClaim(InventoryPlayer inventory, ItemStack[] slots, int index, ItemStack live) {
-            this.inventory = inventory;
-            this.slots = slots;
-            this.index = index;
-            this.live = live;
-            count = live.stackSize;
-            before = live.copy();
-        }
-
-        static ScopedMainClaim observe(EntityPlayerMP actor, InventoryPlayer inventory, ItemStack[] slots,
-            int protectedSlot, ItemStack wanted) {
-            if (actor.inventory != inventory || inventory.mainInventory != slots) return null;
-            for (int i = 0; i < slots.length; i++) {
-                ItemStack item = slots[i];
-                if (i == protectedSlot || item == null
-                    || item.stackSize <= 0
-                    || item.hasTagCompound()
-                    || !HologramValues.same(item, wanted)) continue;
-                ScopedMainClaim exact = new ScopedMainClaim(inventory, slots, i, item);
-                if (HologramValues.same(exact.before, wanted) && exact.matches(actor)) return exact;
-            }
-            return null;
-        }
-
-        private boolean sameSlot(EntityPlayerMP actor) {
-            return actor.inventory == inventory && inventory.mainInventory == slots
-                && slots[index] == live
-                && live.stackSize == count
-                && count > 0
-                && !live.hasTagCompound();
-        }
-
-        boolean matches(EntityPlayerMP actor) {
-            // The selected and copied specimen are already proved exact to the pin, with no optional NBT.
-            // Recheck the actual stored stack fields, never call an Item's damage/predicate provider here.
-            return sameSlot(actor) && ItemStack.areItemStacksEqual(live, before) && sameSlot(actor);
-        }
-
-        /** Only after fingerprint + lease proof. From here through receipt retirement there are no providers. */
-        private boolean debit(EntityPlayerMP actor) {
-            if (!sameSlot(actor)) return false;
-            live.stackSize = count - 1;
-            if (count == 1) slots[index] = null;
-            return true;
-        }
-    }
-
     public static final class Transaction implements IItemSource {
 
         private final Context context;
@@ -1652,6 +1701,122 @@ public final class HologramMaterials {
         private int terminalSlot = -1;
         private ItemStack terminalState;
         private boolean closed;
+        private boolean unknownExternal;
+        private boolean sparseLocal;
+        private ItemStack[] localInventory;
+        private final Map<Integer, LocalSlot> localSlots = new LinkedHashMap<>();
+        private final java.util.Set<Integer> observingLocal = new java.util.HashSet<>();
+
+        private static final class LocalSlot {
+
+            final ItemStack before;
+            ItemStack after, reference;
+
+            LocalSlot(ItemStack before, ItemStack after, ItemStack reference) {
+                this.before = before;
+                this.after = after;
+                this.reference = reference;
+            }
+        }
+
+        /** Observe only slots used by this action; unrelated inventory changes are permitted. */
+        Transaction trackLocalInventory() {
+            sparseLocal = true;
+            localInventory = context.player.inventory.mainInventory;
+            if (journal != null) {
+                journal.setBoolean("sparseLocal", true);
+                journal.removeTag("heldInventory");
+                journal.removeTag("beforeInventory");
+            }
+            return this;
+        }
+
+        void watchLocal(ItemStack stack) {
+            if (!sparseLocal || stack == null) return;
+            if (context.player.inventory.mainInventory != localInventory)
+                throw new IllegalStateException("Action inventory binding changed");
+            for (int slot = 0; slot < localInventory.length; slot++) if (localInventory[slot] == stack) {
+                LocalSlot existing = localSlots.get(slot);
+                if (existing == null) localSlots.put(slot, new LocalSlot(stack.copy(), stack.copy(), stack));
+                else if (!currentLocal(slot, existing))
+                    throw new IllegalStateException("Action material slot changed before extraction");
+                observingLocal.add(slot);
+                return;
+            }
+            throw new IllegalStateException("Action material source is no longer in the player inventory");
+        }
+
+        void observeLocal() {
+            if (!sparseLocal) return;
+            if (context.player.inventory.mainInventory != localInventory)
+                throw new IllegalStateException("Action inventory binding changed");
+            for (int slot : observingLocal) {
+                LocalSlot receipt = localSlots.get(slot);
+                ItemStack current = localInventory[slot];
+                receipt.reference = current;
+                receipt.after = current == null ? null : current.copy();
+            }
+            observingLocal.clear();
+            paymentChanged();
+            snapshotPayment();
+        }
+
+        private boolean currentLocal(int slot, LocalSlot receipt) {
+            return localInventory[slot] == receipt.reference
+                && ItemStack.areItemStacksEqual(localInventory[slot], receipt.after);
+        }
+
+        boolean localInventoryCurrent() {
+            if (!sparseLocal) return true;
+            if (context.player.inventory.mainInventory != localInventory || !observingLocal.isEmpty()) return false;
+            for (Map.Entry<Integer, LocalSlot> entry : localSlots.entrySet())
+                if (!currentLocal(entry.getKey(), entry.getValue())) return false;
+            return true;
+        }
+
+        /** Refund confirmed local deductions without overwriting later listeners or player edits. */
+        boolean rollbackAction() {
+            if (closed) return true;
+            if (uncertain()) throw new IllegalStateException("Cannot refund unresolved extraction");
+            if (!localInventoryCurrent())
+                throw new IllegalStateException("Action material slots changed; retain recovery evidence");
+            if (sparseLocal) {
+                for (Map.Entry<Integer, LocalSlot> entry : localSlots.entrySet()) {
+                    ItemStack original = entry.getValue().before;
+                    localInventory[entry.getKey()] = original == null ? null : original.copy();
+                }
+                localSlots.clear();
+                paymentChanged();
+                snapshotPayment();
+                context.player.inventory.markDirty();
+            }
+            rollbackExternal();
+            // Sparse actions never restored container/terminal source stacks, so those native mutations stay live.
+            context.retainedContainers.clear();
+            context.flushRecovery();
+            if (journal != null) {
+                checkGuard();
+                if (uncertain() || HologramConstructionJournal.owner(context.player)
+                    .getTag(HologramConstructionJournal.KEY) != journal)
+                    throw new IllegalStateException("Action inventory binding changed");
+                HologramConstructionJournal.clear(context.player);
+            }
+            return true;
+        }
+
+        boolean reserveVoucherMain() {
+            if (!sparseLocal) return HologramDecorationVoucher.reserveMain(context.player);
+            for (ItemStack stack : localInventory) if (HologramDecorationVoucher.isVoucher(stack)) {
+                watchLocal(stack);
+                break;
+            }
+            try {
+                return HologramDecorationVoucher.reserveMain(context.player);
+            } finally {
+                observeLocal();
+            }
+        }
+
         private boolean paymentDirty = true;
         private BooleanSupplier guard;
         private NBTTagCompound journal;
@@ -1670,7 +1835,8 @@ public final class HologramMaterials {
 
         void scopedJournal(NBTTagCompound value) {
             journal = value;
-            journal.setTag("heldInventory", journal.getTagList("beforeInventory", 10));
+            if (value.getBoolean("sparseLocal")) trackLocalInventory();
+            else journal.setTag("heldInventory", journal.getTagList("beforeInventory", 10));
         }
 
         void beforeScopedWorldMutation() {
@@ -1682,7 +1848,7 @@ public final class HologramMaterials {
         }
 
         boolean uncertain() {
-            return journal != null && journal.hasKey("operation");
+            return unknownExternal || journal != null && journal.hasKey("operation");
         }
 
         <T extends IAEStack<?>> T extract(String kind, T request, java.util.function.Supplier<T> nativeCall) {
@@ -1699,8 +1865,9 @@ public final class HologramMaterials {
         }
 
         void requested(String kind, IAEStack<?> request) {
-            if (journal == null) return;
             if (uncertain()) throw new IllegalStateException("Previous native extraction is unresolved");
+            unknownExternal = true;
+            if (journal == null) return;
             checkGuard();
             snapshot();
             checkGuard();
@@ -1719,8 +1886,9 @@ public final class HologramMaterials {
 
         /** Generic SL extractors have no atomic receipt or inverse; a thrown call stays isolated. */
         void requestedContainer(ItemStack request, int count, ItemStack source) {
-            if (journal == null) return;
             if (uncertain()) throw new IllegalStateException("Previous native extraction is unresolved");
+            unknownExternal = true;
+            if (journal == null) return;
             checkGuard();
             snapshot();
             checkGuard();
@@ -1730,6 +1898,19 @@ public final class HologramMaterials {
             if (request != null) operation.setTag("request", itemReceipt(request));
             operation.setTag("sourceStack", itemReceipt(source));
             checkGuard();
+            journal.setTag("operation", operation);
+            journal.setString("phase", "external-pending");
+            HologramConstructionJournal.persist(context.player, journal);
+        }
+
+        void requestedInventory(int count) {
+            if (uncertain()) throw new IllegalStateException("Previous native extraction is unresolved");
+            unknownExternal = true;
+            if (journal == null) return;
+            snapshot();
+            NBTTagCompound operation = new NBTTagCompound();
+            operation.setString("kind", "inventory-provider");
+            operation.setLong("requested", count);
             journal.setTag("operation", operation);
             journal.setString("phase", "external-pending");
             HologramConstructionJournal.persist(context.player, journal);
@@ -1760,6 +1941,7 @@ public final class HologramMaterials {
         }
 
         void acknowledged() {
+            unknownExternal = false;
             if (journal == null) {
                 checkGuard();
                 return;
@@ -1769,7 +1951,7 @@ public final class HologramMaterials {
             journal.setString("phase", "paid");
             snapshotPayment();
             checkGuard();
-            journal.setTag(
+            if (!sparseLocal) journal.setTag(
                 "heldInventory",
                 HologramConstructionJournal.inventory(context.player.inventory.mainInventory, journal));
             checkGuard();
@@ -1787,6 +1969,19 @@ public final class HologramMaterials {
 
         void snapshotPayment() {
             if (journal == null) return;
+            if (sparseLocal) {
+                journal.setBoolean("sparseLocal", true);
+                NBTTagList slots = new NBTTagList();
+                for (Map.Entry<Integer, LocalSlot> entry : localSlots.entrySet()) {
+                    NBTTagCompound tag = new NBTTagCompound();
+                    tag.setInteger("slot", entry.getKey());
+                    LocalSlot slot = entry.getValue();
+                    if (slot.before != null) tag.setTag("before", itemReceipt(slot.before));
+                    if (slot.after != null) tag.setTag("after", itemReceipt(slot.after));
+                    slots.appendTag(tag);
+                }
+                journal.setTag("localSlots", slots);
+            }
             if (paymentDirty || !journal.hasKey("payment", 10)) {
                 NBTTagCompound ledger = new NBTTagCompound();
                 ledger.setString("energy", energyTaken.toString());
@@ -1850,7 +2045,7 @@ public final class HologramMaterials {
             checkGuard();
             snapshotPayment();
             checkGuard();
-            journal.setTag(
+            if (!sparseLocal) journal.setTag(
                 "heldInventory",
                 initialInventory ? journal.getTagList("beforeInventory", 10)
                     : HologramConstructionJournal.inventory(context.player.inventory.mainInventory, journal));
@@ -1873,6 +2068,23 @@ public final class HologramMaterials {
         static Transaction resume(EntityPlayerMP player, NBTTagCompound journal) {
             Context context = new Context(player, new Settings(), -1);
             Transaction result = new Transaction(context);
+            if (journal.getBoolean("sparseLocal")) {
+                result.trackLocalInventory();
+                NBTTagList slots = journal.getTagList("localSlots", 10);
+                for (int i = 0; i < slots.tagCount(); i++) {
+                    NBTTagCompound tag = slots.getCompoundTagAt(i);
+                    int index = tag.getInteger("slot");
+                    if (index < 0 || index >= player.inventory.mainInventory.length
+                        || result.localSlots.containsKey(index))
+                        throw new IllegalStateException("Invalid sparse inventory receipt");
+                    ItemStack before = tag.hasKey("before", 10) ? recoveryItem(tag.getCompoundTag("before")) : null;
+                    ItemStack after = tag.hasKey("after", 10) ? recoveryItem(tag.getCompoundTag("after")) : null;
+                    if (tag.hasKey("before", 10) && before == null || tag.hasKey("after", 10) && after == null)
+                        throw new IllegalStateException("Unresolved sparse inventory identity");
+                    result.localSlots.put(index, new LocalSlot(before, after, player.inventory.mainInventory[index]));
+                }
+            }
+            result.journal = journal;
             NBTTagCompound ledger = journal.getCompoundTag("payment");
             if (!ledger.getString("source")
                 .isEmpty()
@@ -2089,32 +2301,6 @@ public final class HologramMaterials {
             cachedEnergyReceipts.add(receipt);
             paymentChanged();
             checkGuard();
-            return true;
-        }
-
-        /**
-         * The scoped plain path never lends this transaction to placement callbacks. There is no resource payment
-         * to refund; close only this undurable journal, optionally charging the already validated original slot.
-         */
-        boolean finishScopedPlain(ScopedMainClaim claim) {
-            if (journal == null || closed
-                || uncertain()
-                || journal.getBoolean("durable")
-                || !containerItems.isEmpty()
-                || !containerStates.isEmpty()
-                || !meItems.isEmpty()
-                || !meFluids.isEmpty()
-                || !meEssentia.isEmpty()
-                || !cachedEnergyReceipts.isEmpty()
-                || energyTaken.signum() != 0
-                || terminalState != null
-                || terminalSupplies[0] != 0
-                || terminalSupplies[1] != 0) return false;
-            NBTTagCompound owner = HologramConstructionJournal.owner(context.player);
-            if (owner.getTag(HologramConstructionJournal.KEY) != journal
-                || claim != null && !claim.debit(context.player)) return false;
-            owner.removeTag(HologramConstructionJournal.KEY);
-            closed = true;
             return true;
         }
 

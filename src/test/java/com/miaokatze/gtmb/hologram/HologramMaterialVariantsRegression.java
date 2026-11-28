@@ -115,9 +115,9 @@ public final class HologramMaterialVariantsRegression {
                     "gtmb_test:material-variant-wrong-native",
                     NativeBlock.class,
                     UnreviewedItem.class,
-                    Block.class,
+                    null,
                     value -> value),
-                "a registration cannot claim a different native pick implementation");
+                "a planned compatibility registration still requires its complete legacy descriptor");
             actualWorldIdentity(block, metadata, paid);
             SimpleAssert.eq(0, block.factories, "planning and actual identity checks never construct a tile");
         } finally {

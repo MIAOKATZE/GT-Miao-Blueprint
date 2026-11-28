@@ -17,13 +17,18 @@ import java.util.Map;
 import java.util.Set;
 
 import net.minecraft.block.Block;
+import net.minecraft.entity.Entity;
+import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.entity.player.InventoryPlayer;
 import net.minecraft.entity.player.PlayerCapabilities;
 import net.minecraft.init.Blocks;
+import net.minecraft.init.Items;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
+import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.tileentity.TileEntity;
+import net.minecraft.world.World;
 import net.minecraftforge.common.util.ForgeDirection;
 
 import com.gtnewhorizon.structurelib.alignment.IAlignmentLimits;
@@ -32,6 +37,7 @@ import com.gtnewhorizon.structurelib.alignment.enumerable.Flip;
 import com.gtnewhorizon.structurelib.alignment.enumerable.Rotation;
 import com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
+import com.mojang.authlib.GameProfile;
 
 import gregtech.api.GregTechAPI;
 import gregtech.api.interfaces.ITexture;
@@ -63,13 +69,24 @@ final class HologramVirtualRotationRegression {
             Field field = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
             field.setAccessible(true);
             sun.misc.Unsafe unsafe = (sun.misc.Unsafe) field.get(null);
-            AlignmentController controller = (AlignmentController) unsafe.allocateInstance(AlignmentController.class);
+            AlignmentController controller = new AlignmentController();
             alignmentLimits(controller, (d, r, f) -> f == Flip.NONE);
             field(MTEEnhancedMultiBlockBase.class, "mExtendedFacing").set(controller, ExtendedFacing.EAST_NORMAL_NONE);
             GregTechAPI.METATILEENTITIES[CONTROLLER] = controller;
             MTEHatchInput hatch = (MTEHatchInput) unsafe.allocateInstance(MTEHatchInput.class);
             GregTechAPI.METATILEENTITIES[HATCH] = hatch;
-            Block machineBlock = new Block(net.minecraft.block.material.Material.iron) {};
+            Block machineBlock = new Block(net.minecraft.block.material.Material.iron) {
+
+                @Override
+                public boolean hasTileEntity(int metadata) {
+                    return true;
+                }
+
+                @Override
+                public TileEntity createTileEntity(World world, int metadata) {
+                    return new gregtech.api.metatileentity.BaseMetaTileEntity();
+                }
+            };
             Block.blockRegistry.addObject(4093, "gtmb:rotation_fixture_machines", machineBlock);
             ItemMachines machines = new ItemMachines(machineBlock);
             Item.itemRegistry.addObject(4093, "gtmb:rotation_fixture_machines", machines);
@@ -82,7 +99,16 @@ final class HologramVirtualRotationRegression {
             Item.itemRegistry.addObject(31999, "gtmb:rotation_fixture_projector", projector);
             HologramServiceEditRegression.ReadOnlyWorld world = (HologramServiceEditRegression.ReadOnlyWorld) unsafe
                 .allocateInstance(HologramServiceEditRegression.ReadOnlyWorld.class);
-            EntityPlayerMP player = (EntityPlayerMP) unsafe.allocateInstance(EntityPlayerMP.class);
+            EntityPlayerMP player = (EntityPlayerMP) unsafe.allocateInstance(PlacementPlayer.class);
+            var identity = java.util.UUID.fromString("ca05715d-c7da-492b-8c72-f1139bc8c5af");
+            for (Field profile : EntityPlayer.class.getDeclaredFields()) if (profile.getType() == GameProfile.class) {
+                profile.setAccessible(true);
+                profile.set(player, new GameProfile(identity, "VirtualRotation"));
+            }
+            for (Field uuid : Entity.class.getDeclaredFields()) if (uuid.getType() == java.util.UUID.class) {
+                uuid.setAccessible(true);
+                uuid.set(player, identity);
+            }
             player.worldObj = world;
             player.posY = 64;
             player.inventory = new InventoryPlayer(player);
@@ -253,18 +279,211 @@ final class HologramVirtualRotationRegression {
 
     private static void placedControllerAlignment(sun.misc.Unsafe unsafe, Object session,
         AlignmentController controller, ExtendedFacing expected) throws Exception {
-        AlignmentTile tile = (AlignmentTile) unsafe.allocateInstance(AlignmentTile.class);
-        tile.front = ForgeDirection.NORTH;
-        tile.setWorldObj(((EntityPlayerMP) get(session, "player")).worldObj);
-        // Avoid alignment network sends; still execute the real machine setter and texture-update branch.
-        GregTechAPI.addDummyWorld(
-            tile.getWorld()
-                .getClass());
-        controller.setBaseMetaTileEntity(tile);
-        method("applyVirtualControllerAlignment", session.getClass(), TileEntity.class).invoke(null, session, tile);
-        SimpleAssert
-            .eq(expected, controller.getExtendedFacing(), "production placement invokes real machine setter with roll");
-        SimpleAssert.eq(expected.getDirection(), tile.front, "production placement keeps base front consistent");
+        EntityPlayerMP player = ((HologramSession) session).player;
+        World previousWorld = player.worldObj;
+        boolean previousCreative = player.capabilities.isCreativeMode;
+        int previousSelection = player.inventory.currentItem;
+        ItemStack originalTool = player.inventory.mainInventory[previousSelection];
+        ItemStack previousMaterial = player.inventory.mainInventory[1];
+        ItemStack previousOtherHand = player.inventory.mainInventory[2];
+        Block previousMachines = GregTechAPI.sBlockMachines;
+        var previousProxy = gregtech.GTMod.proxy;
+        var previousTracker = previousProxy == null ? null : previousProxy.powerfailTracker;
+        @SuppressWarnings("unchecked")
+        var names = (Map<Class<?>, String>) cpw.mods.fml.relauncher.ReflectionHelper
+            .findField(TileEntity.class, "classToNameMap", "field_145853_j")
+            .get(null);
+        @SuppressWarnings("unchecked")
+        var classes = (Map<String, Class<?>>) cpw.mods.fml.relauncher.ReflectionHelper
+            .findField(TileEntity.class, "nameToClassMap", "field_145855_i")
+            .get(null);
+        Class<?> nativeTile = gregtech.api.metatileentity.BaseMetaTileEntity.class;
+        boolean addMapping = !names.containsKey(nativeTile);
+        if (addMapping) {
+            Method mapping = TileEntity.class.getDeclaredMethod("addMapping", Class.class, String.class);
+            mapping.setAccessible(true);
+            mapping.invoke(null, nativeTile, "BaseMetaTileEntity");
+        }
+        try {
+            // Native readFromNBT removes/recreates the old MTE and invokes its real powerfail cleanup.
+            // Supply the real offline tracker without registering an FML proxy or any event handlers.
+            if (gregtech.GTMod.proxy == null)
+                gregtech.GTMod.proxy = (gregtech.common.GTProxy) unsafe.allocateInstance(gregtech.common.GTProxy.class);
+            if (gregtech.GTMod.proxy.powerfailTracker == null)
+                gregtech.GTMod.proxy.powerfailTracker = new gregtech.common.data.GTPowerfailTracker();
+            var world = HologramSavedPlacementAdapterRegression.TestWorld.create(unsafe);
+            GregTechAPI.addDummyWorld(world.getClass());
+            player.worldObj = world;
+            player.capabilities.isCreativeMode = false;
+            ItemStack material = pins(session).get(2)
+                .copy();
+            material.stackSize = 1;
+            player.inventory.mainInventory[1] = material.copy();
+            GregTechAPI.sBlockMachines = Block.getBlockFromItem(material.getItem());
+            var writer = new HologramSession(player, 0, 64, 0, false, 2);
+            writer.virtualPreset = ((HologramSession) session).virtualPreset;
+            writer.materialSettings.main = true;
+            writer.materialSettings.containers = writer.materialSettings.me = false;
+            writer.materialContext = new HologramMaterials.Context(player, writer.materialSettings, writer.slot);
+            var data = new NBTTagCompound();
+            data.setInteger("mID", CONTROLLER);
+            data.setByte(
+                "mFacing",
+                (byte) expected.getDirection()
+                    .ordinal());
+            data.setByte(
+                "eRotation",
+                (byte) expected.getRotation()
+                    .ordinal());
+            data.setByte(
+                "eFlip",
+                (byte) expected.getFlip()
+                    .ordinal());
+            var target = HologramNativeConstruction.saved(
+                writer,
+                GregTechAPI.sBlockMachines,
+                controller.getTileEntityBaseType(),
+                material,
+                expected.getDirection()
+                    .ordinal(),
+                HologramBlueprintNbt.encodeCanonical(data),
+                "");
+            ItemStack replacement = originalTool.copy();
+            ItemStack stock = player.inventory.mainInventory[1];
+            player.inventory.mainInventory[writer.slot] = replacement;
+            long permissionReads = world.permissionReads;
+            SimpleAssert.eq(
+                HologramNativeConstruction.Outcome.FAILED,
+                HologramNativeConstruction.place(writer, target, 0, 64, 0, () -> true),
+                "native placement rejects a different stack even when its saved tool identity matches");
+            SimpleAssert.that(
+                world.getBlock(0, 64, 0) == Blocks.air && world.getTileEntity(0, 64, 0) == null
+                    && player.inventory.mainInventory[writer.slot] == replacement
+                    && player.inventory.mainInventory[1] == stock
+                    && stock.stackSize == 1
+                    && world.permissionReads == permissionReads
+                    && !HologramConstructionJournal.owner(player)
+                        .hasKey(HologramConstructionJournal.KEY),
+                "stale placement leaves world, slots, and journal untouched");
+
+            player.inventory.mainInventory[writer.slot] = originalTool;
+            player.inventory.mainInventory[2] = new ItemStack(Items.stick);
+            player.inventory.currentItem = 2;
+            var outcome = HologramNativeConstruction.place(writer, target, 0, 64, 0, () -> true);
+            SimpleAssert.eq(
+                HologramNativeConstruction.Outcome.PLACED,
+                outcome,
+                "saved native writer commits rotated controller: " + writer.status
+                    + "; retained reason="
+                    + HologramConstructionJournal.owner(player)
+                        .getCompoundTag(HologramConstructionJournal.KEY)
+                        .getString("scopeUncertainReason"));
+            var tile = (IGregTechTileEntity) world.getTileEntity(0, 64, 0);
+            var placed = (AlignmentController) tile.getMetaTileEntity();
+            SimpleAssert.that(placed != controller, "native placement creates an independent controller");
+            SimpleAssert.eq(expected, placed.getExtendedFacing(), "saved placement retains controller roll");
+            SimpleAssert.eq(expected.getDirection(), tile.getFrontFacing(), "native base front matches saved geometry");
+            SimpleAssert.that(
+                world.getChunkFromBlockCoords(0, 0).isModified,
+                "the real native TE marks its retained fixture chunk dirty");
+            SimpleAssert.that(
+                player.inventory.mainInventory[1] == null && !HologramConstructionJournal.pending(player),
+                "the committed native controller consumes its actual material and clears its payment receipt");
+            SimpleAssert.that(
+                player.inventory.currentItem == 2 && player.inventory.mainInventory[writer.slot] == originalTool,
+                "placement survives selection change without moving the bound tool");
+
+            synchronizeControllerAlignment(writer, world, placed, material, expected);
+        } finally {
+            player.worldObj = previousWorld;
+            player.capabilities.isCreativeMode = previousCreative;
+            player.inventory.currentItem = previousSelection;
+            player.inventory.mainInventory[previousSelection] = originalTool;
+            player.inventory.mainInventory[1] = previousMaterial;
+            player.inventory.mainInventory[2] = previousOtherHand;
+            GregTechAPI.sBlockMachines = previousMachines;
+            if (previousProxy != null) previousProxy.powerfailTracker = previousTracker;
+            gregtech.GTMod.proxy = previousProxy;
+            if (addMapping) {
+                names.remove(nativeTile);
+                classes.remove("BaseMetaTileEntity");
+            }
+        }
+    }
+
+    private static void synchronizeControllerAlignment(HologramSession writer,
+        HologramSavedPlacementAdapterRegression.TestWorld world, AlignmentController placed, ItemStack material,
+        ExtendedFacing initial) throws Exception {
+        var tile = world.getTileEntity(0, 64, 0);
+        var expected = ExtendedFacing.of(initial.getDirection(), Rotation.NORMAL, Flip.NONE);
+        int front = expected.getDirection()
+            .ordinal();
+        var target = HologramNativeConstruction.saved(
+            writer,
+            GregTechAPI.sBlockMachines,
+            placed.getTileEntityBaseType(),
+            material,
+            front,
+            "",
+            "",
+            expected);
+        SimpleAssert.that(
+            HologramNativeConstruction.synchronizable(writer, target, 0, 64, 0)
+                && !HologramNativeConstruction.matches(writer, target, 0, 64, 0),
+            "the existing paid GT controller can legally change roll in place and is not already matched");
+        ItemStack contents = new ItemStack(Items.stick, 3);
+        placed.setInventorySlotContents(1, contents);
+        var player = writer.player;
+        var stock = material.copy();
+        player.inventory.mainInventory[1] = stock;
+        var replacement = new ItemStack(Blocks.dirt);
+        player.inventory.mainInventory[writer.slot] = replacement;
+        SimpleAssert.that(
+            !HologramNativeConstruction.synchronize(writer, target, 0, 64, 0, () -> true),
+            "GT in-place synchronization rejects a tool already missing at entry");
+        SimpleAssert.that(
+            world.getTileEntity(0, 64, 0) == tile && placed.getExtendedFacing() == initial
+                && placed.getStackInSlot(1) == contents
+                && player.inventory.mainInventory[writer.slot] == replacement
+                && player.inventory.mainInventory[1] == stock
+                && stock.stackSize == 1
+                && !HologramConstructionJournal.pending(player),
+            "rejected synchronization preserves the paid machine, contents, stock, and journal");
+
+        player.inventory.mainInventory[writer.slot] = writer.boundTool;
+        SimpleAssert.that(
+            HologramNativeConstruction.synchronize(writer, target, 0, 64, 0, () -> true),
+            "normal GT in-place synchronization succeeds: " + writer.status);
+        SimpleAssert.that(
+            world.getTileEntity(0, 64, 0) == tile && ((IGregTechTileEntity) tile).getMetaTileEntity() == placed
+                && HologramNativeConstruction.matches(writer, target, 0, 64, 0)
+                && placed.getExtendedFacing() == expected
+                && placed.getStackInSlot(1) == contents
+                && contents.stackSize == 3,
+            "legal roll is read back on the same paid GT instance and its contents survive");
+        SimpleAssert.that(
+            player.inventory.mainInventory[1] == stock && stock.stackSize == 1
+                && player.inventory.currentItem == 2
+                && player.inventory.mainInventory[writer.slot] == writer.boundTool
+                && !HologramConstructionJournal.pending(player),
+            "normal synchronization completes without repaying, moving the tool, or leaving a journal");
+    }
+
+    static final class PlacementPlayer extends EntityPlayerMP {
+
+        private PlacementPlayer() {
+            super(null, null, null, null);
+        }
+
+        @Override
+        public String getDisplayName() {
+            return getCommandSenderName();
+        }
+
+        @Override
+        public boolean isSneaking() {
+            return false;
+        }
     }
 
     /** No structure singleton dependencies; alignment methods remain the real GT enhanced-controller implementation. */
@@ -286,7 +505,9 @@ final class HologramVirtualRotationRegression {
 
         @Override
         public IMetaTileEntity newMetaEntity(IGregTechTileEntity base) {
-            return null;
+            var copy = new AlignmentController();
+            copy.setAlignmentLimits(getAlignmentLimits());
+            return copy;
         }
 
         @Override
@@ -297,22 +518,6 @@ final class HologramVirtualRotationRegression {
 
         @Override
         public void construct(ItemStack trigger, boolean hints) {}
-    }
-
-    // The base implements the actual GT interface while inert side effects isolate alignment from world mutation.
-    static class AlignmentTile extends gregtech.api.metatileentity.BaseMetaTileEntity {
-
-        ForgeDirection front;
-
-        @Override
-        public ForgeDirection getFrontFacing() {
-            return front;
-        }
-
-        @Override
-        public void setFrontFacing(ForgeDirection direction) {
-            front = direction;
-        }
     }
 
     private static Object defaultValue(Class<?> type) {

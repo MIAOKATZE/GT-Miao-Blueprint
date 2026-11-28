@@ -24,42 +24,6 @@ final class HologramNativeHatchChooser {
     private final QueryFactory factory;
     private Query query;
     private boolean queryUnavailable;
-    private final Map<QueryKey, List<ItemStack>> cached = new LinkedHashMap<>();
-
-    private static final class QueryKey {
-
-        final IStructureElement<?> element;
-        final int x, y, z, count;
-        final HologramBlueprintResources.ExactKey signal;
-        final long policy = HologramHatchPolicy.automaticGeneration();
-        final long adapters = HologramDeclarationAdapters.generation();
-
-        QueryKey(IStructureElement<?> element, int x, int y, int z, ItemStack trigger) {
-            this.element = element;
-            this.x = x;
-            this.y = y;
-            this.z = z;
-            count = trigger.stackSize;
-            signal = HologramValues.stackKey(trigger);
-        }
-
-        @Override
-        public boolean equals(Object other) {
-            return other instanceof QueryKey key && element == key.element
-                && x == key.x
-                && y == key.y
-                && z == key.z
-                && count == key.count
-                && signal.equals(key.signal)
-                && policy == key.policy
-                && adapters == key.adapters;
-        }
-
-        @Override
-        public int hashCode() {
-            return java.util.Objects.hash(System.identityHashCode(element), x, y, z, count, signal, policy, adapters);
-        }
-    }
 
     private static List<ItemStack> copies(List<ItemStack> values) {
         List<ItemStack> result = new ArrayList<>(values.size());
@@ -74,9 +38,6 @@ final class HologramNativeHatchChooser {
 
     List<ItemStack> offers(IStructureElement<?> root, int x, int y, int z, ItemStack trigger) {
         if (queryUnavailable || root == null || trigger == null) return Collections.emptyList();
-        QueryKey key = new QueryKey(root, x, y, z, trigger);
-        List<ItemStack> previous = cached.get(key);
-        if (previous != null) return copies(previous);
         // The public query owns contextual/channel/chain semantics. A reviewed factory name is
         // supplementary role evidence, never permission to ask an ordinary native element.
         Map<HologramBlueprintResources.ExactKey, ItemStack> result = new LinkedHashMap<>();
@@ -86,7 +47,6 @@ final class HologramNativeHatchChooser {
             // A chooser failure supplies no candidate; full configured native replay is still required.
         }
         List<ItemStack> values = new ArrayList<>(result.values());
-        if (cached.size() < 128) cached.put(key, values);
         return copies(values);
     }
 
@@ -131,7 +91,6 @@ final class HologramNativeHatchChooser {
     }
 
     void clear() {
-        cached.clear();
         queryUnavailable = false;
         query = null;
     }

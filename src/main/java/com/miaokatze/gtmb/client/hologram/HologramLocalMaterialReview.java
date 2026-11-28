@@ -101,7 +101,7 @@ final class HologramLocalMaterialReview {
             && source.data.getLong("nativeTargetRevision") == state.data.getLong("nativeTargetRevision")
             && source.data.getInteger("nativeAction") == state.data.getInteger("nativeAction")
             && (state.data.getBoolean("nativeTargetReady")
-                || state.data.getInteger("nativeAction") == 3 && state.data.getLong("nativeObservationToken") > 0);
+                || HologramPlacementConfirmation.nativeDemolitionReview(state.data));
         if (source.nativeViewport != null)
             return !closed && source == state && this.layer == layer && source.nativeViewport.currentProviders();
         return !closed && source.localMaterialIndex == state.localMaterialIndex

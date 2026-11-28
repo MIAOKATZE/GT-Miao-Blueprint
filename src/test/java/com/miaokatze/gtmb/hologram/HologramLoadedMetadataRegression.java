@@ -131,9 +131,13 @@ public final class HologramLoadedMetadataRegression {
             DeclaredMuffler prototype = (DeclaredMuffler) unsafe.allocateInstance(DeclaredMuffler.class);
             GregTechAPI.METATILEENTITIES[id] = prototype;
             LoadedWorld world = (LoadedWorld) unsafe.allocateInstance(LoadedWorld.class);
+            world.farBlock = machines;
             HologramDynamicDefinitionRegression.NativeTile tile = (HologramDynamicDefinitionRegression.NativeTile) unsafe
                 .allocateInstance(HologramDynamicDefinitionRegression.NativeTile.class);
             tile.setWorldObj(world);
+            tile.xCoord = 32;
+            tile.yCoord = 64;
+            tile.zCoord = 0;
             tile.setMetaTileID((short) id);
             prototype.setBaseMetaTileEntity(tile);
             world.far = tile;
@@ -159,9 +163,17 @@ public final class HologramLoadedMetadataRegression {
                 "an unloaded native declaration retains its casing target without reading the world");
             world.farLoaded = true;
             SimpleAssert.that(
-                ItemStack.areItemStacksEqual(
-                    new ItemStack(machines, 1, id),
-                    HologramCellPolicy.draftTarget(session, cell, 0)),
+                tile.getBlockType() == machines,
+                "the loaded native tile resolves its actual physical host at the declared world coordinates");
+            NBTTagCompound portable = new NBTTagCompound();
+            prototype.setItemNBT(portable);
+            ItemStack installed = new ItemStack(machines, 1, id);
+            if (!portable.hasNoTags()) installed.setTagCompound(portable);
+            SimpleAssert.that(
+                HologramCellPolicy.hatchElement(session, cell, installed, true) != null,
+                "the native declaration accepts the installed muffler identity including its portable item state");
+            SimpleAssert.that(
+                ItemStack.areItemStacksEqual(installed, HologramCellPolicy.draftTarget(session, cell, 0)),
                 "the same loaded declaration still prefers its accepted installed native hatch identity");
             SimpleAssert.eq(0, world.unloadedTileReads, "native hatch preference never probes an unloaded chunk");
         } finally {
@@ -226,6 +238,7 @@ public final class HologramLoadedMetadataRegression {
     private static final class LoadedWorld extends WorldServer {
 
         TileEntity near, far;
+        Block farBlock;
         boolean farLoaded;
         int tileReads, unloadedTileReads;
 
@@ -251,7 +264,7 @@ public final class HologramLoadedMetadataRegression {
         @Override
         public Block getBlock(int x, int y, int z) {
             if (!blockExists(x, y, z)) throw new AssertionError("unloaded block read");
-            return x == 1 || x == 32 ? Blocks.stone : Blocks.air;
+            return x == 32 && farBlock != null ? farBlock : x == 1 || x == 32 ? Blocks.stone : Blocks.air;
         }
 
         @Override

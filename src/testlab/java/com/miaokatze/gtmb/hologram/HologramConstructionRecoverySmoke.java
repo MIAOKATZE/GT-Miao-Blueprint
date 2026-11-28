@@ -56,25 +56,28 @@ public final class HologramConstructionRecoverySmoke {
             actor.inventory.mainInventory[1] = new ItemStack(Items.apple, 5);
             HologramSession session = new HologramSession(actor, x, y, z, false, 2);
             HologramMaterials.Context context = new HologramMaterials.Context(actor, settings, -1);
-            NBTTagCompound journal = HologramConstructionJournal
-                .begin(actor, x, y, z, Blocks.air, 0, null, HologramMaterialAccess.copyInventory(actor));
+            NBTTagCompound journal = HologramConstructionJournal.beginAction(actor, x, y, z, Blocks.air, 0, null, -1);
             HologramMaterials.Transaction transaction = context.begin()
+                .trackLocalInventory()
                 .journal(journal);
             require(transaction.takeOne(new ItemStack(Items.apple, 1), false), "Actual main-inventory payment failed");
             transaction.beforeWorldMutation();
             require(world.setBlock(x, y, z, Blocks.dirt, 0, 3), "Actual target placement failed");
+            // The retired restoreCell lambda seam did not exercise native world restoration. This fixture now
+            // stages the production sparse recovery journal after actual payment and an actual world write.
+            HologramConstructionJournal.suspend(
+                session,
+                transaction,
+                new IllegalStateException("Injected stop after world mutation for durable sparse recovery"));
             require(
-                !HologramWorldTransactions.restoreCell(
-                    session,
-                    transaction,
-                    () -> { throw new IllegalStateException("Injected second world-restoration failure"); }),
-                "Failed restoration escaped its boundary");
+                session.job == 4 && session.stopTick && journal.getBoolean("sparseLocal"),
+                "Production suspension did not retain the sparse action");
             require(
                 actor.inventory.mainInventory[1].stackSize == 4 && world.getBlock(x, y, z) == Blocks.dirt,
                 "Uncertain world must retain both the live block and its existing deduction");
-            require(
-                !HologramWorldTransactions.operate(session, null, 0) && session.job == 4,
-                "Next cell was not stopped");
+            rejects(
+                () -> HologramConstructionJournal.beginAction(actor, x + 1, y, z, Blocks.air, 0, null, -1),
+                "A pending receipt admitted a second action");
             result.setString("receipt", journal.getString("id"));
             result.setString("state", "STAGED_RESTART_REQUIRED");
             return result;
@@ -88,13 +91,33 @@ public final class HologramConstructionRecoverySmoke {
                 && world.getBlock(x, y, z) == Blocks.dirt,
             "Restarted fixture world/evidence differs");
         // This generated offline FakePlayer has no real-player inventory. Reconstitute only its owned test stock.
-        ItemStack[] held = HologramConstructionJournal.inventory(journal.getTagList("heldInventory", 10));
-        require(held.length == actor.inventory.mainInventory.length, "Frozen probe inventory length differs");
-        System.arraycopy(held, 0, actor.inventory.mainInventory, 0, held.length);
+        if (journal.getBoolean("sparseLocal")) {
+            net.minecraft.nbt.NBTTagList slots = journal.getTagList("localSlots", 10);
+            require(slots.tagCount() == 1, "Sparse fixture must retain only its actually deducted slot");
+            NBTTagCompound slot = slots.getCompoundTagAt(0);
+            require(slot.getInteger("slot") == 1 && slot.hasKey("after", 10), "Sparse fixture payment slot differs");
+            ItemStack paid = ItemStack.loadItemStackFromNBT(slot.getCompoundTag("after"));
+            require(
+                paid != null && paid.getItem() == Items.apple && paid.stackSize == 4,
+                "Sparse fixture native paid stock differs");
+            actor.inventory.mainInventory[1] = paid;
+            actor.inventory.mainInventory[2] = new ItemStack(Items.carrot, 11);
+        } else {
+            // A previously staged legacy fixture remains resumable through the production old-receipt reader.
+            ItemStack[] held = HologramConstructionJournal.inventory(journal.getTagList("heldInventory", 10));
+            require(held.length == actor.inventory.mainInventory.length, "Frozen probe inventory length differs");
+            System.arraycopy(held, 0, actor.inventory.mainInventory, 0, held.length);
+        }
+        boolean sparse = journal.getBoolean("sparseLocal");
         HologramConstructionJournal.resolve(actor, journal.getString("id"), "rollback");
         require(
             world.isAirBlock(x, y, z) && actor.inventory.mainInventory[1].stackSize == 5,
             "Restarted rollback did not restore exact original world/payment");
+        require(
+            !sparse || actor.inventory.mainInventory[2] != null
+                && actor.inventory.mainInventory[2].getItem() == Items.carrot
+                && actor.inventory.mainInventory[2].stackSize == 11,
+            "Sparse restart rollback overwrote unrelated fixture inventory");
 
         require(world.isAirBlock(x + 1, y, z), "External fixture cell is occupied");
         world.setBlock(x + 1, y, z, Blocks.chest, 0, 3);
@@ -102,9 +125,9 @@ public final class HologramConstructionRecoverySmoke {
         chest.setInventorySlotContents(0, new ItemStack(Items.apple, 5));
         HologramSession session = new HologramSession(actor, x, y, z, false, 2);
         HologramMaterials.Context context = new HologramMaterials.Context(actor, settings, -1);
-        journal = HologramConstructionJournal
-            .begin(actor, x, y, z, Blocks.air, 0, null, HologramMaterialAccess.copyInventory(actor));
+        journal = HologramConstructionJournal.beginAction(actor, x, y, z, Blocks.air, 0, null, -1);
         HologramMaterials.Transaction transaction = context.begin()
+            .trackLocalInventory()
             .journal(journal);
         IAEItemStack request = AEItemStack.create(new ItemStack(Items.apple, 4));
         try {
@@ -117,7 +140,11 @@ public final class HologramConstructionRecoverySmoke {
         } catch (IllegalStateException expected) {
             require(transaction.uncertain(), "Unknown extraction lost its write-ahead evidence");
         }
-        HologramWorldTransactions.rollbackMaterials(session, transaction, HologramMaterialAccess.copyInventory(actor));
+        rejects(transaction::rollbackAction, "Unknown native extraction was allowed to auto-refund");
+        HologramConstructionJournal.suspend(
+            session,
+            transaction,
+            new IllegalStateException("Native provider result requires actual-amount adjudication"));
         require(
             chest.getStackInSlot(0).stackSize == 3 && actor.inventory.mainInventory[1].stackSize == 5,
             "Unknown extraction was blindly refunded or replayed");
@@ -141,11 +168,20 @@ public final class HologramConstructionRecoverySmoke {
         result.setInteger("conservedApples", apples + 3);
         result.setString(
             "coverage",
-            "actual world/main inventory; strict durable restart receipt; native chest-backed extraction fault; adjudication; no live AE grid claim");
+            "actual world/main inventory; sparse durable suspend/restart/resolve; unrelated slot preserved; native chest-backed extraction fault; adjudication; no writer restoration-catch or live AE grid claim");
         return result;
     }
 
     private static void require(boolean valid, String message) {
         if (!valid) throw new IllegalStateException(message);
+    }
+
+    private static void rejects(Runnable action, String message) {
+        try {
+            action.run();
+        } catch (IllegalStateException expected) {
+            return;
+        }
+        throw new IllegalStateException(message);
     }
 }

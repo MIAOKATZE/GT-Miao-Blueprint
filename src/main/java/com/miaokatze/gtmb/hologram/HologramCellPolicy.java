@@ -74,7 +74,7 @@ final class HologramCellPolicy {
         Block block = world.getBlock(x, y, z);
         int metadata = world.getBlockMetadata(x, y, z);
         TileEntity tile = world.getTileEntity(x, y, z);
-        Integer damage = HologramMaterialDescriptor.actualDamage(block, metadata, tile);
+        Integer damage = HologramMaterialDescriptor.actualDamage(world, x, y, z);
         return new Declarations.WorldState(
             true,
             block,
@@ -183,10 +183,7 @@ final class HologramCellPolicy {
         if ((!s.noHatches || (c.block == StructureLibAPI.getBlockHint() && "hatch".equals(c.role)))
             && actual instanceof IGregTechTileEntity
             && !c.anchor) {
-            ItemStack existing = new ItemStack(
-                GregTechAPI.sBlockMachines,
-                1,
-                ((IGregTechTileEntity) actual).getMetaTileID());
+            ItemStack existing = HologramGtNativeItemState.sample(actual.getBlockType(), (IGregTechTileEntity) actual);
             if (hatchElement(s, c, existing, true) != null) return existing;
         }
         Declarations.PureElement<?> declaration = HologramElementCatalog.pure(c.element);
@@ -946,8 +943,11 @@ final class HologramCellPolicy {
         if (!world.blockExists(cell.x, cell.y, cell.z)) return false;
         if (target.getItem() instanceof ItemMachines) {
             TileEntity tile = world.getTileEntity(cell.x, cell.y, cell.z);
-            return tile instanceof IGregTechTileEntity
-                && ((IGregTechTileEntity) tile).getMetaTileID() == target.getItemDamage();
+            try {
+                return HologramGtNativeItemState.matches(tile, target);
+            } catch (java.io.IOException | RuntimeException | LinkageError unavailable) {
+                return false;
+            }
         }
         return world.getBlock(cell.x, cell.y, cell.z) == Block.getBlockFromItem(target.getItem())
             && world.getBlockMetadata(cell.x, cell.y, cell.z) == target.getItem()
@@ -1310,10 +1310,9 @@ final class HologramCellPolicy {
     }
 
     static int hatchTier(ItemStack stack) {
-        if (stack == null) return Integer.MAX_VALUE;
+        if (stack == null || !(stack.getItem() instanceof ItemMachines)) return Integer.MAX_VALUE;
         int id = stack.getItemDamage();
-        return stack.getItem() instanceof ItemMachines && id >= 0
-            && id < GregTechAPI.METATILEENTITIES.length
+        return id >= 0 && id < GregTechAPI.METATILEENTITIES.length
             && GregTechAPI.METATILEENTITIES[id] instanceof MTEHatch
                 ? ((MTEHatch) GregTechAPI.METATILEENTITIES[id]).mTier
                 : Integer.MAX_VALUE;

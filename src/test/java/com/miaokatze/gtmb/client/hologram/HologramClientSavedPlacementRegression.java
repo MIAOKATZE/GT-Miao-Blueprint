@@ -58,6 +58,13 @@ public final class HologramClientSavedPlacementRegression {
                 }
             });
         }
+        for (int terminal : new int[] { 0, 1, 2 }) {
+            HologramNativeSavedWorldRegression.withConnectedWorld(2, server -> {
+                try (Fixture client = new Fixture()) {
+                    client.nativeConnected(server, false, terminal != 2, terminal != 0);
+                }
+            });
+        }
     }
 
     public static void runNativeRemoteConnected() throws Exception {
@@ -269,7 +276,9 @@ public final class HologramClientSavedPlacementRegression {
                         src = owner.readSavedDisplaySource(id, lib.savedDisplayPath(id), false, 0, 0);
                     }
                     int progressBefore = bridge.progress, needsBefore = bridge.needs;
-                    boolean superseded = false;
+                    boolean superseded = false, newProjection = false;
+                    HologramState newerDisplay = null;
+                    Object newerLease = null;
                     if (round == 4) actor.capabilities.allowEdit = false;
                     if (round == 5) actor.capabilities.allowEdit = true;
 
@@ -299,6 +308,16 @@ public final class HologramClientSavedPlacementRegression {
                         server.serverQueue();
                         server.nativeWorld();
                         bridge.tick();
+                        if ((round == 1 && bridge.complete == 2 || round == 3 && bridge.cancelled == 1)
+                            && !newProjection) {
+                            placement.install(src);
+                            field(HologramLocalPlacement.class, "locked").setBoolean(placement, true);
+                            field(HologramLocalPlacement.class, "anchor").set(placement, new int[] { 21, 64, 21 });
+                            field(HologramLocalPlacement.class, "submitting").setBoolean(placement, true);
+                            newerDisplay = placement.display();
+                            newerLease = field(HologramLocalPlacement.class, "nativeLease").get(placement);
+                            newProjection = true;
+                        }
                         HologramClientRemoteNativePlacement.tick(client);
                         Thread.sleep(1);
                     }
@@ -307,13 +326,24 @@ public final class HologramClientSavedPlacementRegression {
                     client.drain();
                     int jobs = Math.min(round + 1, 3);
                     SimpleAssert.that(
-                        !HologramBackgroundTasks.busy() && placement.active() == (round >= 3)
+                        !HologramBackgroundTasks.busy()
+                            && placement.active() == (round == 1 || round >= 3 && round <= 5)
                             && server.writes() == jobs * 3
                             && server.stock() == 9 - jobs * 3
                             && !server.pendingPayment(),
                         "remote button → cache → server transaction → HUD (round " + round
                             + "): "
                             + HologramBackgroundTasks.status());
+                    if (round == 1 || round == 3) SimpleAssert.that(
+                        newProjection && placement.display() == newerDisplay
+                            && placement.locked()
+                            && placement.submitting()
+                            && !field(newerLease.getClass(), "released").getBoolean(newerLease),
+                        "late remote " + (round == 1 ? "COMPLETE" : "CANCELLED")
+                            + " cannot clear, unlock or retry the newly installed projection");
+                    else if (round >= 3) SimpleAssert.that(
+                        !placement.submitting(),
+                        "current remote terminal either retires cancellation or keeps failure retryable");
                     if (round < 3) SimpleAssert.that(
                         server.at(7, 64, 8 + round, Blocks.stone) && server.at(9, 64, 8 + round, Blocks.stone)
                             && server.at(round == 2 ? 13 : 11, 65, 8 + round, Blocks.stone)
@@ -493,6 +523,11 @@ public final class HologramClientSavedPlacementRegression {
         }
 
         void nativeConnected(ConnectedWorld server, boolean satisfied) throws Exception {
+            nativeConnected(server, satisfied, false, false);
+        }
+
+        void nativeConnected(ConnectedWorld server, boolean satisfied, boolean cancel, boolean replaceProjection)
+            throws Exception {
             var actor = server.nativeActor();
             String tool = HologramLibraryClient.projectorId(player.getHeldItem());
             actor.getHeldItem()
@@ -525,6 +560,7 @@ public final class HologramClientSavedPlacementRegression {
                 server.saveNative(library.directory(), id, 257);
                 var src = owner.readSavedDisplaySource(id, library.savedDisplayPath(id), false, 0, 0);
                 placement.install(src);
+                Object originalLease = field(HologramLocalPlacement.class, "nativeLease").get(placement);
                 field(HologramLocalPlacement.class, "locked").setBoolean(placement, true);
                 field(HologramLocalPlacement.class, "anchor").set(placement, new int[] { 8, 64, 8 });
                 server.seedStone(7, 64, 8);
@@ -539,24 +575,62 @@ public final class HologramClientSavedPlacementRegression {
                         .dispatchRefused(LocalAction.SUBMIT, () -> confirmed, owner::prepareLocalPlacement),
                     "positive native material submit");
                 field(HologramLocalPlacement.class, "submitting").setBoolean(placement, true);
+                boolean cancelled = false, replaced = false;
+                HologramState newerDisplay = null;
+                Object newerLease = null;
                 long end = System.nanoTime() + TimeUnit.SECONDS.toNanos(8);
                 while (HologramBackgroundTasks.busy() && System.nanoTime() < end) {
                     client.drain();
-                    server.stepNative();
+                    server.serverQueue();
+                    Object active = field(HologramClientNativePlacement.class, "active").get(null);
+                    if (active != null) {
+                        Object attempt = field(active.getClass(), "attempt").get(active);
+                        if (field(attempt.getClass(), "executionAccepted").getBoolean(attempt)) {
+                            if (cancel && !cancelled) {
+                                HologramBackgroundTasks.cancel();
+                                cancelled = true;
+                            }
+                            if (replaceProjection && !replaced) {
+                                placement.install(src);
+                                field(HologramLocalPlacement.class, "locked").setBoolean(placement, true);
+                                field(HologramLocalPlacement.class, "anchor").set(placement, new int[] { 21, 64, 21 });
+                                field(HologramLocalPlacement.class, "submitting").setBoolean(placement, true);
+                                newerDisplay = placement.display();
+                                newerLease = field(HologramLocalPlacement.class, "nativeLease").get(placement);
+                                replaced = true;
+                            }
+                        }
+                    }
+                    server.nativeWorld();
                     HologramClientNativePlacement.tick(client);
                     Thread.sleep(1);
                 }
                 SimpleAssert.that(
-                    !HologramBackgroundTasks.busy() && !placement.active()
+                    !HologramBackgroundTasks.busy() && placement.active() == replaceProjection
                         && sends.get() == 0
-                        && player.closedScreens == 1
-                        && server.stock() == 0
-                        && server.writes() == (satisfied ? 0 : 2)
-                        && server.at(265, 65, 8, Blocks.stone)
-                        && server.at(9, 64, 8, Blocks.stone)
+                        && player.closedScreens == (cancel || replaceProjection ? 0 : 1)
+                        && server.stock() == (cancel ? 2 : 0)
+                        && server.writes() == (cancel || satisfied ? 0 : 2)
+                        && server.at(265, 65, 8, cancel ? Blocks.air : Blocks.stone)
+                        && server.at(9, 64, 8, cancel ? Blocks.air : Blocks.stone)
                         && !server.pendingPayment(),
-                    "native submit→authoritative settlement→HUD, no old packets, exact stock/paid far geometry; "
+                    "native submit→authoritative settlement→HUD, current cancellation and stale terminal ownership; "
                         + HologramBackgroundTasks.status());
+                SimpleAssert.that(!cancel || cancelled, "cancellation came from the actual admitted task's HUD action");
+                SimpleAssert.that(
+                    field(originalLease.getClass(), "released").getBoolean(originalLease),
+                    "the retired original presentation releases its native lease");
+                HologramClientNativePlacement.tick(client);
+                placement.tick();
+                if (replaceProjection) SimpleAssert.that(
+                    replaced && placement.display() == newerDisplay
+                        && placement.locked()
+                        && placement.submitting()
+                        && !field(newerLease.getClass(), "released").getBoolean(newerLease),
+                    "late or repeated integrated terminal never clears, unlocks or retries the new projection");
+                else SimpleAssert.that(
+                    !placement.active() && !placement.submitting(),
+                    "a repeated terminal and a held projector never revive a cancelled or completed projection");
             } finally {
                 field(HologramClientRemoteNativePlacement.class, "wire").set(null, oldWire);
                 com.miaokatze.gtmb.hologram.HologramNativeLocalConstruction.stopServer();
