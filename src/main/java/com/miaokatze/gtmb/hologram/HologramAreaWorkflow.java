@@ -398,10 +398,10 @@ final class HologramAreaWorkflow {
             previous.status = "声明结构已不存在";
             return previous;
         }
-        if (previous.player.worldObj.getTileEntity(structure.x, structure.y, structure.z)
-            != structure.machine.getBaseMetaTileEntity()
-            || previous.player.getDistanceSq(structure.x + .5, structure.y + .5, structure.z + .5) > 4096) {
-            previous.status = "结构控制器已变化或距离过远，请重新导入区域";
+        if (!previous.player.worldObj.blockExists(structure.x, structure.y, structure.z)
+            || previous.player.worldObj.getTileEntity(structure.x, structure.y, structure.z)
+                != structure.machine.getBaseMetaTileEntity()) {
+            previous.status = "结构控制器已卸载或变化，请重新导入区域";
             return previous;
         }
         if (area.active.isEmpty()) HologramWorkspace.AREA_EDITORS.put(previous.player.getUniqueID(), previous);

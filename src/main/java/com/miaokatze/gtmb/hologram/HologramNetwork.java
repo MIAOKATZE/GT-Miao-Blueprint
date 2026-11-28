@@ -1728,9 +1728,7 @@ public final class HologramNetwork {
             else {
                 int x = tag.getInteger("x"), y = tag.getInteger("y"), z = tag.getInteger("z");
                 int side = tag.getInteger("side");
-                if (side < 0 || side > 5
-                    || !player.worldObj.blockExists(x, y, z)
-                    || player.getDistanceSq(x + .5, y + .5, z + .5) > 64) return;
+                if (side < 0 || side > 5 || !player.worldObj.blockExists(x, y, z)) return;
                 HologramService.openWorld(player, x, y, z, side);
             }
             return;

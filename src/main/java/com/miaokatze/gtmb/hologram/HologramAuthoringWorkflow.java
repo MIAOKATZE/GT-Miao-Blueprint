@@ -829,7 +829,6 @@ final class HologramAuthoringWorkflow {
         int x = pending.getInteger("x"), y = pending.getInteger("y"), z = pending.getInteger("z");
         if (controller) {
             if (!HologramWorldFlow.worldPosition(x, y, z, s.player.worldObj.getHeight())
-                || !HologramSessionPolicy.previewReach(s.player, x, y, z)
                 || !s.player.worldObj.blockExists(x, y, z)) {
                 s.status = "控制器来源、位置或可用范围已变化；当前蓝图保留";
                 HologramSnapshots.send(s);

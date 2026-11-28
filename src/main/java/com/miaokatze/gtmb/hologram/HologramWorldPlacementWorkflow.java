@@ -39,7 +39,7 @@ final class HologramWorldPlacementWorkflow {
         HologramWorkspace.activate(player.getUniqueID(), s);
         if (!HologramSessionPolicy.valid(s) || !player.worldObj.blockExists(x, y, z)) {
             s.cancelled = true;
-            s.status = "虚拟锚点未加载、超出高度或距离限制";
+            s.status = "虚拟锚点未加载或超出世界边界";
             HologramSnapshots.send(s);
             return;
         }
@@ -153,7 +153,6 @@ final class HologramWorldPlacementWorkflow {
             || request.getInteger("side") > 5) failure = "位置数据不完整，预览与蓝图保留；请重新确定位置";
         else if (!HologramWorldFlow.worldPosition(x, y, z, player.worldObj.getHeight()))
             failure = "目标超出世界边界或高度，预览与蓝图保留；请调整位置";
-        else if (!HologramSessionPolicy.previewReach(player, x, y, z)) failure = "目标超出放置距离，预览与蓝图保留；请靠近目标或缩短滚轮距离";
         else if (!player.worldObj.blockExists(x, y, z)) failure = "目标区块尚未加载，预览与蓝图保留；请靠近后重试";
         else if (s.capture == null || s.capture.incomplete || s.capture.pending || s.capturePending)
             failure = "蓝图采集尚未完整，预览与蓝图保留；请等待后重试";
@@ -287,7 +286,6 @@ final class HologramWorldPlacementWorkflow {
         if (!acceptNudgeRate(s, tick)) return;
         int x = s.x + dx, y = s.y + dy, z = s.z + dz;
         boolean allowed = HologramWorldFlow.worldPosition(x, y, z, player.worldObj.getHeight())
-            && HologramSessionPolicy.previewReach(player, x, y, z)
             && player.worldObj.blockExists(x, y, z);
         if (allowed) for (HologramCapture.Cell cell : s.capture.cells) {
             long xx = (long) cell.x + dx, yy = (long) cell.y + dy, zz = (long) cell.z + dz;
@@ -303,7 +301,7 @@ final class HologramWorldPlacementWorkflow {
         }
         if (!allowed || !moveVirtual(s, x, y, z, s.side)) {
             HologramProjectorWorkflow.libraryCloseUi(s);
-            s.status = "微调位置超出距离、世界边界或已加载区域；原锁定位置与蓝图保留";
+            s.status = "微调位置超出世界边界或已加载区域；原锁定位置与蓝图保留";
             HologramSnapshots.send(s);
             return;
         }
@@ -410,7 +408,6 @@ final class HologramWorldPlacementWorkflow {
         if (HologramSessionPolicy.blockedByAreaImport(s)) return false;
         EntityPlayerMP player = s.player;
         if (s.capture == null || !HologramWorldFlow.worldPosition(x, y, z, player.worldObj.getHeight())
-            || !HologramSessionPolicy.previewReach(player, x, y, z)
             || !player.worldObj.blockExists(x, y, z)) return false;
         if (s.x != x || s.y != y || s.z != z) {
             if (!transformVirtual(s, x, y, z, false, false)) return false;

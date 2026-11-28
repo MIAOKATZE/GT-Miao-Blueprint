@@ -208,6 +208,8 @@ public final class HologramStockNativeClientRegression {
         metadata.setTag("cells", cells);
         var nativeState = screen.nativeControllerState();
         nativeState.targetReady();
+        // This fixture starts with an already adopted, rendered target; subsequent PROBEs carry stage only.
+        field(HologramScreen.class, "nativeSiteInitialized").setBoolean(screen, true);
         nativeState.observe(
             new HologramStockNativeWire.ServerObservation(
                 236,

@@ -89,6 +89,14 @@ final class HologramRenderer {
         }
     }
 
+    static void worldBlockChanged(int x, int y, int z) {
+        MiaoVisonLiteRenderer.worldBlockChanged(x, y, z);
+    }
+
+    static void worldChunkChanged(int x, int z, int sections) {
+        MiaoVisonLiteRenderer.worldChunkChanged(x, z, sections);
+    }
+
     static void jobVisualChanged(HologramState state, int[] indices) {
         try (HologramPreviewAssets.Scope ignored = WORLD.enter()) {
             MiaoVisonLiteRenderer.jobVisualChanged(state, indices);

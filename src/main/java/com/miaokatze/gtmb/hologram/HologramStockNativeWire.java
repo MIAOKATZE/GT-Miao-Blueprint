@@ -17,7 +17,7 @@ import com.github.bsideup.jabel.Desugar;
 /** Authenticated native-projector intent only. The server rebuilds the complete target independently. */
 public final class HologramStockNativeWire {
 
-    public static final int VERSION = 6;
+    public static final int VERSION = 7;
     private static final String VERSION_KEY = "nativeStockVersion", REQUEST = "nativeStockRequest",
         INTENT = "nativeStockIntent", COMMAND = "nativeStockCommand";
 
@@ -50,7 +50,21 @@ public final class HologramStockNativeWire {
 
     @Desugar
     public record ServerObservation(int controller, int x, int y, int z, Stage stage, long targetRevision,
-        String reason) {}
+        String reason, NBTTagCompound siteSettings) {
+
+        public ServerObservation(int controller, int x, int y, int z, Stage stage, long targetRevision, String reason) {
+            this(controller, x, y, z, stage, targetRevision, reason, new NBTTagCompound());
+        }
+
+        public ServerObservation {
+            siteSettings = siteSettings == null ? new NBTTagCompound() : (NBTTagCompound) siteSettings.copy();
+        }
+
+        @Override
+        public NBTTagCompound siteSettings() {
+            return (NBTTagCompound) siteSettings.copy();
+        }
+    }
 
     @Desugar
     public record HatchChoice(int dx, int dy, int dz, int id, int facing) {}
@@ -110,7 +124,10 @@ public final class HologramStockNativeWire {
             for (Object name : configuration.func_150296_c())
                 if (!"presetActive".equals(name) && !"hatchTier".equals(name)
                     && !"hatchDowngrade".equals(name)
-                    && !"hatchProfile".equals(name)) return false;
+                    && !"hatchProfile".equals(name)
+                    && !"readSiteSettings".equals(name)) return false;
+            if (configuration.hasKey("readSiteSettings") && !exactBoolean(configuration, "readSiteSettings"))
+                return false;
             if (configuration.toString()
                 .length() > 65536) return false;
             if (controller <= 0 || controller > Short.MAX_VALUE
@@ -412,6 +429,7 @@ public final class HologramStockNativeWire {
             data.setInteger("stage", observed.stage.ordinal());
             data.setLong("targetRevision", observed.targetRevision);
             data.setString("reason", observed.reason);
+            data.setTag("siteSettings", observed.siteSettings());
             tag.setTag("projectionObservation", data);
         }
         return tag;
@@ -440,11 +458,12 @@ public final class HologramStockNativeWire {
                 if (!data.hasKey(field, 3)) return null;
             int stage = data.getInteger("stage");
             if (data.func_150296_c()
-                .size() != 7 || stage < 0
+                .size() != 8 || stage < 0
                 || stage >= Stage.values().length
                 || !data.hasKey("targetRevision", 4)
                 || data.getLong("targetRevision") <= 0
                 || !data.hasKey("reason", 8)
+                || !data.hasKey("siteSettings", 10)
                 || data.getString("reason")
                     .length() > 192)
                 return null;
@@ -455,7 +474,8 @@ public final class HologramStockNativeWire {
                 data.getInteger("z"),
                 Stage.values()[stage],
                 data.getLong("targetRevision"),
-                data.getString("reason"));
+                data.getString("reason"),
+                data.getCompoundTag("siteSettings"));
         }
         return new Reply(key, state, placed, reason, observation);
     }

@@ -93,6 +93,7 @@ tasks.register<JavaExec>("runBackpackMaterialTest") {
 tasks.named("check") { dependsOn("runHologramTest", "runBackpackMaterialTest") }
 
 mapOf(
+    "runNativeSiteRegression" to "com.miaokatze.gtmb.hologram.HologramNativeSitePlanRegression",
     "runProjectorLocalizationTest" to "com.miaokatze.gtmb.client.hologram.HologramProjectorLocalizationRegression",
     "runUnsavedPlacementRegression" to "com.miaokatze.gtmb.hologram.HologramUnsavedPlacementRegression",
     "runAttachmentSnapshotRegression" to "com.miaokatze.gtmb.hologram.HologramAttachmentSnapshotRegression",

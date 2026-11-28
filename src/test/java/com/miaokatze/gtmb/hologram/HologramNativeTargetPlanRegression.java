@@ -406,6 +406,19 @@ final class HologramNativeTargetPlanRegression {
                 HologramNativeTargetPlan.compile(RAW_ID, ExtendedFacing.DEFAULT, signal, config);
                 throw new AssertionError("raw illegal hatch survived replay");
             } catch (IOException expected) {}
+            prototype(RAW_ID, new Controller(12));
+            choice.setInteger("id", PORT_ID);
+            choice.setInteger("facing", -1);
+            try {
+                HologramNativeTargetPlan.compile(RAW_ID, ExtendedFacing.DEFAULT, signal, config);
+                throw new AssertionError("creative-only raw hatch without a native seed was accepted");
+            } catch (IOException expected) {}
+            choice.setBoolean("siteNativeAccepted", true);
+            try {
+                HologramNativeTargetPlan.compile(RAW_ID, ExtendedFacing.DEFAULT, signal, config);
+                throw new AssertionError("old site proof bypassed this raw replay's missing native -1 acceptance");
+            } catch (IOException expected) {}
+            choice.removeTag("siteNativeAccepted");
             prototype(RAW_ID, new Controller(11));
             choice.setInteger("id", PORT_ID);
             choice.setInteger("facing", ForgeDirection.SOUTH.ordinal());
@@ -578,6 +591,7 @@ final class HologramNativeTargetPlanRegression {
                 return -1;
             }
             if (mode == 2) return 0;
+            if (mode == 12) return -2;
             if (mode == 3) return -3;
             if (mode == 4) throw new IllegalStateException("fixture failure");
             if (mode == 1) {
@@ -613,6 +627,12 @@ final class HologramNativeTargetPlanRegression {
 
         @Override
         public void construct(ItemStack signal, boolean hints) {
+            if (mode == 12) {
+                World world = getBaseMetaTileEntity().getWorld();
+                // A creative constructor may refuse an installed tile and return void without replacing it.
+                if (world.getTileEntity(1, 128, 0) == null) world.setBlock(1, 128, 0, Blocks.stone, 0, 2);
+                return;
+            }
             if (mode == 6 || mode == 7 || mode == 8 || mode == 9) return;
             getBaseMetaTileEntity().getWorld()
                 .setBlock(hints ? 7 : 3, 128, 0, hints ? Blocks.glass : Blocks.gold_block, 0, 3);

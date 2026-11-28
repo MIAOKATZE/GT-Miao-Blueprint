@@ -103,6 +103,18 @@ final class HologramNativeUiText {
                 + " "
                 + raw.substring(16);
         return switch (raw) {
+            case "控制器不支持原生现场读取。" -> projectorOr("native.reason.site.unsupported_controller", raw);
+            case "控制器没有原生生存建造接口。" -> projectorOr("native.reason.site.no_survival", raw);
+            case "原生现场读取已取消。" -> projectorOr("native.reason.site.cancelled", raw);
+            case "现场仓室数量超过原生请求上限。" -> projectorOr("native.reason.site.too_many_hatches", raw);
+            case "原生现场读取期间方块、仓室身份或朝向已变化，请重新读取。" -> projectorOr("native.reason.site.changed", raw);
+            case "现场范围尚未被原生流程完整证明，不能替换或拆除。" -> projectorOr("native.reason.site.unconfirmed_scope", raw);
+            case "现场仓室的原生物品无效。" -> projectorOr("native.reason.site.invalid_item", raw);
+            case "请先完整读取现场配置，再替换或拆除。" -> projectorOr("native.reason.site.read_first", raw);
+            case "现场控制器的原生便携配置已变化，请重新读取后确认。" -> projectorOr("native.reason.site.controller_changed", raw);
+            case "现场仓室物品身份无效。" -> projectorOr("native.reason.site.item_identity", raw);
+            case "现场仓室物品不能原生放置。" -> projectorOr("native.reason.site.item_placement", raw);
+            case "现场仓室未被本次原生生存流程完整接受。" -> projectorOr("native.reason.site.replay_rejected", raw);
             case "LOCAL_NATIVE_PREVIEW_NO_PROGRESS" -> projectorOr(
                 "native.reason.preview.no_progress",
                 "原生构造连续多轮没有有效进展，已停止准备。");

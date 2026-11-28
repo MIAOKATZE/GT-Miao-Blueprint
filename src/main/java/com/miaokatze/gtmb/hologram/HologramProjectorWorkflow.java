@@ -56,7 +56,6 @@ final class HologramProjectorWorkflow {
                 || previous.captureError.isEmpty() && HologramSessionPolicy.valid(previous))
             && HologramAuthoringWorkflow.blueprintHasUnsavedChanges(previous)) {
             if (!HologramWorldFlow.worldPosition(x, y, z, player.worldObj.getHeight())
-                || !HologramSessionPolicy.previewReach(player, x, y, z)
                 || !player.worldObj.blockExists(x, y, z)
                 || side < 0
                 || side > 5) return;

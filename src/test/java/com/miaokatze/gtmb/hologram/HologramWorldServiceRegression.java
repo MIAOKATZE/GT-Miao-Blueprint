@@ -701,7 +701,12 @@ public final class HologramWorldServiceRegression {
         java.util.Map<UUID, Object> sessions = (java.util.Map<UUID, Object>) sessionsField.get(null);
         Object previous = sessions.put(player.getUniqueID(), session);
         HologramPresets.Preset preset = (HologramPresets.Preset) get(session, "virtualPreset");
+        double originalX = player.posX;
         try {
+            player.posX = 160;
+            SimpleAssert.that(
+                !HologramSessionPolicy.previewReach(player, 0, 64, 0),
+                "the real lock and review path runs beyond the preview interaction radius");
             set(session, "virtualLocked", false);
             set(session, "blueprintAwaitingConfirmation", false);
             request.setInteger("x", 0);
@@ -773,6 +778,7 @@ public final class HologramWorldServiceRegression {
                 "closing UI keeps locked placement material gate");
             request.setLong("planRevision", (Long) get(session, "planRevision"));
         } finally {
+            player.posX = originalX;
             if (previous == null) sessions.remove(player.getUniqueID());
             else sessions.put(player.getUniqueID(), previous);
         }

@@ -179,14 +179,35 @@ public final class HologramClient {
 
     /** Native StructureLib notifications describe actual block/meta changes, never render-only refreshes. */
     static void nativeBlockChanged(net.minecraft.world.World world, int x, int y, int z) {
+        Minecraft client = Minecraft.getMinecraft();
+        if (client != null && client.theWorld == world) HologramRenderer.worldBlockChanged(x, y, z);
         HologramScreen screen = nativeUpdateScreen(world, null);
         if (screen != null) screen.nativeBlockChanged(x, y, z);
+    }
+
+    /** GT's own post-update callback changes machine identity/facing without replacing the block. */
+    public static void nativeTileChanged(TileEntity tile) {
+        if (tile != null && !tile.isInvalid())
+            nativeTileChanged(tile.getWorldObj(), tile.xCoord, tile.yCoord, tile.zCoord);
+    }
+
+    /** Vanilla tile data packets can update a model without replacing its block. */
+    public static void nativeTileChanged(net.minecraft.world.World world, int x, int y, int z) {
+        Minecraft client = Minecraft.getMinecraft();
+        if (client != null && world != null && client.theWorld == world) HologramRenderer.worldBlockChanged(x, y, z);
     }
 
     /** Called only after vanilla has applied the S21 data, including its early-return unload form. */
     public static void nativeChunkReceived(NetHandlerPlayClient connection, WorldClient world,
         S21PacketChunkData packet) {
         if (connection == null) return;
+        if (Minecraft.getMinecraft() != null && Minecraft.getMinecraft().theWorld == world
+            && Minecraft.getMinecraft()
+                .getNetHandler() == connection)
+            HologramRenderer.worldChunkChanged(
+                packet.func_149273_e(),
+                packet.func_149271_f(),
+                packet.func_149274_i() ? 0xffff : packet.func_149276_g());
         HologramScreen screen = nativeUpdateScreen(world, connection);
         if (screen != null) screen.nativeChunkChanged(
             packet.func_149273_e(),
@@ -198,6 +219,11 @@ public final class HologramClient {
     public static void nativeChunksReceived(NetHandlerPlayClient connection, WorldClient world,
         S26PacketMapChunkBulk packet) {
         if (connection == null) return;
+        if (Minecraft.getMinecraft() != null && Minecraft.getMinecraft().theWorld == world
+            && Minecraft.getMinecraft()
+                .getNetHandler() == connection)
+            for (int i = 0; i < packet.func_149254_d(); i++)
+                HologramRenderer.worldChunkChanged(packet.func_149255_a(i), packet.func_149253_b(i), 0xffff);
         HologramScreen screen = nativeUpdateScreen(world, connection);
         if (screen == null) return;
         for (int i = 0; i < packet.func_149254_d(); i++)
@@ -2566,9 +2592,6 @@ public final class HologramClient {
             state,
             com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector.isProjector(mc.thePlayer.getHeldItem()),
             mc.currentScreen instanceof HologramScreen || mc.currentScreen instanceof HologramSettingsScreen)) return;
-        // Avoid stale projection after disconnect/reconnect or travelling away from the target.
-        if (state.distanceSquared(mc.thePlayer.posX, mc.thePlayer.posY, mc.thePlayer.posZ) > 4096
-            && !(state.data.getBoolean("virtual") && state.data.getBoolean("moving"))) return;
         if (mc.currentScreen instanceof HologramScreen screen && screen.occludesWorldProjection(state)) return;
         HologramRenderer.world(state, event.partialTicks);
     }

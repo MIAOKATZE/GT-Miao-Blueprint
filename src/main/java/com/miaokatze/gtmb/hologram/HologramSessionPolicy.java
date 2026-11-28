@@ -96,7 +96,7 @@ final class HologramSessionPolicy {
     }
 
     static boolean valid(HologramSession s) {
-        return currentTool(s) != null && validWorldContext(s, false);
+        return currentTool(s) != null && validWorldContext(s);
     }
 
     /** Admission remains held-tool-only. An admitted job may run while another hotbar slot is selected. */
@@ -109,7 +109,7 @@ final class HologramSessionPolicy {
         if (jobTool(s) == null) return "原工具槽中的投影仪已移走或被替换";
         if (s.player.isDead) return "玩家已死亡";
         if (s.player.dimension != s.dimension || s.player.worldObj != s.libraryWorld) return "玩家世界或维度已变化";
-        if (!validWorldContext(s, true)) return "原目标已卸载、被替换或超出有效范围";
+        if (!validWorldContext(s)) return "原目标已卸载、被替换或超出世界边界";
         if (!s.virtual && (s.machine == null || s.machine.getExtendedFacing()
             .ordinal() != s.facing)) return "原控制器朝向已变化";
         return "";
@@ -122,21 +122,17 @@ final class HologramSessionPolicy {
 
     /** A reviewed save owns the original tool slot; changing the held slot is presentation only. */
     static boolean saveValid(HologramSession s) {
-        return !s.cancelled && jobTool(s) != null && validWorldContext(s, true);
+        return !s.cancelled && jobTool(s) != null && validWorldContext(s);
     }
 
-    private static boolean validWorldContext(HologramSession s, boolean admittedJob) {
+    private static boolean validWorldContext(HologramSession s) {
         return !s.player.isDead && s.player.dimension == s.dimension
             && s.player.worldObj == s.libraryWorld
             && (!s.virtual || !s.virtualPlacement
                 || !s.virtualLocked
                 || (HologramWorldFlow.worldPosition(s.x, s.y, s.z, s.player.worldObj.getHeight())
-                    // Preview reach admits a locked position. Once construction starts the player may
-                    // inspect a large blueprint; per-cell loaded-world/edit/event checks still apply.
-                    && (admittedJob || previewReach(s.player, s.x, s.y, s.z))))
-            && (s.target == null || (s.player.getDistanceSq(s.x + .5, s.y + .5, s.z + .5) <= 4096
-                && s.player.worldObj.blockExists(s.x, s.y, s.z)
-                && controllerMatches(s)));
+                    && s.player.worldObj.blockExists(s.x, s.y, s.z)))
+            && (s.target == null || (s.player.worldObj.blockExists(s.x, s.y, s.z) && controllerMatches(s)));
     }
 
     static boolean controllerReplaced(HologramSession s) {

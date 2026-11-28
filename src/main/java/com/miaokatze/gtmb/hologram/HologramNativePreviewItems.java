@@ -34,6 +34,7 @@ final class HologramNativePreviewItems implements IItemSource {
     private ItemStack approved;
     private final Map<String, Integer> pinned = new java.util.LinkedHashMap<>();
     private final Map<String, Integer> pinnedFacings = new java.util.LinkedHashMap<>();
+    private final Map<String, ItemStack> pinnedItems = new java.util.LinkedHashMap<>();
     private final Map<Integer, Integer> profile = new java.util.LinkedHashMap<>();
     private final Map<String, Integer> mandatoryModels = new java.util.LinkedHashMap<>();
     private final Map<String, Integer> configuredActual = new java.util.LinkedHashMap<>();
@@ -60,6 +61,13 @@ final class HologramNativePreviewItems implements IItemSource {
                 .position(row.getInteger("x"), row.getInteger("y"), row.getInteger("z"));
             pinned.put(at, row.getInteger("id"));
             pinnedFacings.put(at, row.hasKey("facing", 3) ? row.getInteger("facing") : -1);
+            if (row.hasKey("item", 10)) {
+                ItemStack item = ItemStack.loadItemStackFromNBT(row.getCompoundTag("item"));
+                if (item == null || item.getItemDamage() != row.getInteger("id"))
+                    throw new IllegalArgumentException("现场仓室的原生物品无效。");
+                item.stackSize = 1;
+                pinnedItems.put(at, item);
+            }
         }
         NBTTagList entries = config.getCompoundTag("hatchProfile")
             .getTagList("entries", 10);
@@ -247,6 +255,9 @@ final class HologramNativePreviewItems implements IItemSource {
             int wanted = pinnedFacings
                 .getOrDefault(HologramNativeTargetPlan.position(cell.dx(), cell.dy(), cell.dz()), -1);
             if (wanted >= 0 && wanted != cell.facing()) throw new java.io.IOException("所选仓室方向与原生放置结果不同。");
+            ItemStack paid = pinnedItems.get(HologramNativeTargetPlan.position(cell.dx(), cell.dy(), cell.dz()));
+            if (paid != null && !HologramValues.same(paid, cell.material()))
+                throw new java.io.IOException("现场仓室物品NBT未被原生目标保留。");
         }
     }
 

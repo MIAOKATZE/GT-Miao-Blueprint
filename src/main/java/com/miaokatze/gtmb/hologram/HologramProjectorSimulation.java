@@ -73,6 +73,7 @@ final class HologramProjectorSimulation implements AutoCloseable {
     IStructureDefinition<?> definition;
     HologramChannelTrace.Report channels;
     int rounds, nativeResult = Integer.MIN_VALUE;
+    int replayNativeResult = Integer.MIN_VALUE;
     private IConstructable constructable;
     private World baseWorld;
     private Stage stage = Stage.BUILD;
@@ -254,6 +255,7 @@ final class HologramProjectorSimulation implements AutoCloseable {
         items.bind(world);
         environment = null;
         replayRounds = 0;
+        replayNativeResult = Integer.MIN_VALUE;
         if (context instanceof MTEMultiBlockBase machine) {
             machine.clearHatches();
             machine.mMachine = false;
@@ -267,6 +269,7 @@ final class HologramProjectorSimulation implements AutoCloseable {
             if (constructable instanceof ISurvivalConstructable survival && !creative) {
                 world.takeChanged();
                 int result = survival.survivalConstruct(trigger.copy(), 4096, environment());
+                replayNativeResult = result;
                 world.takeChanged();
                 if (result == -1) return done = true;
                 if (result == -2) {
@@ -359,6 +362,7 @@ final class HologramProjectorSimulation implements AutoCloseable {
     }
 
     static void visited(StructureElementVisitedEvent event) {
+        HologramNativeSitePlan.visited(event);
         HologramProjectorSimulation active = ACTIVE.get();
         if (active == null || active.world != event.getWorld()
             || active.owner != Thread.currentThread()

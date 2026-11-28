@@ -265,9 +265,8 @@ final class HologramPresetWorkflow {
                 previous.player.worldObj.getHeight() - 1);
         int z = previous.target != null || previous.virtual ? previous.z
             : net.minecraft.util.MathHelper.floor_double(previous.player.posZ);
-        if (!previous.player.worldObj.blockExists(x, y, z)
-            || previous.player.getDistanceSq(x + .5, y + .5, z + .5) > 4096) {
-            previous.status = "编辑锚点未加载或超出距离限制";
+        if (!previous.player.worldObj.blockExists(x, y, z)) {
+            previous.status = "编辑锚点未加载";
             return previous;
         }
         HologramSession editing = HologramWorkspace.create(previous.player, x, y, z, false, previous.side);

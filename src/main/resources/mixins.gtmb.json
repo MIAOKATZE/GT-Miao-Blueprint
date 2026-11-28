@@ -6,6 +6,6 @@
   "target": "@env(DEFAULT)",
   "compatibilityLevel": "JAVA_8",
   "mixins": [],
-  "client": ["hologram.MixinHologramChunkNotifications"],
+  "client": ["hologram.MixinHologramChunkNotifications", "hologram.MixinHologramMachineNotifications"],
   "server": []
 }
