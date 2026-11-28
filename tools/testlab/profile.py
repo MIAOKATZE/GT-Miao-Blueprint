@@ -5,14 +5,24 @@ CLIENT_RUNNER = None
 CLIENT_WORKSPACE = 'miaotest-client-qa'
 CLIENT_METADATA = ('client-launch.json', 'host-helper-compile.json')
 CLIENT_TOPOLOGY = 'native-menu-MUI'
-CLIENT_SOURCES = ('tools/testlab/client_qa/GtmbClientObservations.java',)
+CLIENT_CASES = ('client-ui', 'world-projection-events')
+CLIENT_SOURCES = ('tools/testlab/client_qa/GtmbClientObservations.java',
+                  'tools/testlab/client_qa/GtmbWorldProjectionController.java',
+                  'tools/testlab/client_qa/GtmbWorldProjectionProbe.java')
 CLIENT_JVM = ('-Dmiaotest.host.observer=miaotest.host.GtmbClientObservations',)
 
 
 def client_mode(args, config, preparing, blockers):
-    if args.case not in ('all', 'client-ui'):
-        blockers.append('Native client adapter profile is client-ui; other cases use their declared lane')
-    return 'client-ui'
+    if args.case not in ('all', 'client-ui', 'world-projection-events'):
+        blockers.append('Native client profiles: client-ui or world-projection-events')
+    return 'world-projection-events' if args.case == 'world-projection-events' else 'client-ui'
+
+
+def client_details(mode):
+    if mode == 'world-projection-events':
+        return {'topology': 'native-integrated-world-GT-events', 'ownedIntegrated': True,
+                'controller': 'miaotest.host.GtmbWorldProjectionController'}
+    return {}
 
 
 def extra_changes(root, client, physical):
