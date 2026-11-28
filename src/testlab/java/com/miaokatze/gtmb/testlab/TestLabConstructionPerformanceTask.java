@@ -67,7 +67,7 @@ final class TestLabConstructionPerformanceTask implements TestLabTasks.Task {
                 .check(
                     "native_kernel_20_placed_one_cancelled",
                     "PASS",
-                    "Kernel-only saved/place: 20 actual paid blocks, one final Forge event each, one cancelled debit/refund, clear journal and restored owned fixture; no workspace TaskGate/GUI/TCP claim");
+                    "Kernel-only saved/place: 20 actual paid blocks, one final Forge event each, one vetoed ordinary shell with balance 1 during and after the event, restored air/no tile, clear journal, and restored owned fixture; no workspace TaskGate/GUI/TCP claim");
             kernelComplete = true;
             return TestLabTasks.WAIT;
         }

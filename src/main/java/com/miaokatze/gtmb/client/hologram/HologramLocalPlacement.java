@@ -4,6 +4,7 @@
 package com.miaokatze.gtmb.client.hologram;
 
 import net.minecraft.client.Minecraft;
+import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 
 import com.github.bsideup.jabel.Desugar;
@@ -19,7 +20,10 @@ final class HologramLocalPlacement {
     private Object world, connection, player;
     private boolean locked, submitting;
     private long lockGeneration;
-    private long worldProjectionUntil = Long.MAX_VALUE;
+    private HologramHeldProjectionLifetime lifetime = new HologramHeldProjectionLifetime();
+    private int toolSlot;
+    private String toolId = "";
+    private ItemStack unlinkedTool;
     private int[] anchor;
     private HologramPreviewPose pose = new HologramPreviewPose();
     private final com.miaokatze.gtmb.hologram.HologramWorldFlow.KeyRepeat[] nudgeKeys = {
@@ -73,12 +77,11 @@ final class HologramLocalPlacement {
     }
 
     HologramState worldDisplay(long now) {
-        return submitting || now < worldProjectionUntil ? display : null;
+        return lifetime.visible(now) ? display : null;
     }
 
     void reviewClosed(Submission frozen) {
-        if (!submitting && frozen.current(this, Minecraft.getMinecraft()) && worldProjectionUntil == Long.MAX_VALUE)
-            worldProjectionUntil = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+        if (frozen.current(this, Minecraft.getMinecraft())) tick();
     }
 
     boolean locked() {
@@ -139,6 +142,10 @@ final class HologramLocalPlacement {
         world = mc.theWorld;
         connection = mc.getNetHandler();
         player = mc.thePlayer;
+        toolSlot = mc.thePlayer.inventory.currentItem;
+        ItemStack held = mc.thePlayer.getHeldItem();
+        toolId = heldToolId(held);
+        unlinkedTool = toolId.isEmpty() ? held : null;
         display = displayForPlacement(prepared.state, mc.thePlayer.dimension);
         mc.displayGuiScreen(null);
     }
@@ -158,7 +165,23 @@ final class HologramLocalPlacement {
     }
 
     void tick() {
-        if (active() && !currentContext()) clear();
+        if (!active()) return;
+        Minecraft mc = Minecraft.getMinecraft();
+        if (!currentContext(mc)) {
+            clear();
+            return;
+        }
+        ItemStack held = mc.thePlayer.getHeldItem();
+        boolean matchingTool = com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector.isProjector(held)
+            && mc.thePlayer.inventory.currentItem == toolSlot
+            && (toolId.isEmpty() ? held == unlinkedTool : toolId.equals(heldToolId(held)));
+        if (!lifetime.observe(matchingTool, System.nanoTime())) clear();
+    }
+
+    private static String heldToolId(ItemStack stack) {
+        return stack == null || !stack.hasTagCompound() ? ""
+            : stack.getTagCompound()
+                .getString("gtitHologramToolId");
     }
 
     private boolean currentContext() {
@@ -181,7 +204,6 @@ final class HologramLocalPlacement {
 
     void use(boolean shift) {
         if (display == null || submitting) return;
-        worldProjectionUntil = Long.MAX_VALUE;
         if (shift && locked) {
             locked = false;
             anchor = null;
@@ -215,7 +237,13 @@ final class HologramLocalPlacement {
 
     void retry() {
         submitting = false;
-        worldProjectionUntil = 0;
+    }
+
+    /** A settled task may change only the exact projection frozen for that submission. */
+    void finish(Submission submission, boolean retire) {
+        if (!submission.owns(this)) return;
+        if (retire) clear();
+        else retry();
     }
 
     static NBTTagCompound reviewOptions() {
@@ -260,11 +288,13 @@ final class HologramLocalPlacement {
         }
 
         boolean current(HologramLocalPlacement owner, Minecraft client) {
-            return owner.display == display && owner.source == source
-                && owner.locked
-                && owner.lockGeneration == lockGeneration
+            return owns(owner) && owner.locked
                 && owner.currentContext(client)
                 && display.data.getInteger("dimension") == client.thePlayer.dimension;
+        }
+
+        private boolean owns(HologramLocalPlacement owner) {
+            return owner.display == display && owner.source == source && owner.lockGeneration == lockGeneration;
         }
 
         @Override
@@ -276,7 +306,10 @@ final class HologramLocalPlacement {
     void clear() {
         if (display != null) HologramRenderer.nativeSnapshotChanged();
         display = null;
-        worldProjectionUntil = Long.MAX_VALUE;
+        lifetime = new HologramHeldProjectionLifetime();
+        toolSlot = -1;
+        toolId = "";
+        unlinkedTool = null;
         source = null;
         if (nativeLease != null) {
             nativeLease.close();

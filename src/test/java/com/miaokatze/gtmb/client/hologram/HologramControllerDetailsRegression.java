@@ -113,6 +113,29 @@ public final class HologramControllerDetailsRegression {
         update.setBoolean("nativeBuildSatisfied", true);
         HologramState receipt = earlyMetadata.withMetadata(update);
         SimpleAssert.that(receipt.reusesControllerGeometry(earlyMetadata), "receipt metadata keeps the mesh");
+        for (int i = 1; i <= 4; i++) {
+            update = new NBTTagCompound();
+            update.setInteger("nativeAction", 0);
+            update.setString("nativeStage", "UNFORMED");
+            update.setLong("nativeTargetRevision", 1);
+            update.setBoolean("nativeTargetReady", true);
+            update.setString("nativeObservationReason", "");
+            update.setString("nativeTargetReason", "");
+            HologramState observed = receipt.withMetadata(update);
+            SimpleAssert.that(
+                observed.reusesControllerGeometry(receipt) && observed.cells == receipt.cells
+                    && observed.regions == receipt.regions,
+                "repeated native observations retain geometry and unfinished renderer cursors");
+            receipt = observed;
+        }
+        update = new NBTTagCompound();
+        NBTTagCompound changedChannel = new NBTTagCompound();
+        changedChannel.setInteger("width", 7);
+        update.setTag("channels", changedChannel);
+        SimpleAssert.that(
+            !receipt.withMetadata(update)
+                .reusesControllerGeometry(receipt),
+            "a genuine channel change cannot retain the old target presentation");
         update = new NBTTagCompound();
         update.setInteger("mode", 2);
         SimpleAssert.that(
@@ -120,6 +143,56 @@ public final class HologramControllerDetailsRegression {
                 .reusesControllerGeometry(earlyMetadata),
             "a material-view mode change still invalidates the presentation");
         update = new NBTTagCompound();
+        NBTTagCompound publishedSettings = HologramScreen.targetSettings(earlyMetadata);
+        publishedSettings.setInteger("main", 4);
+        NBTTagCompound sector = new NBTTagCompound();
+        sector.setInteger("ore_center_sectors", 1);
+        publishedSettings.setTag("channels", sector);
+        HologramState published = earlyMetadata.withMetadata(publishedSettings);
+        NBTTagCompound requestedSettings = (NBTTagCompound) publishedSettings.copy();
+        requestedSettings.getCompoundTag("channels")
+            .setInteger("ore_center_sectors", 5);
+        SimpleAssert.that(
+            HologramScreen.requiresControllerCapture(published, requestedSettings, publishedSettings, true),
+            "a changed sector requires a complete new target");
+        NBTTagCompound failedState = new NBTTagCompound();
+        failedState.setBoolean("nativeTargetReady", false);
+        HologramState retained = published.withMetadata(failedState);
+        SimpleAssert.that(
+            retained.cells == published.cells && HologramScreen.targetSettings(retained)
+                .equals(publishedSettings),
+            "failure retains the exact published geometry together with its original sector parameters");
+        SimpleAssert.that(
+            HologramScreen.requiresControllerCapture(retained, publishedSettings, publishedSettings, false),
+            "an explicit retry with the same value still regenerates a failed target");
+        var demolitionState = new HologramNativeControllerState();
+        demolitionState.targetFailed("failed new target");
+        demolitionState.observe(
+            new com.miaokatze.gtmb.hologram.HologramStockNativeWire.ServerObservation(
+                1,
+                0,
+                0,
+                0,
+                com.miaokatze.gtmb.hologram.HologramStockNativeWire.Stage.UNFORMED,
+                demolitionState.targetRevision(),
+                ""));
+        NBTTagCompound unsupportedTarget = new NBTTagCompound();
+        unsupportedTarget.setBoolean("nativeExecutionSupported", false);
+        SimpleAssert.eq(
+            "",
+            HologramScreen.nativeTargetBlocker(
+                demolitionState,
+                unsupportedTarget,
+                com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.DEMOLISH),
+            "observed site demolition remains available when the new target failed or has unsupported materials");
+        SimpleAssert.that(
+            !HologramScreen
+                .nativeTargetBlocker(
+                    demolitionState,
+                    unsupportedTarget,
+                    com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.REPAIR)
+                .isEmpty(),
+            "unsupported target materials still block material placement actions");
         update.setString("generation", "read-2");
         SimpleAssert.that(
             !earlyMetadata.withMetadata(update)
@@ -543,7 +616,7 @@ public final class HologramControllerDetailsRegression {
             "nativeAction",
             com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.DEMOLISH.ordinal());
         demolition.setBoolean("nativeTargetReady", false);
-        demolition.setLong("nativeObservationToken", 8);
+        demolition.setString("nativeStage", "UNFORMED");
         HologramState observed = source.withMetadata(demolition);
         NBTTagCompound whole = new NBTTagCompound();
         whole.setInteger("scope", 0);

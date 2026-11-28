@@ -116,8 +116,7 @@ mapOf(
     "runEnderIoCapabilitiesRegression" to "com.miaokatze.gtmb.hologram.HologramEnderIoCapabilitiesRegression",
     "runBwMaterialCompatibilityRegression" to "com.miaokatze.gtmb.hologram.HologramBwMaterialCompatibilityRegression",
     "runAeTerminalCapabilitiesRegression" to "com.miaokatze.gtmb.hologram.HologramAeTerminalCapabilitiesRegression",
-    "runLittleTilesCompatibilityRegression" to "com.miaokatze.gtmb.hologram.HologramLittleTilesCompatibilityRegression",
-    "runNativePresetSourceRegression" to "com.miaokatze.gtmb.hologram.HologramNativePresetSourceRegression"
+    "runLittleTilesCompatibilityRegression" to "com.miaokatze.gtmb.hologram.HologramLittleTilesCompatibilityRegression"
 ).forEach { (taskName, entryPoint) ->
     tasks.register<JavaExec>(taskName) {
         group = "verification"

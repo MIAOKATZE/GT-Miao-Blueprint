@@ -24,6 +24,8 @@ import net.minecraft.tileentity.TileEntity;
 import net.minecraft.world.World;
 import net.minecraft.world.WorldProviderSurface;
 import net.minecraft.world.WorldServer;
+import net.minecraft.world.chunk.Chunk;
+import net.minecraftforge.common.util.BlockSnapshot;
 
 import org.apache.commons.lang3.tuple.Pair;
 
@@ -190,8 +192,10 @@ final class HologramNativeAdmissionRegression {
             Scene world = (Scene) session.player.worldObj;
             int writes = world.writes;
             session.player.inventory.mainInventory[1] = new ItemStack(Blocks.stone, 2);
-            SimpleAssert
-                .that(HologramWorldTransactions.operateChecked(session, cell, 0), "unknown cell is skipped safely");
+            SimpleAssert.eq(
+                "protected",
+                HologramPlanPolicy.classify(session, cell, 0),
+                "unknown declarations do not enter the common writer queue");
             SimpleAssert.eq(writes, world.writes, "unknown cell never writes the world");
             SimpleAssert
                 .eq(2, session.player.inventory.mainInventory[1].stackSize, "unknown cell never consumes materials");
@@ -241,9 +245,7 @@ final class HologramNativeAdmissionRegression {
         session.player.inventory.mainInventory[1] = new ItemStack(Blocks.stone, 2);
         Scene world = (Scene) session.player.worldObj;
         world.rewriteNextPlacement = true;
-        SimpleAssert.that(
-            !HologramWorldTransactions.operateChecked(session, cell, 0),
-            "an unexpected installed material fails the existing identity check");
+        SimpleAssert.that(!write(session, cell), "an unexpected installed material fails the existing identity check");
         SimpleAssert.that(world.isAirBlock(0, 64, 0), "failed native item placement restores the original air");
         SimpleAssert.eq(2, world.writes, "the transaction performs a real placement and a rollback");
         SimpleAssert.eq(2, session.player.inventory.mainInventory[1].stackSize, "rollback returns the paid material");
@@ -272,9 +274,7 @@ final class HologramNativeAdmissionRegression {
             "pending",
             HologramPlanPolicy.classify(session, cell, 0),
             "the native target reaches actual planned work");
-        SimpleAssert.that(
-            HologramWorldTransactions.operateChecked(session, cell, 0),
-            "the native material transaction commits");
+        SimpleAssert.that(write(session, cell), "the native material transaction commits: " + session.status);
         SimpleAssert.eq("placed", cell.status, "the actual native target is placed rather than silently skipped");
         SimpleAssert
             .eq(Block.getBlockFromItem(target.getItem()), world.placed, "world retains the proved block identity");
@@ -285,6 +285,32 @@ final class HologramNativeAdmissionRegression {
         SimpleAssert.that(
             HologramCellPolicy.targetMatches(session, cell, 0, world.placed, world.metadata),
             "placed identity passes the existing replay check");
+    }
+
+    private static boolean write(HologramSession session, HologramCapture.Cell cell) {
+        try {
+            ItemStack sample = HologramCellPolicy.targetFor(session, cell, 0);
+            var target = HologramNativeConstruction.projection(
+                new HologramNativeTargetPlan.Cell(
+                    0,
+                    0,
+                    0,
+                    HologramCellPolicy.targetPreviewBlock(session, cell, sample),
+                    HologramCellPolicy.targetPreviewMeta(session, cell, sample),
+                    sample,
+                    -1,
+                    null,
+                    null,
+                    cell.element,
+                    null,
+                    false));
+            var outcome = HologramNativeConstruction.place(session, target, cell.x, cell.y, cell.z, () -> true);
+            if (outcome == HologramNativeConstruction.Outcome.PLACED) cell.status = "placed";
+            return outcome == HologramNativeConstruction.Outcome.PLACED
+                || outcome == HologramNativeConstruction.Outcome.SATISFIED;
+        } catch (java.io.IOException failure) {
+            throw new AssertionError("native writer target preparation", failure);
+        }
     }
 
     private static HologramSession session() throws ReflectiveOperationException {
@@ -433,11 +459,18 @@ final class HologramNativeAdmissionRegression {
         }
 
         public boolean setBlock(int x, int y, int z, Block block, int meta, int flags) {
+            if (captureBlockSnapshots) capturedBlockSnapshots
+                .add(new BlockSnapshot(this, x, y, z, getBlock(x, y, z), getBlockMetadata(x, y, z), flags));
             placed = rewriteNextPlacement ? Blocks.dirt : block;
             rewriteNextPlacement = false;
             metadata = meta;
             writes++;
             return true;
+        }
+
+        @Override
+        public void markAndNotifyBlock(int x, int y, int z, Chunk chunk, Block old, Block placed, int flags) {
+            // No real chunks/listeners exist; the writer still owns snapshot and Forge-event settlement.
         }
 
         public boolean setBlockMetadataWithNotify(int x, int y, int z, int meta, int flags) {

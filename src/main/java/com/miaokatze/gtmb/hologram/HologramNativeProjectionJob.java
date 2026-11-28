@@ -8,17 +8,13 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.BooleanSupplier;
 
-import net.minecraft.block.Block;
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.init.Blocks;
 import net.minecraft.init.Items;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
-import net.minecraft.tileentity.TileEntity;
 import net.minecraft.world.World;
 
 import com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor;
@@ -33,7 +29,7 @@ import gregtech.api.metatileentity.BaseMetaTileEntity;
 import gregtech.api.metatileentity.implementations.MTEEnhancedMultiBlockBase;
 
 /** Native construct output is the sole structure definition. No factory/class/profile recognition is used here. */
-final class HologramNativeProjectionJob {
+final class HologramNativeProjectionJob implements HologramConstructionJobs.Source {
 
     enum State {
         ACTIVE,
@@ -41,15 +37,6 @@ final class HologramNativeProjectionJob {
         STOPPED,
         RECOVERY_PENDING
     }
-
-    @FunctionalInterface
-    interface PermitAdmission {
-
-        HologramConstructionTaskGate.Permit acquire(HologramConstructionTaskGate gate,
-            HologramConstructionTaskGate.Lease lease);
-    }
-
-    private static final AtomicLong REVISIONS = new AtomicLong();
 
     private static final class Baseline {
 
@@ -87,52 +74,58 @@ final class HologramNativeProjectionJob {
     }
 
     private final HologramWorkspace.ActionEndpoint endpoint;
-    private final HologramConstructionTaskGate gate;
-    private final HologramConstructionTaskGate.Lease lease;
     private final HologramSession session;
     private final Projection intent;
-    private final BooleanSupplier confirmed;
+    private final HologramStockNativeEntry.Submission submission;
     private final BaseMetaTileEntity controller;
     private final MTEEnhancedMultiBlockBase<?> machine;
     private final ExtendedFacing facing;
-    private final HologramNativeTargetPlan target;
-    private final HologramMaterials.Context stock, recovery;
-    private final List<HologramNativeTargetPlan.Cell> work;
+    private HologramNativeTargetPlan target;
+    private final int main;
+    private final long started = System.nanoTime();
+    static final String LIMITED_SCOPE_DETAIL = "按本次原生已知范围处理；更早参数丢失的范围外残留无法识别。";
+    private boolean initialized, scopeFallback;
+    private HologramMaterials.Context stock, recovery;
+    private List<HologramNativeTargetPlan.Cell> work = java.util.Collections.emptyList();
     private final Map<HologramBlueprintResources.ExactKey, ItemStack> funding = new LinkedHashMap<>();
     private final HologramNativeConstruction.ProjectionCache placements = new HologramNativeConstruction.ProjectionCache();
     private final boolean creative;
-    private int next, placed;
-    private boolean funded, anchorDone;
-    private String reason = "";
-    private State state = State.ACTIVE;
-    private HologramConstructionTaskGate.Permit unsettled;
+    private int next, fundCursor;
+    private boolean anchorRemoved;
+    private java.util.Iterator<ItemStack> fundRows;
 
-    HologramNativeProjectionJob(HologramWorkspace.ActionEndpoint endpoint, HologramConstructionTaskGate gate,
-        HologramConstructionTaskGate.Lease lease, HologramSession session, Projection intent, int main,
-        int encodedFacing, boolean creative, BooleanSupplier confirmed) throws IOException {
+    HologramNativeProjectionJob(HologramWorkspace.ActionEndpoint endpoint, HologramSession session, Projection intent,
+        int main, int encodedFacing, boolean creative, HologramStockNativeEntry.Submission submission)
+        throws IOException {
         this.endpoint = endpoint;
-        this.gate = gate;
-        this.lease = lease;
         this.session = session;
         this.intent = intent;
-        this.confirmed = confirmed;
+        this.submission = submission;
         this.creative = creative;
+        this.main = main;
         controller = controller(endpoint, intent, session.x, session.y, session.z, encodedFacing);
         machine = (MTEEnhancedMultiBlockBase<?>) controller.getMetaTileEntity();
         facing = machine.getExtendedFacing();
+        if (!current()) throw new IOException("原生目标准备期间控制器、访问权限或工具已变化。");
+    }
+
+    /** Native simulation/check callbacks are indivisible; the owning queue checks cancellation between boundaries. */
+    private void initialize() throws IOException {
         HologramNativeTargetPlan cached;
         synchronized (HologramNativeProjectionJob.class) {
             cached = cachedBaseline(controller);
         }
-        target = intent.operation() == Operation.DEMOLISH
-            ? cached != null ? cached : compileBaseline(intent, main, facing)
-            : compile(intent, main, facing);
+        scopeFallback = cached == null && intent.operation() != Operation.BUILD;
+        // A cache is optional source data, never a prerequisite or authorization for BEGIN.
+        HologramNativeTargetPlan baseline = cached != null ? cached : compileBaseline(intent, main, facing);
+        target = intent.operation() == Operation.DEMOLISH ? baseline : compile(intent, main, facing);
+        if (!current()) throw new IOException("施工上下文已变化。");
         if (intent.operation() != Operation.DEMOLISH && !target.targetDigest()
             .equals(intent.nativeTargetDigest())) throw new IOException("客户端投影与服务器原生目标不同，请重新读取后确认。");
-        HologramNativeTargetPlan baseline = baseline(controller, target);
         Stage stage = stage(endpoint.world, controller, baseline);
+        if (!current()) throw new IOException("施工上下文已变化。");
         if (!allows(intent.operation(), stage)) throw new IOException("当前结构状态不能执行此操作：" + stage);
-        if (controller.isActive()) throw new IOException("请先停止正在运行的控制器，再执行结构操作。");
+        baseline(controller, baseline);
         stock = new HologramMaterials.Context(endpoint.player, session.materialSettings, session.slot);
         session.materialContext = stock;
         recovery = HologramDemolition.recoveryContext(endpoint.player, session.slot, intent.destination());
@@ -158,7 +151,8 @@ final class HologramNativeProjectionJob {
                 if (wanted == null) work.set(i, air(before));
             }
         }
-        if (!current()) throw new IOException("原生目标准备期间控制器、访问权限或工具已变化。");
+        if (!current()) throw new IOException("施工上下文已变化。");
+        initialized = true;
     }
 
     private static HologramNativeTargetPlan.Cell air(HologramNativeTargetPlan.Cell before) {
@@ -191,15 +185,7 @@ final class HologramNativeProjectionJob {
         var stage = stage(endpoint.world, controller, baseline);
         if (controller(endpoint, intent, x, y, z, encodedFacing) != controller)
             throw new IOException("原生观察期间控制器或访问权限已变化。");
-        return new ServerObservation(
-            intent.controller(),
-            x,
-            y,
-            z,
-            stage,
-            REVISIONS.incrementAndGet(),
-            intent.targetRevision(),
-            controller.isActive() ? "控制器正在运行，请先停止。" : "");
+        return new ServerObservation(intent.controller(), x, y, z, stage, intent.targetRevision(), "");
     }
 
     private static HologramNativeTargetPlan compileBaseline(Projection intent, int main, ExtendedFacing facing)
@@ -342,35 +328,31 @@ final class HologramNativeProjectionJob {
     }
 
     private boolean executionCurrent() {
-        return state == State.ACTIVE && confirmed.getAsBoolean()
-            && HologramWorkspace.currentActionEndpoint(endpoint)
-            && endpoint.player.worldObj == endpoint.world
-            && HologramWorkspace.find(endpoint.actor) == session
-            && endpoint.player.capabilities.isCreativeMode == creative
-            && !endpoint.player.isDead
-            && endpoint.player.capabilities.allowEdit;
+        return submission.current();
     }
 
-    private boolean current() {
+    public boolean current() {
+        if (anchorRemoved && intent.operation() == Operation.DEMOLISH) return executionCurrent();
         return executionCurrent() && !controller.isInvalid()
             && endpoint.world.getTileEntity(session.x, session.y, session.z) == controller
             && endpoint.world.getBlock(session.x, session.y, session.z) == GregTechAPI.sBlockMachines
             && controller.getMetaTileID() == intent.controller()
             && controller.getMetaTileEntity() == machine
             && machine.getExtendedFacing() == facing
-            && !controller.isActive()
             && controllerAccessAllowed(endpoint.player, controller, machine)
             && endpoint.world.getTileEntity(session.x, session.y, session.z) == controller
             && controller.getMetaTileEntity() == machine
             && controller.getMetaTileID() == intent.controller()
-            && machine.getExtendedFacing() == facing;
+            && machine.getExtendedFacing() == facing
+            && endpoint.player.worldObj == endpoint.world
+            && endpoint.player.dimension == session.dimension
+            && submission.contextRefusal() == null;
     }
 
     /** Used only after the successful native removal of the final whole-structure controller. */
     private boolean removalCurrent(boolean anchor) {
         return current() || anchor && intent.operation() == Operation.DEMOLISH
             && next >= work.size()
-            && !anchorDone
             && executionCurrent()
             && endpoint.world.blockExists(session.x, session.y, session.z)
             && endpoint.world.getBlock(session.x, session.y, session.z) == Blocks.air
@@ -381,18 +363,51 @@ final class HologramNativeProjectionJob {
         return cell.dx() + "," + cell.dy() + "," + cell.dz();
     }
 
-    private boolean same(HologramNativeTargetPlan.Cell cell) throws IOException {
-        int x = session.x + cell.dx(), y = session.y + cell.dy(), z = session.z + cell.dz();
-        return HologramNativeConstruction.matches(session, placements.get(cell), x, y, z);
+    public HologramSession session() {
+        return session;
     }
 
-    private void fund() throws IOException {
-        for (var cell : work) {
+    public Operation operation() {
+        return intent.operation();
+    }
+
+    public int destination() {
+        return intent.destination();
+    }
+
+    public HologramMaterials.Context recoveryContext() {
+        return recovery;
+    }
+
+    public long startedAt() {
+        return started;
+    }
+
+    public long total() {
+        return initialized ? work.size() + (intent.operation() == Operation.DEMOLISH ? 1 : 0) : 0;
+    }
+
+    public boolean exhausted() {
+        return next >= total();
+    }
+
+    public boolean removalCurrent(HologramConstructionJobs.Target cell) {
+        return removalCurrent(cell.x == session.x && cell.y == session.y && cell.z == session.z);
+    }
+
+    public boolean prepare(long deadline) throws IOException {
+        if (!initialized) {
+            if (System.nanoTime() >= deadline) return false;
+            initialize();
+        }
+        while (fundCursor < work.size() && System.nanoTime() < deadline) {
+            if (!current()) throw new IOException("施工上下文已变化。");
+            var cell = work.get(fundCursor++);
             int x = session.x + cell.dx(), y = session.y + cell.dy(), z = session.z + cell.dz();
             if (!endpoint.world.blockExists(x, y, z)) throw new IOException("施工范围包含未加载区块。");
             if (intent.operation() == Operation.DEMOLISH || cell.requiredAir()
                 || cell.material() == null
-                || HologramNativeConstruction.identity(endpoint.world, placements.get(cell), x, y, z)) continue;
+                || HologramNativeConstruction.matches(session, placements.get(cell), x, y, z)) continue;
             ItemStack item = cell.material();
             var id = HologramValues.stackKey(item);
             var aggregate = funding.get(id);
@@ -403,193 +418,56 @@ final class HologramNativeProjectionJob {
             }
             aggregate.stackSize = Math.addExact(aggregate.stackSize, 1);
         }
-        if (!creative) for (var item : funding.values())
-            if (stock.count(item, item.stackSize) < item.stackSize) throw new IOException("所选材料来源不足，未开始修改结构。");
-        if (intent.operation() != Operation.BUILD) recovery.requireDemolitionDestination(intent.destination());
-        funded = true;
-    }
-
-    State drain(long deadline, PermitAdmission admission) {
-        if (state != State.ACTIVE) return state;
-        try (var updates = HologramMachineUpdateBatch.open()) {
-            return drainBatch(deadline, admission);
+        if (fundCursor < work.size()) return false;
+        if (fundRows == null) fundRows = funding.values()
+            .iterator();
+        while (fundRows.hasNext() && System.nanoTime() < deadline) {
+            var item = fundRows.next();
+            if (!creative && stock.count(item, item.stackSize) < item.stackSize)
+                throw new IOException("所选材料来源不足，未开始修改结构。");
+            if (!current()) throw new IOException("施工上下文已变化。");
         }
-    }
-
-    private State drainBatch(long deadline, PermitAdmission admission) {
-        try {
-            if (!current() || HologramConstructionAuthority.hasKnownRecovery(endpoint.player))
-                return stop("原生结构、工具或恢复状态已变化。");
-            if (!funded) fund();
-            while (System.nanoTime() < deadline) {
-                if (next >= work.size()) {
-                    if (intent.operation() == Operation.DEMOLISH && !anchorDone) {
-                        if (!remove(session.x, session.y, session.z, admission, true)) return state;
-                        anchorDone = true;
-                    }
-                    if (intent.operation() != Operation.DEMOLISH) {
-                        machine.checkStructure(true, controller);
-                        synchronized (HologramNativeProjectionJob.class) {
-                            BASELINES.remove(controller);
-                            baseline(controller, target);
-                        }
-                    } else synchronized (HologramNativeProjectionJob.class) {
-                        BASELINES.remove(controller);
-                    }
-                    if (!gate.finish(lease, HologramConstructionTaskGate.End.COMPLETE)) return stop("任务许可已变化。");
-                    state = State.COMPLETE;
-                    return state;
-                }
-                var cell = work.get(next);
-                int x = session.x + cell.dx(), y = session.y + cell.dy(), z = session.z + cell.dz();
-                if (!current() || !endpoint.world.blockExists(x, y, z)) return stop("施工期间控制器或区块已变化。");
-                if (intent.operation() == Operation.DEMOLISH || cell.requiredAir()) {
-                    if (!remove(x, y, z, admission, false)) return state;
-                    next++;
-                    continue;
-                }
-                if (same(cell)) {
-                    next++;
-                    continue;
-                }
-                if (HologramNativeConstruction.identity(endpoint.world, placements.get(cell), x, y, z)
-                    && endpoint.world.getTileEntity(x, y, z) != null) {
-                    var permit = admission.acquire(gate, lease);
-                    if (permit == null) return state;
-                    boolean done = HologramNativeConstruction.synchronize(
-                        session,
-                        placements.get(cell),
-                        x,
-                        y,
-                        z,
-                        () -> current() && gate.transactionCurrent(permit));
-                    if (!settle(permit, done)) return state;
-                    placed++;
-                    next++;
-                    continue;
-                }
-                if (endpoint.world.getBlock(x, y, z) != Blocks.air || endpoint.world.getTileEntity(x, y, z) != null) {
-                    if (intent.operation() == Operation.BUILD) return stop("新建范围已出现方块，请重新读取后补建。");
-                    if (!remove(x, y, z, admission, false)) return state;
-                    // Natural removal is already committed with its actual drops. A later placement failure may
-                    // leave this cell empty; it must never resurrect the old block after delivering those drops.
-                    continue;
-                }
-                var permit = admission.acquire(gate, lease);
-                if (permit == null) return state;
-                boolean done = HologramNativeConstruction
-                    .place(session, placements.get(cell), x, y, z, () -> current() && gate.transactionCurrent(permit))
-                    != HologramNativeConstruction.Outcome.FAILED;
-                if (!settle(permit, done)) return state;
-                placed++;
-                next++;
-            }
-        } catch (IOException | RuntimeException | LinkageError failure) {
-            return stop(failure.getMessage() == null ? "原生结构操作异常，已保留实际完成结果。" : failure.getMessage());
-        }
-        return state;
-    }
-
-    private boolean settle(HologramConstructionTaskGate.Permit permit, boolean success) {
-        if (HologramConstructionJournal.pending(endpoint.player)) {
-            gate.settle(permit, HologramConstructionTaskGate.Settlement.RECOVERY_PENDING);
-            unsettled = permit;
-            state = State.RECOVERY_PENDING;
-            reason = "原生操作结果待核定，未继续执行。";
-            return false;
-        }
-        if (!gate.settle(
-            permit,
-            success ? HologramConstructionTaskGate.Settlement.COMMITTED
-                : HologramConstructionTaskGate.Settlement.ROLLED_BACK))
-            return false;
-        if (!success) {
-            stop(session.status.isEmpty() ? "本格未提交，已停止。" : session.status);
-            return false;
-        }
+        if (fundRows.hasNext()) return false;
+        if (!creative && intent.operation() != Operation.BUILD)
+            recovery.requireDemolitionDestination(intent.destination());
         return true;
     }
 
-    private boolean remove(int x, int y, int z, PermitAdmission admission, boolean anchor) throws IOException {
-        World world = endpoint.world;
-        if (world.getBlock(x, y, z) == Blocks.air && world.getTileEntity(x, y, z) == null) return true;
-        recovery.requireDemolitionDestination(intent.destination());
-        if (recovery.recoveryBacklogged()) return stopRemoval("回收队列尚未交付，未继续拆除。");
-        Block block = world.getBlock(x, y, z);
-        int metadata = world.getBlockMetadata(x, y, z);
-        TileEntity tile = world.getTileEntity(x, y, z);
-        var permit = admission.acquire(gate, lease);
-        if (permit == null) return false;
-        boolean settled = false;
-        try {
-            var result = HologramDemolition.removeBlock(
-                endpoint.player,
-                world,
-                x,
-                y,
-                z,
-                () -> current() && gate.transactionCurrent(permit)
-                    && world.getBlock(x, y, z) == block
-                    && world.getBlockMetadata(x, y, z) == metadata
-                    && world.getTileEntity(x, y, z) == tile,
-                () -> removalCurrent(anchor) && gate.transactionCurrent(permit));
-            recovery.recoverWorldAtPlayer(result.drops, intent.destination());
-            boolean removed = result.removed && world.getBlock(x, y, z) == Blocks.air
-                && world.getTileEntity(x, y, z) == null;
-            boolean committed = result.removed || !result.drops.isEmpty();
-            settled = gate.settle(
-                permit,
-                committed ? HologramConstructionTaskGate.Settlement.COMMITTED
-                    : HologramConstructionTaskGate.Settlement.ROLLED_BACK);
-            if (!settled) return false;
-            if (committed) recovery.flushRecovery();
-            if (!removed || result.failure != null || recovery.pendingWorldRecovery()) {
-                HologramDemolition.resumeRecovery(endpoint.player);
-                return stopRemoval("原生采收或交付停止；实际掉落已保留，不恢复源块或重复投递。");
-            }
-            if (intent.operation() == Operation.DEMOLISH || anchor) placed++;
-            return true;
-        } finally {
-            if (!settled) {
-                gate.settle(permit, HologramConstructionTaskGate.Settlement.RECOVERY_PENDING);
-                unsettled = permit;
-                state = State.RECOVERY_PENDING;
-                reason = "原生采收结果待核定，未重放、恢复源块或重复发放掉落。";
-            }
+    public HologramConstructionJobs.Target next(long deadline) throws IOException {
+        if (next >= work.size()) {
+            if (intent.operation() != Operation.DEMOLISH || next++ > work.size()) return null;
+            return new HologramConstructionJobs.Target(session.x, session.y, session.z, null, true, true);
         }
-
+        var cell = work.get(next++);
+        var prepared = cell.requiredAir() || intent.operation() == Operation.DEMOLISH ? null : placements.get(cell);
+        boolean controllerCell = prepared != null
+            && prepared.sample.getItem() instanceof gregtech.common.blocks.ItemMachines
+            && gregtech.common.blocks.ItemMachines
+                .getMetaTileEntity(prepared.sample) instanceof MTEEnhancedMultiBlockBase<?>;
+        return new HologramConstructionJobs.Target(
+            session.x + cell.dx(),
+            session.y + cell.dy(),
+            session.z + cell.dz(),
+            prepared,
+            cell.requiredAir(),
+            controllerCell);
     }
 
-    private boolean stopRemoval(String detail) {
-        stop(detail);
-        return false;
+    public void committed(HologramConstructionJobs.Target cell, boolean changed) {
+        if (intent.operation() == Operation.DEMOLISH && cell.x == session.x
+            && cell.y == session.y
+            && cell.z == session.z) anchorRemoved = true;
     }
 
-    private State stop(String detail) {
-        if (state == State.ACTIVE) {
-            gate.finish(lease, HologramConstructionTaskGate.End.FAILED);
-            state = State.STOPPED;
-            reason = detail;
+    public void finished(HologramConstructionJobs.Job job) {
+        if (scopeFallback) job.reason = job.reason.isEmpty() || "施工完成。".equals(job.reason) ? LIMITED_SCOPE_DETAIL
+            : job.reason + " " + LIMITED_SCOPE_DETAIL;
+        if (job.end != HologramConstructionJobs.End.COMPLETE) return;
+        if (intent.operation() != Operation.DEMOLISH && !controller.isInvalid())
+            machine.checkStructure(true, controller);
+        synchronized (HologramNativeProjectionJob.class) {
+            BASELINES.remove(controller);
+            if (intent.operation() != Operation.DEMOLISH && !controller.isInvalid()) baseline(controller, target);
         }
-        return state;
-    }
-
-    boolean cancel() {
-        if (state != State.ACTIVE || !gate.cancel(lease.scope, lease.request)) return false;
-        state = State.STOPPED;
-        reason = "已停止；实际提交的放置、拆除与回收保留。";
-        return true;
-    }
-
-    int placed() {
-        return placed;
-    }
-
-    String reason() {
-        return reason;
-    }
-
-    HologramConstructionTaskGate.Permit unsettled() {
-        return unsettled;
     }
 }

@@ -103,35 +103,37 @@ public final class HologramLiveControllerSiteRegression {
         NBTTagCompound variant = new NBTTagCompound();
         variant.setInteger("variant", 1);
         source.setTagCompound(variant);
-        var category = new HologramLocalControllerCapture.NativeClassOffers(
-            java.util.Collections.singletonList(source),
-            java.util.Collections.singletonList("test role"),
-            new int[] { 2 },
-            new byte[] { 1 << 3 });
-        var one = new HologramLocalControllerCapture.NativeOffers(category, "hatch", 0, 1 << 3, true, "", 1);
-        var two = new HologramLocalControllerCapture.NativeOffers(category, "hatch", -1, 0, true, "", 1);
-        SimpleAssert.that(one.candidates() == two.candidates(), "same native declaration shares typed offers");
-        SimpleAssert.that(one.chosen() != two.chosen(), "per-position chosen materials remain distinct");
-        one.candidates()
-            .get(0)
+        var element = StructureUtility.<Object>ofBlock(Blocks.wool, 3);
+        var one = new HologramCapture.Cell(element, 1, 128, 0, new ItemStack(Items.stick), true);
+        var two = new HologramCapture.Cell(element, 2, 128, 0, new ItemStack(Items.stick), true);
+        var nativeOffers = IStructureElement.BlocksToPlace.create(source);
+        HologramNativeStructurePreview.readCandidates(
+            one,
+            nativeOffers,
+            false,
+            java.util.Collections::emptyList,
+            java.util.Collections::emptyList);
+        HologramNativeStructurePreview.readCandidates(
+            two,
+            nativeOffers,
+            false,
+            java.util.Collections::emptyList,
+            java.util.Collections::emptyList);
+        SimpleAssert.that(
+            one.candidateComplete && two.candidateComplete && one.candidates.size() == 1,
+            "the production native offer reader retains a complete finite declaration");
+        SimpleAssert.that(one.x != two.x, "native candidate rows retain their independent coordinates");
+        one.candidates.get(0)
             .getTagCompound()
             .setInteger("variant", 9);
         source.getTagCompound()
             .setInteger("variant", 3);
         SimpleAssert.eq(
             1,
-            two.candidates()
-                .get(0)
+            two.candidates.get(0)
                 .getTagCompound()
                 .getInteger("variant"),
-            "candidate inspection does not mutate shared class options");
-        NBTTagCompound patch = new NBTTagCompound();
-        one.writeTo(patch);
-        SimpleAssert.eq(
-            1,
-            patch.getTagList("candidates", 10)
-                .tagCount(),
-            "explicit patch serializes typed options");
+            "candidate inspection and native source mutation cannot alter another published row");
     }
 
     private static void verify() throws Exception {
@@ -545,7 +547,7 @@ public final class HologramLiveControllerSiteRegression {
                 SimpleAssert.eq(20001, visibility[0], "target all regions including far edge");
                 SimpleAssert.eq(world.installed ? 20001 : 9, visibility[1], "current view independent of target");
                 boolean[] occupied = new boolean[20000];
-                int displayOnly = 0;
+                int creativeTargets = 0;
                 for (var cell : model.cells()) {
                     if (cell.anchor()) continue;
                     int ordinal = cell.dx() + 50 + 100 * (cell.dz() + 10) + 2000 * (cell.dy() - 1);
@@ -553,18 +555,22 @@ public final class HologramLiveControllerSiteRegression {
                         ordinal >= 0 && ordinal < occupied.length && !occupied[ordinal],
                         "unique declared coordinate");
                     occupied[ordinal] = true;
-                    boolean extra = LargeController.unsupported;
-                    if (extra) displayOnly++;
+                    boolean creative = LargeController.unsupported;
+                    if (cell.targetBlock() == Blocks.brick_block) creativeTargets++;
                     SimpleAssert.that(
                         cell.targetBlock()
-                            == (extra ? Blocks.brick_block : ordinal == 0 ? Blocks.furnace : Blocks.wool),
-                        "a complete native target retains both batches; an unsupported branch remains creative display only");
-                    SimpleAssert.that(cell.missingBlock() == extra, "creative-only rows cannot prove a payable target");
+                            == (creative ? Blocks.brick_block : ordinal == 0 ? Blocks.furnace : Blocks.wool),
+                        "a complete native target uses both survival batches or the independent complete creative result");
+                    SimpleAssert.that(
+                        !cell.missingBlock() && cell.targetStack() != null
+                            && cell.targetStack()
+                                .getItem() != null,
+                        "completed native geometry retains its registered material even after survival reports unsupported");
                 }
                 SimpleAssert.eq(
                     LargeController.unsupported ? 20000 : 0,
-                    displayOnly,
-                    "only the explicit unsupported-survival branch needs display-only geometry");
+                    creativeTargets,
+                    "only explicit unsupported survival selects the complete creative target");
                 System.out.println(
                     "LargeController actual-capture→candidate: scenario=" + scenario
                         + " source=20000+anchor"
@@ -574,8 +580,8 @@ public final class HologramLiveControllerSiteRegression {
                         + visibility[1]
                         + " regions="
                         + visibility[2]
-                        + " displayOnly="
-                        + displayOnly
+                        + " creativeTargets="
+                        + creativeTargets
                         + " elapsedMs="
                         + (System.nanoTime() - start) / 1_000_000L);
             }

@@ -26,7 +26,7 @@ public final class HologramProjectedMainPolicy {
             || s.priority < 0
             || s.priority > 2
             || s.recoveryDestination < 0
-            || s.recoveryDestination > 1) return -1;
+            || s.recoveryDestination > 2) return -1;
         return (s.main ? 1 : 0) | (s.containers ? 2 : 0)
             | (s.me ? 4 : 0)
             | (s.priority << 3)

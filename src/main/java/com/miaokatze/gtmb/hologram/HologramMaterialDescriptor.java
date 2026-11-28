@@ -3,7 +3,6 @@
 
 package com.miaokatze.gtmb.hologram;
 
-import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.function.IntUnaryOperator;
@@ -13,23 +12,9 @@ import net.minecraft.item.Item;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraft.world.World;
 
-/** Audited pick implementation identity, independent of MCP/SRG names. Never caches a native result. */
+/** Optional planned projections; actual world samples always use the block's native damage getter. */
 public final class HologramMaterialDescriptor {
 
-    private static final Method PICK = pickMethod();
-    private static final ClassValue<Class<?>> PICK_DECLARATIONS = new ClassValue<Class<?>>() {
-
-        @Override
-        protected Class<?> computeValue(Class<?> type) {
-            if (PICK == null) return Void.class;
-            try {
-                return type.getMethod(PICK.getName(), PICK.getParameterTypes())
-                    .getDeclaringClass();
-            } catch (ReflectiveOperationException | SecurityException | LinkageError ignored) {}
-            return Void.class;
-        }
-    };
-    private static final Map<Class<?>, IntUnaryOperator> NATIVE_DAMAGE = new HashMap<>();
     private static final Map<Class<?>, Map<Class<?>, ExactRule>> EXACT = new HashMap<>();
     private static long generation;
 
@@ -50,8 +35,6 @@ public final class HologramMaterialDescriptor {
         Class<? extends Block> nativePickDeclaration, IntUnaryOperator plannedDamage, ActualDamage actualDamage) {
         if (blockType == null || itemType == null || nativePickDeclaration == null || plannedDamage == null)
             throw new IllegalArgumentException("Complete material identity and projection required");
-        if (PICK_DECLARATIONS.get(blockType) != nativePickDeclaration)
-            throw new IllegalArgumentException("Native pick declaration does not match the exact block type");
         ExactRule rule = new ExactRule(nativePickDeclaration, plannedDamage, actualDamage);
         synchronized (HologramMaterialDescriptor.class) {
             Map<Class<?>, ExactRule> items = EXACT.computeIfAbsent(blockType, ignored -> new HashMap<>());
@@ -70,15 +53,6 @@ public final class HologramMaterialDescriptor {
         };
     }
 
-    /** Only built-in reviewed metadata-only native implementations may grant the ordinary-cell proof. */
-    static synchronized void registerNative(Class<? extends Block> declaration, IntUnaryOperator damage) {
-        if (PICK_DECLARATIONS.get(declaration) != declaration || damage == null)
-            throw new IllegalArgumentException("Audited native pick declaration required");
-        if (NATIVE_DAMAGE.putIfAbsent(declaration, damage) != null)
-            throw new IllegalArgumentException("Native material implementation already registered");
-        generation++;
-    }
-
     /** Include in caches whose validation depends on registered planned material projections. */
     public static synchronized long generation() {
         return generation;
@@ -91,37 +65,39 @@ public final class HologramMaterialDescriptor {
     static synchronized int kind(Block block) {
         if (block == null) return 0;
         if (exactRule(block) != null) return 3;
-        Class<?> declaration = PICK_DECLARATIONS.get(block.getClass());
-        if (declaration == Block.class) return 1;
-        return NATIVE_DAMAGE.containsKey(declaration) ? 2 : 0;
+        return 0; // No declaring-class whitelist stands between a block and its public native getter.
     }
 
     static int damage(Block block, int metadata) {
         ExactRule exact;
-        IntUnaryOperator nativeDamage;
-        Class<?> declaration = PICK_DECLARATIONS.get(block.getClass());
         synchronized (HologramMaterialDescriptor.class) {
             exact = exactRule(block);
-            nativeDamage = NATIVE_DAMAGE.get(declaration);
         }
         if (exact != null) return exact.plannedDamage.applyAsInt(metadata);
-        if (nativeDamage != null) return nativeDamage.applyAsInt(metadata);
-        // Unknown damageDropped overrides still run every time; only the inherited native pick is proved.
-        if (declaration == Block.class) return block.damageDropped(metadata);
-        throw new IllegalStateException("No material descriptor for native pick implementation");
+        return block.getDamageValue(HologramResourceWorld.create(block, metadata), 0, 64, 0);
     }
 
     /** A source-backed actual value for read-only snapshots, or null when no audited native reader is available. */
     static Integer actualDamage(Block block, int metadata, TileEntity tile) {
         if (block == null) return null;
         ExactRule exact;
-        IntUnaryOperator nativeDamage;
         synchronized (HologramMaterialDescriptor.class) {
             exact = exactRule(block);
-            nativeDamage = NATIVE_DAMAGE.get(PICK_DECLARATIONS.get(block.getClass()));
         }
         if (exact != null) return exact.actualDamage == null ? null : exact.actualDamage.read(block, metadata, tile);
-        return nativeDamage == null ? null : nativeDamage.applyAsInt(metadata);
+        return tile == null || tile.getWorldObj() == null ? null
+            : actualDamage(tile.getWorldObj(), tile.xCoord, tile.yCoord, tile.zCoord);
+    }
+
+    static Integer actualDamage(World world, int x, int y, int z) {
+        if (world == null || !world.blockExists(x, y, z)) return null;
+        try {
+            int value = world.getBlock(x, y, z)
+                .getDamageValue(world, x, y, z);
+            return value < 0 ? null : value;
+        } catch (RuntimeException | LinkageError unavailable) {
+            return null;
+        }
     }
 
     private static ExactRule exactRule(Block block) {
@@ -129,7 +105,7 @@ public final class HologramMaterialDescriptor {
         if (items == null) return null;
         Item item = Item.getItemFromBlock(block);
         ExactRule rule = item == null ? null : items.get(item.getClass());
-        return rule != null && PICK_DECLARATIONS.get(block.getClass()) == rule.nativePickDeclaration ? rule : null;
+        return rule;
     }
 
     @FunctionalInterface
@@ -151,18 +127,4 @@ public final class HologramMaterialDescriptor {
         }
     }
 
-    private static Method pickMethod() {
-        Method found = null;
-        for (Method method : Block.class.getDeclaredMethods()) {
-            Class<?>[] arguments = method.getParameterTypes();
-            if (method.getReturnType() != int.class || arguments.length != 4
-                || arguments[0] != World.class
-                || arguments[1] != int.class
-                || arguments[2] != int.class
-                || arguments[3] != int.class) continue;
-            if (found != null) return null; // An altered native API cannot acquire a proof through guessing.
-            found = method;
-        }
-        return found;
-    }
 }

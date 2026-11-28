@@ -90,7 +90,7 @@ public final class HologramService {
         var endpoint = HologramWorkspace.captureActionEndpoint(handler);
         if (endpoint == null || endpoint.player != player
             || endpoint.world != world
-            || HologramWorkspace.constructionGate(endpoint) == null) return;
+            || !HologramWorkspace.currentActionEndpoint(endpoint)) return;
         // The scope check includes callback-capable transport getters. Recheck the exact local stack afterwards.
         if (player.worldObj != world || world.isRemote
             || player.dimension != dimension
@@ -200,6 +200,11 @@ public final class HologramService {
     }
 
     public static void cancel(EntityPlayerMP player) {
+        var active = HologramConstructionJobs.find(player);
+        if (active != null) {
+            HologramConstructionJobs.cancel(player, active.request);
+            return;
+        }
         if (HologramDemolition.active(player)) {
             HologramDemolition.cancel(player);
             return;

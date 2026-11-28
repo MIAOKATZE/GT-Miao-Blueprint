@@ -55,9 +55,10 @@ public final class HologramAeCraftingOrders {
         DELIVERY_INDEX = "gtmbCraftingDeliveryIndex";
     private static final String UNCERTAIN = "gtmbHologramCraftingUncertainDelivery";
     private static final String DELIVERY = "gtmbHologramCraftingDelivery";
-    private static final long POLL_INTERVAL = 20, CPU_WAIT_POLLS = 60;
+    private static final long POLL_INTERVAL = 100, CPU_WAIT_POLLS = 12;
     private static final Map<UUID, Order> ORDERS = new LinkedHashMap<>();
     private static long clock;
+    private static boolean callbacksPending;
 
     private HologramAeCraftingOrders() {}
 
@@ -112,6 +113,7 @@ public final class HologramAeCraftingOrders {
             if (requests.isEmpty()) return "没有可交给 AE 合成的缺少物品或流体；EU 和源质需另行补充";
             Order order = new Order(player, context, grid, quote, requests);
             ORDERS.put(player.getUniqueID(), order);
+            order.wake();
             order.publish();
             return "AE 缺料订单已接收，将在后台计算与合成；关闭界面后仍继续";
         } catch (IllegalArgumentException | ArithmeticException invalid) {
@@ -142,10 +144,12 @@ public final class HologramAeCraftingOrders {
         return security != null && security.hasPermission(player, SecurityPermissions.INJECT);
     }
 
-    /** Tick once from the server END phase. Only link/CPU state is polled, with no material or world rescan. */
+    /** Native callbacks wake the next server END phase; access/CPU/capacity maintenance runs every 100 ticks. */
     public static void tick() {
         clock++;
-        if (clock % POLL_INTERVAL != 0) return;
+        boolean maintenance = clock % POLL_INTERVAL == 0;
+        if (!maintenance && !callbacksPending) return;
+        callbacksPending = false;
         Iterator<Order> iterator = ORDERS.values()
             .iterator();
         while (iterator.hasNext()) {
@@ -154,6 +158,8 @@ public final class HologramAeCraftingOrders {
                 if (clock - order.finishedAt >= 1200) iterator.remove();
                 continue;
             }
+            if (!maintenance && !order.woken) continue;
+            order.woken = false;
             try {
                 order.poll();
             } catch (InterruptedException interrupted) {
@@ -190,6 +196,7 @@ public final class HologramAeCraftingOrders {
         }
         ORDERS.clear();
         clock = 0;
+        callbacksPending = false;
     }
 
     /** Login recovery after an unclean server exit never resubmits an order or reconstructs a requester. */
@@ -311,6 +318,13 @@ public final class HologramAeCraftingOrders {
         ICraftingLink link;
         ICraftingCPU cpu;
         boolean nativeCompleted, nativeCancelled;
+        boolean calculationFinished, futureChecked, woken;
+
+        private void wake() {
+            woken = true;
+            callbacksPending = true;
+        }
+
         long received;
         boolean uncertainDelivery;
         NBTTagCompound published;
@@ -375,6 +389,7 @@ public final class HologramAeCraftingOrders {
             future = null;
             waiting = 0;
             nativeCompleted = nativeCancelled = false;
+            calculationFinished = futureChecked = false;
             received = 0;
             return true;
         }
@@ -392,19 +407,30 @@ public final class HologramAeCraftingOrders {
                 return;
             }
             if (future == null) {
-                future = crafting.beginCraftingJob(world, grid, source, request.stack.copy(), null);
+                int requestedIndex = index;
+                future = crafting.beginCraftingJob(
+                    world,
+                    grid,
+                    source,
+                    request.stack.copy(),
+                    completed -> calculationComplete(requestedIndex, completed));
                 state = "planning";
                 status = "正在计算：" + request.label;
                 if (future == null) finish("failed", "AE 无法创建该材料的合成计算", true);
                 return;
             }
-            if (job == null) {
-                if (!future.isDone()) return;
-                job = future.get();
-                if (job == null || job.isSimulation()) {
-                    finish("failed", "AE 无法合成：" + request.label + "；请补齐样板与原料后重新下单", true);
-                    return;
+            if (!calculationFinished) {
+                // Native completion is delivered by ICraftingCallback on this world. A completed Future is
+                // inspected once only to surface exceptional completion, never to replace the normal callback.
+                if (!futureChecked && future.isDone()) {
+                    futureChecked = true;
+                    future.get();
                 }
+                return;
+            }
+            if (job == null || job.isSimulation()) {
+                finish("failed", "AE 无法合成：" + request.label + "；请补齐样板与原料后重新下单", true);
+                return;
             }
             // Like the Matter Manipulator uplink, let AE choose an eligible CPU. A real requester
             // keeps the link non-standalone, so it cannot merge with another player's standalone order.
@@ -421,6 +447,14 @@ public final class HologramAeCraftingOrders {
             }
             state = "crafting";
             status = "AE 正在合成：" + request.label;
+        }
+
+        /** AE synchronizes this callback with the original world; cancelled/previous rows cannot take over. */
+        void calculationComplete(int requestedIndex, ICraftingJob completed) {
+            if (!active || requestedIndex != index || link != null || calculationFinished) return;
+            job = completed;
+            calculationFinished = true;
+            wake();
         }
 
         @Override
@@ -454,6 +488,7 @@ public final class HologramAeCraftingOrders {
             if (changed != link) return;
             nativeCancelled = changed.isCanceled();
             nativeCompleted = changed.isDone();
+            if (nativeCancelled || nativeCompleted) wake();
         }
 
         /**

@@ -97,7 +97,7 @@ public final class HologramPartialPlacementSmoke {
                     check(
                         fixtureWorld.getTotalWorldTime() > admittedTick,
                         "job must run on a later natural server tick");
-                    HologramPlacementJobs.tickJob(paid);
+                    HologramTestLabConstructionDriver.step(paid);
                     slices++;
                     evidence.setInteger("naturalEndSlices", slices);
                     evidence.setInteger("job", paid.job);

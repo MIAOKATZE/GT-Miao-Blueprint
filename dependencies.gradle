@@ -26,6 +26,12 @@ dependencies {
     testImplementation("com.github.GTNewHorizons:FloodLights:${packVersion("FloodLights")}:dev") { transitive = false }
     testImplementation("com.github.GTNewHorizons:Jabba:${packVersion("Jabba")}:dev") { transitive = false }
     testImplementation("com.github.GTNewHorizons:StorageDrawers:${packVersion("StorageDrawers")}:dev") { transitive = false }
+    // Full native GT tile NBT links these APIs. These are the installed 2.9.2 versions and test-only.
+    if (gtmbTarget == "2.9.2") {
+        testRuntimeOnly("com.falsepattern:chunkapi-mc1.7.10:0.8.4:dev") { transitive = false }
+        testRuntimeOnly("com.falsepattern:endlessids-mc1.7.10:1.7.4:dev") { transitive = false }
+        testRuntimeOnly("com.falsepattern:falsepatternlib-mc1.7.10:1.12.2:dev") { transitive = false }
+    }
     compileOnly rfg.deobf("curse.maven:neverenoughanimation-1062347:7664003-sources-7663978")
     testImplementation rfg.deobf("curse.maven:neverenoughanimation-1062347:7664003-sources-7663978")
     // Native MUI2 viewport/hover signatures; GTNHLib supplies these libraries in the target pack.

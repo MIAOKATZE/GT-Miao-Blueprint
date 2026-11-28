@@ -113,9 +113,7 @@ final class HologramPrivateNativeServer implements AutoCloseable {
     }
 
     private static boolean allowed(HologramWorkspace.ActionEndpoint ep, Request begin) {
-        if (begin == null || begin.op != BEGIN
-            || !HologramWorkspace.currentActionEndpoint(ep)
-            || HologramWorkspace.constructionGate(ep) == null) return false;
+        if (begin == null || begin.op != BEGIN || !HologramWorkspace.currentActionEndpoint(ep)) return false;
         var p = ep.player;
         ItemStack tool = p.getHeldItem();
         return !p.isDead && p.capabilities.allowEdit
@@ -284,6 +282,14 @@ final class HologramPrivateNativeServer implements AutoCloseable {
 
     private void end(Active a, int op, int placed, int satisfied, int total, String why) {
         if (a.retired) return;
+        if (!a.executing) a.attempt.finishResult(
+            a.ep.player,
+            op == COMPLETE ? HologramNativeLocalConstruction.Phase.COMPLETE
+                : op == CANCELLED ? HologramNativeLocalConstruction.Phase.CANCELLED
+                    : HologramNativeLocalConstruction.Phase.FAILED,
+            placed,
+            satisfied,
+            total);
         requests.remove(a.ep.actor, a);
         a.retired = true;
         a.attempt.stop();
@@ -319,7 +325,9 @@ final class HologramPrivateNativeServer implements AutoCloseable {
 
     void tick() {
         for (Active a : new ArrayList<>(requests.values())) {
-            if (!HologramWorkspace.currentActionEndpoint(a.ep) || !allowed(a.ep, a.begin)) {
+            // Once handed to the common job, its original-slot Source owns execution validity.
+            // Upload admission must never rewrite an already committed terminal result after a hand change.
+            if (!HologramWorkspace.currentActionEndpoint(a.ep) || !a.executing && !allowed(a.ep, a.begin)) {
                 a.attempt.stop();
                 if (!a.executing) {
                     end(a, CANCELLED, 0, 0, 0, "原生施工已取消");

@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Additional terms: see AGPL-ADDITIONAL-TERMS.md in the project root.
-
 package com.miaokatze.gtmb.hologram;
 
 import java.util.IdentityHashMap;
@@ -13,93 +12,136 @@ import com.gtnewhorizon.gtnhlib.util.CoordinatePacker;
 import gregtech.api.threads.RunnableMachineUpdate;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 
-/** Coalesces repeated GT update seeds during one synchronous construction slice. */
+/** Native updates are suppressed per slice and published from the owning job's terminal boundary. */
 public final class HologramMachineUpdateBatch implements AutoCloseable {
 
     private static final ThreadLocal<HologramMachineUpdateBatch> CURRENT = new ThreadLocal<>();
     private static final ThreadLocal<Drain> DRAIN = new ThreadLocal<>();
-    // Passive main-thread diagnostics; testlab reads differences without resetting production state.
     static long requestedSeeds, coalescedSeeds;
-
     private final HologramMachineUpdateBatch previous;
-    private final Map<World, LongOpenHashSet> seeds;
+    private final Updates updates;
+    private final boolean enabled, temporary;
     private boolean closed;
 
-    private HologramMachineUpdateBatch(HologramMachineUpdateBatch previous) {
-        this.previous = previous;
-        seeds = previous == null ? new IdentityHashMap<>() : previous.seeds;
+    static final class Updates {
+
+        private final Map<World, LongOpenHashSet> seeds = new IdentityHashMap<>();
+        private boolean finishing;
+
+        HologramMachineUpdateBatch open() {
+            return new HologramMachineUpdateBatch(this, false);
+        }
+
+        void changed(World world, int x, int y, int z) {
+            if (!RunnableMachineUpdate.isEnabled()) return;
+            var scope = CURRENT.get();
+            if (scope != null && !scope.enabled) return;
+            if (machineBlock(world, x, y, z)) add(world, x, y, z);
+        }
+
+        void removed(World world, int x, int y, int z, boolean wasMachine) {
+            if (!wasMachine || !RunnableMachineUpdate.isEnabled()) return;
+            var scope = CURRENT.get();
+            if (scope != null && !scope.enabled) return;
+            var recorded = seeds.get(world);
+            if (recorded != null && recorded.contains(CoordinatePacker.pack(x, y, z))) return;
+            add(world, x, y, z);
+            for (var side : net.minecraftforge.common.util.ForgeDirection.VALID_DIRECTIONS) {
+                int nx = x + side.offsetX, ny = y + side.offsetY, nz = z + side.offsetZ;
+                if (machineBlock(world, nx, ny, nz)) add(world, nx, ny, nz);
+            }
+        }
+
+        private void add(World world, int x, int y, int z) {
+            requestedSeeds++;
+            if (!seeds.computeIfAbsent(world, ignored -> new LongOpenHashSet())
+                .add(CoordinatePacker.pack(x, y, z))) coalescedSeeds++;
+        }
+
+        void finish() {
+            finishing = true;
+            if (CURRENT.get() == null) flush();
+        }
+
+        private void flush() {
+            if (!RunnableMachineUpdate.isEnabled() || !RunnableMachineUpdate.isCurrentThreadEnabled()) return;
+            for (var entry : seeds.entrySet()) {
+                var positions = entry.getValue()
+                    .iterator();
+                while (positions.hasNext()) {
+                    long p = positions.nextLong();
+                    int x = CoordinatePacker.unpackX(p), y = CoordinatePacker.unpackY(p),
+                        z = CoordinatePacker.unpackZ(p);
+                    if (entry.getKey()
+                        .blockExists(x, y, z)) RunnableMachineUpdate.setMachineUpdateValues(entry.getKey(), x, y, z);
+                }
+            }
+            seeds.clear();
+        }
+    }
+
+    static boolean machineBlock(World world, int x, int y, int z) {
+        return world.blockExists(x, y, z)
+            && (world.getTileEntity(x, y, z) instanceof gregtech.api.interfaces.tileentity.IGregTechTileEntity
+                || gregtech.api.GregTechAPI.isMachineBlock(world.getBlock(x, y, z), world.getBlockMetadata(x, y, z)));
+    }
+
+    private HologramMachineUpdateBatch(Updates updates, boolean temporary) {
+        previous = CURRENT.get();
+        this.updates = previous == null ? updates : previous.updates;
+        this.temporary = temporary && previous == null;
+        enabled = previous == null ? RunnableMachineUpdate.isCurrentThreadEnabled() : previous.enabled;
+        CURRENT.set(this);
+        if (DRAIN.get() == null) RunnableMachineUpdate.setCurrentThreadEnabled(false);
     }
 
     static HologramMachineUpdateBatch open() {
-        var batch = new HologramMachineUpdateBatch(CURRENT.get());
-        CURRENT.set(batch);
-        return batch;
+        return new HologramMachineUpdateBatch(new Updates(), true);
     }
 
-    /**
-     * Called only by the GT seed-entry Mixin. The first request still executes immediately in GT. Keep every
-     * distinct seed, including arbitrary callback destinations: one controller cannot reach every component
-     * after demolition. GT already merges propagation by world at endTick; this removes duplicate initial
-     * queue entries, not a supposed full machine traversal per placed block.
-     */
     public static boolean suppressDuplicate(World world, int x, int y, int z) {
-        var batch = CURRENT.get();
-        if (batch == null || DRAIN.get() != null
-            || !RunnableMachineUpdate.isEnabled()
-            || !RunnableMachineUpdate.isCurrentThreadEnabled()) return false;
-        requestedSeeds++;
-        boolean duplicate = !batch.seeds.computeIfAbsent(world, ignored -> new LongOpenHashSet())
-            .add(CoordinatePacker.pack(x, y, z));
-        if (duplicate) coalescedSeeds++;
-        return duplicate;
+        var scope = CURRENT.get();
+        if (scope == null || DRAIN.get() != null) return false;
+        if (scope.enabled && RunnableMachineUpdate.isEnabled()) scope.updates.add(world, x, y, z);
+        return true;
     }
 
-    /** The GT queue can also be drained synchronously by a native callback inside a construction slice. */
     public static Drain pauseForDrain() {
-        var drain = new Drain(DRAIN.get());
-        clearCurrentSeeds();
-        DRAIN.set(drain);
-        return drain;
+        return new Drain();
     }
 
-    private static void clearCurrentSeeds() {
-        var batch = CURRENT.get();
-        if (batch != null) batch.seeds.clear();
-    }
-
-    /** Keeps drain callbacks, including newly opened nested batches, on GT's ordinary unfiltered path. */
     public static final class Drain implements AutoCloseable {
 
-        private final Drain previous;
+        private final Drain previous = DRAIN.get();
+        private final boolean enabled = RunnableMachineUpdate.isCurrentThreadEnabled();
         private boolean closed;
 
-        private Drain(Drain previous) {
-            this.previous = previous;
+        private Drain() {
+            DRAIN.set(this);
+            var scope = CURRENT.get();
+            if (scope != null && scope.enabled) {
+                RunnableMachineUpdate.setCurrentThreadEnabled(true);
+                scope.updates.flush();
+            }
         }
 
-        @Override
         public void close() {
             if (closed) return;
-            if (DRAIN.get() != this) throw new IllegalStateException("Machine update drains must close in scope order");
             closed = true;
-            try {
-                // Events emitted during the drain may already have been processed, or the drain may have
-                // failed after clearing its queue. Never let an earlier seen-set suppress a subsequent seed.
-                clearCurrentSeeds();
-            } finally {
-                if (previous == null) DRAIN.remove();
-                else DRAIN.set(previous);
-            }
+            RunnableMachineUpdate.setCurrentThreadEnabled(enabled);
+            if (previous == null) DRAIN.remove();
+            else DRAIN.set(previous);
         }
     }
 
-    @Override
     public void close() {
         if (closed) return;
-        if (CURRENT.get() != this) throw new IllegalStateException("Machine update batches must close in scope order");
+        if (CURRENT.get() != this) throw new IllegalStateException("Machine update scopes must close in order");
         closed = true;
-        if (previous == null) CURRENT.remove();
-        else CURRENT.set(previous);
-        // No replay or flag manipulation: even a partial/failed transaction already queued its first seeds.
+        if (previous == null) {
+            CURRENT.remove();
+            RunnableMachineUpdate.setCurrentThreadEnabled(enabled);
+            if (temporary || updates.finishing) updates.flush();
+        } else CURRENT.set(previous);
     }
 }

@@ -27,6 +27,7 @@ public final class HologramConfigurationPresetsRegression {
 
     public static void run() {
         try {
+            inheritedChannelSelection();
             explicitPresetSelection();
             Path parent = Paths.get("build", "tmp");
             Files.createDirectories(parent);
@@ -41,6 +42,38 @@ public final class HologramConfigurationPresetsRegression {
         } catch (Exception failure) {
             throw new IllegalStateException("Configuration preset regression failed", failure);
         }
+    }
+
+    private static void inheritedChannelSelection() {
+        HologramUiModules ui = new HologramUiModules(null);
+        NBTTagCompound channel = new NBTTagCompound();
+        channel.setString("id", "ore_center_sectors");
+        channel.setInteger("current", 4);
+        NBTTagList options = new NBTTagList();
+        NBTTagCompound inherited = new NBTTagCompound();
+        inherited.setBoolean("present", false);
+        inherited.setString("label", "Restore default");
+        options.appendTag(inherited);
+        for (int value = 1; value <= 6; value++) {
+            NBTTagCompound option = new NBTTagCompound();
+            option.setBoolean("present", true);
+            option.setInteger("value", value);
+            options.appendTag(option);
+        }
+        channel.setTag("options", options);
+        SimpleAssert.that(
+            ui.config.optionIndex(channel) == 0 && !ui.config.canStep(channel, -1),
+            "an inherited sector channel selects restore-default even when the main signal matches preset four");
+        channel.setBoolean("explicit", true);
+        SimpleAssert.eq(4, ui.config.optionIndex(channel), "an explicit sector four selects its integer preset");
+        channel.setBoolean("explicit", false);
+        SimpleAssert
+            .eq(0, ui.config.optionIndex(channel), "removing the named override restores inheritance selection");
+        options.removeTag(0);
+        SimpleAssert.eq(
+            3,
+            ui.config.optionIndex(channel),
+            "a main signal without an inheritance option still selects its matching integer");
     }
 
     private static void explicitPresetSelection() throws Exception {

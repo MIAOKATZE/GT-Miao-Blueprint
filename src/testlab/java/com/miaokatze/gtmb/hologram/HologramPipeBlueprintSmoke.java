@@ -134,12 +134,10 @@ final class HologramPipeBlueprintSmoke {
             require(
                 (Integer) get(session, "planMissing") == 0 && "pending".equals(cell.status),
                 "native_pipe_and_cover_have_exact_payable_plan");
-            Method operate = HologramWorldTransactions.class
-                .getDeclaredMethod("operateChecked", type, HologramCapture.Cell.class, int.class);
-            operate.setAccessible(true);
             require(
-                (Boolean) operate.invoke(null, session, cell, 0) && "placed".equals(cell.status),
-                "actual_service_transaction_places_saved_pipe");
+                HologramTestLabConstructionDriver.write((HologramSession) session, cell, 0)
+                    && "placed".equals(cell.status),
+                "actual_native_writer_places_saved_pipe");
             require(
                 world.getTileEntity(x, y, z) instanceof BaseMetaPipeEntity,
                 "placement_restores_real_pipe_tile_class");

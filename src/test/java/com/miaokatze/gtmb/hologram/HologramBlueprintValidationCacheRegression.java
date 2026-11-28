@@ -141,7 +141,9 @@ public final class HologramBlueprintValidationCacheRegression {
                 return metadata + nativeDrops[0];
             }
         };
-        SimpleAssert.that(cache.ordinaryMaterial(inheritedPick, 0), "inherited native pick has a metadata descriptor");
+        SimpleAssert.that(
+            !cache.ordinaryMaterial(inheritedPick, 0),
+            "an inherited getter does not grant a planned metadata proof to a third-party block");
         SimpleAssert.eq(1, cache.materialDamage(inheritedPick, 0), "inherited pick calls its actual drop override");
         SimpleAssert.eq(2, cache.materialDamage(inheritedPick, 0), "unknown drop results never survive across cells");
         SimpleAssert.that(!cache.ordinaryMaterial(thirdParty, 0), "unknown world-aware pick override stays native");

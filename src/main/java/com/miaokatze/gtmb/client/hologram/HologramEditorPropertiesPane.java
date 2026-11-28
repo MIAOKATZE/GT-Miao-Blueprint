@@ -445,19 +445,6 @@ final class HologramEditorPropertiesPane {
         Flow task = row().height(18);
         task.child(
             action(
-                51,
-                () -> ui.session.state().data.getInteger("job") == 2 ? projectorOr("native.ui.resume", "继续")
-                    : projectorOr("native.ui.pause", "暂停"),
-                () -> ui.session.pendingSequence() < 0 && (ui.session.state().data.getInteger("job") == 1
-                    || ui.session.state().data.getInteger("job") == 2),
-                () -> ui.session.pendingSequence() >= 0
-                    ? projectorOr("native.ui.wait_for_the_server_response_before_continuing", "等待服务端回执后可操作。")
-                    : projectorOr(
-                        "native.ui.pause_or_resume_construction_keeping_completed_results",
-                        "暂停或继续当前施工任务，保留已完成结果。")).height(18)
-                            .expanded());
-        task.child(
-            action(
                 52,
                 () -> projectorOr("native.ui.cancel", "取消"),
                 () -> ui.session.pendingSequence() < 0

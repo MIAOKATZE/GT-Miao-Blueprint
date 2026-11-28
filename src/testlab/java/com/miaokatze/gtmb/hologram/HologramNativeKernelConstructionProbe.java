@@ -32,7 +32,7 @@ public final class HologramNativeKernelConstructionProbe {
     private final int x, y, z, toolSlot, supplySlot;
     private final double originalX, originalY, originalZ;
     private final int[] events = new int[21];
-    private int cursor, activeIndex = -1, stockDuringVeto = -1;
+    private int cursor, activeIndex = -1, stockDuringVeto = -1, stockAfterVeto = -1;
     private boolean observing, restored;
 
     public HologramNativeKernelConstructionProbe(WorldServer world, FakePlayer actor, int x, int y, int z)
@@ -114,9 +114,10 @@ public final class HologramNativeKernelConstructionProbe {
                 world.isAirBlock(cellX(cursor), y, cellZ(cursor))
                     && world.getTileEntity(cellX(cursor), y, cellZ(cursor)) == null,
                 "Cancelled kernel world cell was not restored");
+            stockAfterVeto = stock();
             require(
-                stockDuringVeto == 0 && stock() == 1,
-                "Cancelled kernel transaction did not debit then refund exactly one stone");
+                stockDuringVeto == 1 && stockAfterVeto == 1,
+                "Ordinary shell must remain unpaid during the protection event and after its rejection");
         }
         cursor++;
         return cursor == 21;
@@ -153,7 +154,9 @@ public final class HologramNativeKernelConstructionProbe {
         result.setInteger("successfulMaterialDebit", 20);
         result.setInteger("cancelled", 1);
         result.setInteger("stockDuringCancellation", stockDuringVeto);
-        result.setInteger("stockAfterCancellation", 1);
+        result.setInteger("stockAfterCancellation", stockAfterVeto);
+        result
+            .setString("ordinaryShellPayment", "after accepted Forge protection event; vetoed shell is never debited");
         result.setIntArray("finalPlaceEventsPerCell", events.clone());
         result.setBoolean("journalClear", true);
         result.setBoolean("fixtureWorldAndBorrowedInventoryRestored", true);

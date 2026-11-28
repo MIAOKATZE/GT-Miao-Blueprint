@@ -231,15 +231,20 @@ public final class HologramGtMeShadowRegression {
             NBTTagCompound before = (NBTTagCompound) source.copy();
             NBTTagCompound clean = HologramGtMeShadow.project(source);
             SimpleAssert.that(
-                !clean.hasKey("cache") && !clean.hasKey(fluid ? "cachedFluids" : "cachedItems"),
-                "audited output cache fixtures are omitted for both current and legacy readers");
+                clean.hasKey("cache") && clean.hasKey(fluid ? "cachedFluids" : "cachedItems"),
+                "native output buffers remain physical assets for current and legacy readers");
             SimpleAssert.that(
                 clean.getBoolean("cacheMode") && clean.getInteger("myPriority") == 71,
-                "native output connection/cache settings survive without stock");
+                "native output connection/cache settings survive alongside real stock");
             HologramBlueprintResources.Plan plan = HologramBlueprintResources.plan(source);
-            SimpleAssert.that(
-                plan.items.isEmpty() && plan.fluids.isEmpty(),
-                "pending ME output cargo is neither copied nor charged");
+            if (fluid) SimpleAssert.eq(
+                15308L,
+                plan.fluids.get(0).amount,
+                "both native and legacy locally buffered fluids are charged exactly");
+            else SimpleAssert.eq(
+                106,
+                plan.items.get(0).stackSize,
+                "both native and legacy locally buffered items are charged exactly");
             SimpleAssert.eq(before, source, "native output source remains unchanged");
             SimpleAssert.eq(clean, HologramGtMeShadow.project(clean), "native output projection is idempotent");
             NBTTagCompound bad = (NBTTagCompound) source.copy();

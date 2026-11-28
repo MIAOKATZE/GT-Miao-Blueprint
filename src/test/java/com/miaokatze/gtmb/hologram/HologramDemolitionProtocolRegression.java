@@ -32,7 +32,7 @@ public final class HologramDemolitionProtocolRegression {
             .eq(start.getString("requestId"), HologramDemolitionProtocol.validate(start), "canonical request admitted");
         SimpleAssert
             .eq(-1, HologramDemolitionProtocol.destination(start), "old requests keep legacy recovery ordering");
-        for (int destination : new int[] { 0, 1 }) {
+        for (int destination : new int[] { 0, 1, 2 }) {
             NBTTagCompound explicit = (NBTTagCompound) start.copy();
             explicit.setInteger("demolitionDestination", destination);
             HologramDemolitionProtocol.validate(explicit);
@@ -41,7 +41,7 @@ public final class HologramDemolitionProtocolRegression {
                 HologramDemolitionProtocol.destination(explicit),
                 "explicit destination survives server decoding");
         }
-        for (int destination : new int[] { -1, 2, Integer.MAX_VALUE }) {
+        for (int destination : new int[] { -1, 3, Integer.MAX_VALUE }) {
             NBTTagCompound invalid = (NBTTagCompound) start.copy();
             invalid.setInteger("demolitionDestination", destination);
             rejects(() -> HologramDemolitionProtocol.validate(invalid), "invalid destination never starts a job");

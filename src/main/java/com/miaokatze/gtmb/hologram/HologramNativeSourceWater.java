@@ -3,22 +3,13 @@
 
 package com.miaokatze.gtmb.hologram;
 
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
-
 import net.minecraft.block.Block;
 import net.minecraft.init.Blocks;
 import net.minecraft.nbt.NBTTagCompound;
 
-import com.gtnewhorizon.structurelib.structure.IStructureElement;
-import com.gtnewhorizon.structurelib.structure.IStructureElementChain;
-import com.gtnewhorizon.structurelib.structure.StructureUtility;
+import gregtech.api.util.GTUtility;
 
-import gregtech.api.util.GTStructureUtility;
-import gregtech.common.tileentities.machines.multi.MTEIndustrialChemicalBath;
-import gregtech.common.tileentities.machines.multi.MTEOreWashingPlant;
-
-/** The reviewed GT5U machine can supply this target itself. It is never an item placement operation. */
+/** An explicit native air fallback proves that this water is optional structure content. */
 final class HologramNativeSourceWater {
 
     // Presentation only. Construction requires the separately owned typed capture row, never this tag.
@@ -27,31 +18,9 @@ final class HologramNativeSourceWater {
 
     private HologramNativeSourceWater() {}
 
-    static boolean reviewedController(Class<?> type) {
-        // GT5U 5.09.54.265: both controllers use the same slot in checkMachine and fillStructureWithWater.
-        // Other machines use the same water/air chain without proving a matching native generator.
-        return type == MTEOreWashingPlant.class || type == MTEIndustrialChemicalBath.class;
-    }
-
-    static boolean reviewedSlot(IStructureElement<?> element) {
-        if (!(element instanceof IStructureElementChain<?>chain)) return false;
-        try {
-            IStructureElement<?>[] children = HologramDeclarationWrappers.nativeChainChildren(chain);
-            if (children == null || children.length != 2 || children[1] != StructureUtility.isAir()) return false;
-            Class<?> water = children[0].getClass();
-            Method factory = HologramDeclarationWrappers.factory(water);
-            if (factory == null || factory.getDeclaringClass() != GTStructureUtility.class
-                || !"ofAnyWater".equals(factory.getName())
-                || factory.getParameterCount() != 1
-                || factory.getParameterTypes()[0] != boolean.class) return false;
-            // The exact dependency stores the invocation argument in this final field, not in its class identity.
-            Field allowFlowing = water.getDeclaredField("val$allowFlowing");
-            if (allowFlowing.getType() != boolean.class) return false;
-            allowFlowing.setAccessible(true);
-            return !allowFlowing.getBoolean(children[0]);
-        } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
-            return false;
-        }
+    static boolean optionalWater(Block block) {
+        if (block == Blocks.water || block == Blocks.flowing_water) return true;
+        return block != null && block != Blocks.air && GTUtility.isWater(block);
     }
 
     static boolean source(Block block, int metadata) {

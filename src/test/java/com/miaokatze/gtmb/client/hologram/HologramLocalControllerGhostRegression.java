@@ -51,29 +51,35 @@ final class HologramLocalControllerGhostRegression {
             lease.target == target && lease.target.cells.get(0).x == 391,
             "world draws the exact captured target and preserves real-world coordinates");
         SimpleAssert.that(
-            lease.current(world, link, player, tile, -1, 100) && lease.show(true, true, true, 3, "tool", new Object()),
+            lease.current(world, link, player, tile, -1, 100) && lease.show(true, true, 100),
             "first outside frame with the matching held tool");
-        SimpleAssert.that(
-            !lease.show(false, true, true, 3, "tool", stack) && !lease.show(true, false, true, 3, "tool", stack)
-                && !lease.show(true, true, false, 3, "tool", stack)
-                && !lease.show(true, true, true, 4, "tool", stack)
-                && !lease.show(true, true, true, 3, "other", stack),
-            "off toggle, editor, empty hand, changed tool or slot cannot draw");
         SimpleAssert
-            .that(
-                !lease.current(new Object(), link, player, tile, -1, 100)
-                    && !lease.current(world, new Object(), player, tile, -1, 100)
-                    && !lease.current(world, link, new Object(), tile, -1, 100)
-                    && !lease.current(world, link, player, new Object(), -1, 100)
-                    && !lease.current(world, link, player, tile, 0, 100)
-                    && !lease
-                        .current(world, link, player, tile, -1, 101 + HologramProjectionLifetime.SNAPSHOT_TTL_NANOS),
-                "disconnects, controller replacement, world change and stale captures are not reused");
+            .that(!lease.show(false, true, 100) && !lease.show(true, false, 100), "off toggle and editor cannot draw");
+        SimpleAssert.that(
+            !lease.current(new Object(), link, player, tile, -1, 100)
+                && !lease.current(world, new Object(), player, tile, -1, 100)
+                && !lease.current(world, link, new Object(), tile, -1, 100)
+                && !lease.current(world, link, player, new Object(), -1, 100)
+                && !lease.current(world, link, player, tile, 0, 100),
+            "disconnects, controller replacement and world changes are not reused");
         long idle = HologramLocalControllerGhost.IDLE_VISIBILITY_NANOS;
         SimpleAssert.that(
-            lease.current(world, link, player, tile, -1, 99 + idle)
-                && !lease.current(world, link, player, tile, -1, 100 + idle),
-            "idle ghost expires at five seconds");
+            lease.observeHeld(true, 3, "tool", stack, 100 + 20 * idle)
+                && lease.current(world, link, player, tile, -1, 100 + 20 * idle),
+            "holding the original tool preserves an unfinished projection indefinitely");
+        long switched = 100 + 20 * idle;
+        SimpleAssert.that(
+            lease.observeHeld(false, 4, "", null, switched) && lease.show(true, true, switched)
+                && lease.observeHeld(true, 3, "tool", stack, switched + idle - 1),
+            "switching away keeps the projection and returning before five seconds renews it");
+        switched += 2 * idle;
+        SimpleAssert.that(
+            lease.observeHeld(true, 4, "other", stack, switched)
+                && lease.current(world, link, player, tile, -1, switched + idle - 1)
+                && !lease.observeHeld(true, 3, "tool", stack, switched + idle)
+                && !lease.show(true, true, 100)
+                && !lease.observeHeld(true, 3, "tool", stack, switched + idle + 1),
+            "five seconds away retires the lease permanently, even if that tick first observes the returned tool");
         UUID request = new UUID(5, 6);
         HologramLocalControllerGhost.Lease running = new HologramLocalControllerGhost.Lease(
             target,
@@ -94,13 +100,14 @@ final class HologramLocalControllerGhostRegression {
                 && running.ownedBy(request)
                 && !running.ownedBy(new UUID(5, 7))
                 && !lease.ownedBy(request)
-                && running.show(true, true, false, 0, "", null),
+                && running.show(true, true, 100),
             "construction retains only the exact controller and terminal request");
         SimpleAssert.that(
             HologramLocalControllerGhost.afterTerminal(running, new UUID(5, 7)) == running
-                && HologramLocalControllerGhost.afterTerminal(running, request) == null
+                && HologramLocalControllerGhost.afterTerminal(running, request) == running
+                && !running.ownedBy(request)
                 && HologramLocalControllerGhost.afterTerminal(lease, request) == lease,
-            "a late terminal cannot clear a newer idle or different active lease");
+            "an unfinished terminal releases only its active owner and keeps the exact idle projection");
         alternateOwner(lease);
         HologramLocalControllerGhost.Lease unlinked = new HologramLocalControllerGhost.Lease(
             target,
@@ -115,7 +122,8 @@ final class HologramLocalControllerGhostRegression {
             "",
             100);
         SimpleAssert.that(
-            unlinked.show(true, true, true, 3, "", stack) && !unlinked.show(true, true, true, 3, "", new Object()),
+            unlinked.observeHeld(true, 3, "", stack, 100) && unlinked.observeHeld(true, 3, "", new Object(), 101)
+                && !unlinked.current(world, link, player, tile, -1, 101 + idle),
             "unlinked tools are confined to the exact captured stack");
         NBTTagCompound receipt = new NBTTagCompound();
         receipt.setBoolean("nativeBuildSatisfied", true);

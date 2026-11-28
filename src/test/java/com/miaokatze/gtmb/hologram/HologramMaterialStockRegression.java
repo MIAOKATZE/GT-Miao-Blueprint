@@ -37,6 +37,19 @@ public final class HologramMaterialStockRegression {
     }
 
     static void run() throws Exception {
+        for (int destination = 0; destination <= 2; destination++) {
+            var settings = HologramMaterialStockWire.decode(7 | destination << 5);
+            SimpleAssert.that(
+                settings != null && settings.main
+                    && settings.containers
+                    && settings.me
+                    && settings.recoveryDestination == destination
+                    && HologramProjectedMainPolicy.structurePlacementKey(settings, true) == (7 | destination << 5),
+                "all explicit destinations round-trip without changing source mask bits");
+        }
+        SimpleAssert.that(
+            HologramMaterialStockWire.decode(7 | 3 << 5) == null,
+            "undefined recovery destination stays rejected");
         HologramNativeSavedWorldRegression.withConnectedWorld(6, world -> {
             var unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
             unsafeField.setAccessible(true);

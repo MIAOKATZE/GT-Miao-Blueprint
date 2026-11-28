@@ -77,7 +77,7 @@ public final class HologramClientRemoteNativePlacement {
         req.bindingSlots = opts.getIntArray("savedBindingSlots");
         var receipt = source.source().nativeReceipt;
         req.sha = receipt.physicalHash;
-        Task task = new Task(owner, req, client.getNetHandler(), client.theWorld);
+        Task task = new Task(owner, req, client.getNetHandler(), client.theWorld, source);
         task.ticket = HologramBackgroundTasks
             .beginOwnedPlacement(req.id, HologramNativeUiText.reason("原生蓝图施工"), task::cancel);
         if (task.ticket == null) return false;
@@ -150,6 +150,7 @@ public final class HologramClientRemoteNativePlacement {
         final Request begin;
         final INetHandler connection;
         final Object world;
+        final HologramLocalPlacement.Submission source;
         final ArrayBlockingQueue<Reply> inbox = new ArrayBlockingQueue<>(64);
         Ticket ticket;
         FileChannel file;
@@ -158,11 +159,13 @@ public final class HologramClientRemoteNativePlacement {
         boolean begun, cancelled, reading, started;
         long seen, last = System.nanoTime();
 
-        Task(HologramLibraryClient owner, Request begin, INetHandler connection, Object world) {
+        Task(HologramLibraryClient owner, Request begin, INetHandler connection, Object world,
+            HologramLocalPlacement.Submission source) {
             this.owner = owner;
             this.begin = begin;
             this.connection = connection;
             this.world = world;
+            this.source = source;
         }
 
         boolean cancel() {
@@ -184,7 +187,7 @@ public final class HologramClientRemoteNativePlacement {
             if (!started && (m.op == COMPLETE
                 || m.op == PROGRESS && !HologramPrivateNativeWire.PREPARING_PROGRESS.equals(m.message))) {
                 started = true;
-                Minecraft.getMinecraft().thePlayer.closeScreen();
+                if (source.current()) Minecraft.getMinecraft().thePlayer.closeScreen();
             }
             switch (m.op) {
                 case NEED -> {
@@ -246,8 +249,7 @@ public final class HologramClientRemoteNativePlacement {
                             m.satisfied,
                             m.total),
                         HologramNativeUiText.reason(m.message));
-                    if (accepted) HologramLocalPlacement.INSTANCE.clear();
-                    else HologramLocalPlacement.INSTANCE.retry();
+                    if (accepted) HologramLocalPlacement.INSTANCE.finish(source, true);
                     retire();
                 }
                 case FAILED, CANCELLED -> finish(
@@ -262,7 +264,7 @@ public final class HologramClientRemoteNativePlacement {
 
         void finish(Outcome outcome, int placed, int satisfied, int total, String why) {
             if (active != this || retired) return;
-            HologramBackgroundTasks.finishOwnedPlacement(
+            boolean accepted = HologramBackgroundTasks.finishOwnedPlacement(
                 ticket,
                 seen + 1,
                 outcome,
@@ -270,7 +272,7 @@ public final class HologramClientRemoteNativePlacement {
                 satisfied,
                 total,
                 HologramNativeUiText.reason(why));
-            HologramLocalPlacement.INSTANCE.retry();
+            if (accepted) HologramLocalPlacement.INSTANCE.finish(source, outcome == Outcome.CANCELLED);
             retire();
         }
 

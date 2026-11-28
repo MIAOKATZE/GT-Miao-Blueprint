@@ -671,7 +671,6 @@ public final class HologramUiModuleRegression {
                     64,
                     0,
                     com.miaokatze.gtmb.hologram.HologramStockNativeWire.Stage.CONTROLLER_ONLY,
-                    1,
                     nativeState.targetRevision(),
                     ""));
             HologramState published = source.withMetadata(nativeState.metadata());

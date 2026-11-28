@@ -80,19 +80,17 @@ final class HologramFourMachineWireAudit {
                         if ("serverRules".equals(tag.getString("action")) && tag.hasKey("nativeStockCommand", 1)) {
                             int command = tag.getByte("nativeStockCommand");
                             event.put("nativeCommand", command);
-                            if (command == HologramStockNativeWire.Command.BEGIN.ordinal()
-                                || command == HologramStockNativeWire.Command.BEGIN_AFTER_PROBE.ordinal())
-                                synchronized (events) {
-                                    beginCommands++;
-                                    try {
-                                        latestBegin = new Begin(
-                                            UUID.fromString(tag.getString("nativeStockRequest")),
-                                            beginCommands,
-                                            tag);
-                                    } catch (IllegalArgumentException malformed) {
-                                        failure = "Real native BEGIN omitted a valid request UUID";
-                                    }
+                            if (command == HologramStockNativeWire.Command.BEGIN.ordinal()) synchronized (events) {
+                                beginCommands++;
+                                try {
+                                    latestBegin = new Begin(
+                                        UUID.fromString(tag.getString("nativeStockRequest")),
+                                        beginCommands,
+                                        tag);
+                                } catch (IllegalArgumentException malformed) {
+                                    failure = "Real native BEGIN omitted a valid request UUID";
                                 }
+                            }
                         }
                         append(event);
                     }
@@ -113,10 +111,6 @@ final class HologramFourMachineWireAudit {
                     "sequence",
                     reply.key()
                         .sequence());
-                event.put(
-                    "generation",
-                    reply.key()
-                        .generation());
                 event.put(
                     "phase",
                     reply.phase()

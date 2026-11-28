@@ -11,6 +11,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Random;
 import java.util.Set;
+import java.util.UUID;
 
 import net.minecraft.block.Block;
 import net.minecraft.block.material.Material;
@@ -70,6 +71,7 @@ public final class HologramDemolitionRegression {
             Field field = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
             field.setAccessible(true);
             sun.misc.Unsafe unsafe = (sun.misc.Unsafe) field.get(null);
+            resultReceipts(unsafe);
             Scene world = scene(unsafe);
             Player player = (Player) unsafe.allocateInstance(Player.class);
             player.worldObj = world;
@@ -88,6 +90,8 @@ public final class HologramDemolitionRegression {
                 protection(world, player, guard);
                 chest(world, player);
                 nativeFailure(world, player);
+                creativeDrops(world, player);
+                boundToolSelection(world, player);
                 scopedHarvestPhases(world, player, guard);
                 declaredToolLifecycle(world, player, guard);
                 try (AutoCloseable nativeScope = HologramDemolitionDestinationRegression.nativeClassScope()) {
@@ -123,11 +127,19 @@ public final class HologramDemolitionRegression {
         }
         SimpleAssert
             .eq(expected, actual, "add/subtract masks visit exactly the selected cells across chunk boundaries");
+        SimpleAssert.eq(
+            (long) expected.size(),
+            cursor.total,
+            "demolition terminal total includes the exact disjoint selection");
         HologramDemolition.Cursor skipped = new HologramDemolition.Cursor(selection.resolvedRegions(), 256);
         Set<String> nonempty = new HashSet<>();
         while (!skipped.done())
             if (skipped.step((cx, sy, cz) -> sy == 1)) nonempty.add(skipped.x + "," + skipped.y + "," + skipped.z);
         expected.removeIf(key -> Integer.parseInt(key.split(",")[1]) >= 16);
+        SimpleAssert.eq(
+            skipped.total - nonempty.size(),
+            skipped.emptyCount,
+            "empty section planes count as already satisfied without visiting every air cell");
         SimpleAssert.eq(expected, nonempty, "clipped empty sections skip only their own selected planes");
         HologramDemolition.Cursor unloaded = new HologramDemolition.Cursor(selection.resolvedRegions(), 256);
         boolean rejected = false;
@@ -147,6 +159,25 @@ public final class HologramDemolitionRegression {
             rejected = true;
         }
         SimpleAssert.that(rejected, "invalid world height is rejected before task admission");
+    }
+
+    private static void resultReceipts(sun.misc.Unsafe unsafe) throws Exception {
+        ReceiptPlayer first = (ReceiptPlayer) unsafe.allocateInstance(ReceiptPlayer.class);
+        first.actor = UUID.randomUUID();
+        ReceiptPlayer second = (ReceiptPlayer) unsafe.allocateInstance(ReceiptPlayer.class);
+        second.actor = UUID.randomUUID();
+        UUID request = UUID.randomUUID();
+        var result = HologramOperationResult.start("build", request, System.nanoTime() - 1_000_000_000L);
+        result.finish(first, "success", 3, 2, 0, 5);
+        result.finish(first, "failed", 0, 0, 5, 5);
+        SimpleAssert
+            .eq(1, first.receipts, "a job-owned receipt emits exactly once across repeated terminal publication");
+        HologramOperationResult.start("build", request)
+            .finish(second, "success", 3, 2, 0, 5);
+        SimpleAssert.eq(1, second.receipts, "independent jobs emit independent localized receipts");
+        HologramOperationResult.start("demolish", UUID.randomUUID())
+            .finish(first, "cancelled", 1, 0, 0, 5);
+        SimpleAssert.eq(2, first.receipts, "a distinct cancelled operation emits its own terminal receipt");
     }
 
     private static Scene scene(sun.misc.Unsafe unsafe) throws Exception {
@@ -204,6 +235,16 @@ public final class HologramDemolitionRegression {
         SimpleAssert.that(
             !MinecraftForge.EVENT_BUS.post(joinEvent(outside, world)),
             "capture always ends with the native callback scope");
+        try (var discard = new HologramDemolition.DropScope(world, true, 0, 64, 0, true)) {
+            EntityItem cover = new EntityItem(world, 1.1, 64, 0, new ItemStack(Items.emerald));
+            cover.forceSpawn = true;
+            var canceled = joinEvent(cover, world);
+            canceled.setCanceled(true);
+            MinecraftForge.EVENT_BUS.post(canceled);
+            SimpleAssert.that(
+                cover.isDead && cover.getEntityItem().stackSize == 0 && discard.items.isEmpty(),
+                "creative also destroys canceled forceSpawn side drops without inventing recovery");
+        }
     }
 
     private static void protection(Scene world, Player player, Guard guard) throws IOException {
@@ -275,6 +316,77 @@ public final class HologramDemolitionRegression {
         SimpleAssert.that(
             !MinecraftForge.EVENT_BUS.post(joinEvent(later, world)),
             "exception never leaks capture to later world activity");
+    }
+
+    private static void creativeDrops(Scene world, Player player) throws IOException {
+        player.capabilities.isCreativeMode = true;
+        try {
+            world.block = Blocks.chest;
+            world.metadata = 2;
+            TileEntityChest chest = new TileEntityChest();
+            chest.setInventorySlotContents(1, new ItemStack(Items.diamond, 57));
+            chest.setWorldObj(world);
+            world.tile = chest;
+            var result = HologramDemolition.removeBlock(player, world, 0, 64, 0);
+            SimpleAssert.that(
+                result.removed && result.failure == null && world.tile == null,
+                "creative still executes native chest removal");
+            SimpleAssert.that(
+                result.drops.isEmpty() && world.liveItems == 0,
+                "creative native shell and inventory entities never become refunds or live drops");
+            world.block = new FailingBlock();
+            world.tile = new TileEntityChest();
+            result = HologramDemolition.removeBlock(player, world, 0, 64, 0);
+            SimpleAssert.that(
+                result.removed && result.failure != null && result.drops.isEmpty() && world.liveItems == 0,
+                "creative callback failure cannot turn already spawned cargo into recovery");
+            EntityItem later = new EntityItem(world, 0, 64, 0, new ItemStack(Items.diamond));
+            SimpleAssert.that(
+                !MinecraftForge.EVENT_BUS.post(joinEvent(later, world)),
+                "creative suppression ends with its exact synchronous operation");
+        } finally {
+            player.capabilities.isCreativeMode = false;
+        }
+    }
+
+    private static void boundToolSelection(Scene world, Player player) throws IOException {
+        ItemStack admitted = player.inventory.mainInventory[0];
+        player.inventory.mainInventory[1] = new ItemStack(Items.apple);
+        player.inventory.currentItem = 1;
+        try {
+            world.block = Blocks.chest;
+            world.metadata = 2;
+            var chest = new TileEntityChest();
+            chest.setWorldObj(world);
+            world.tile = chest;
+            try (var selected = new HologramConstructionJobs.BoundTool(player, 0)) {
+                SimpleAssert.that(
+                    player.getHeldItem() == admitted,
+                    "native harvest sees the admitted original tool after a hand switch");
+                var removal = HologramDemolition.removeBlock(player, world, 0, 64, 0);
+                SimpleAssert.that(
+                    removal.removed && removal.failure == null,
+                    "native harvest remains real after changing hand");
+            }
+            SimpleAssert.eq(1, player.inventory.currentItem, "native action restores the player's original selection");
+            try (var selected = new HologramConstructionJobs.BoundTool(player, 0)) {
+                player.inventory.currentItem = 2;
+            }
+            SimpleAssert.eq(2, player.inventory.currentItem, "a callback's independent selection is never overwritten");
+            player.inventory.currentItem = 1;
+            try {
+                try (var selected = new HologramConstructionJobs.BoundTool(player, 0)) {
+                    throw new IOException("fixture callback");
+                }
+            } catch (IOException expected) {}
+            SimpleAssert.eq(1, player.inventory.currentItem, "exception cleanup restores the original selected slot");
+            SimpleAssert.that(
+                player.inventory.mainInventory[0] == admitted,
+                "selection adaptation never moves or copies the admitted tool");
+        } finally {
+            player.inventory.currentItem = 0;
+            player.inventory.mainInventory[1] = null;
+        }
     }
 
     private static void scopedHarvestPhases(Scene world, Player player, Guard guard) throws IOException {
@@ -544,6 +656,22 @@ public final class HologramDemolitionRegression {
             SimpleAssert.that(
                 !ItemStack.areItemStackTagsEqual(empty, colored),
                 "different legitimate native item NBT never force-merges");
+            BaseMetaTileEntity creative = nativeHatch(unsafe, world, 92, new ItemStack(Items.diamond, 57));
+            world.block = machines;
+            world.metadata = 0;
+            world.tile = creative;
+            player.capabilities.isCreativeMode = true;
+            try {
+                var result = HologramDemolition.removeBlock(player, world, 92, 64, -21);
+                SimpleAssert.that(
+                    result.removed && result.failure == null && world.tile == null,
+                    "creative preserves real GT delayed harvestBlock removal");
+                SimpleAssert.that(
+                    result.drops.isEmpty() && world.liveItems == 0 && creative.getStackInSlot(0) == null,
+                    "real GT creative shell and cargo are consumed without delivery or source entities");
+            } finally {
+                player.capabilities.isCreativeMode = false;
+            }
         } finally {
             player.inventory.mainInventory[0] = previousHeld;
             GregTechAPI.sBlockMachines = previousMachines;
@@ -787,6 +915,29 @@ public final class HologramDemolitionRegression {
         @Override
         public boolean isSneaking() {
             return false;
+        }
+    }
+
+    private static final class ReceiptPlayer extends EntityPlayerMP {
+
+        UUID actor;
+        int receipts;
+
+        private ReceiptPlayer() {
+            super(null, null, null, null);
+        }
+
+        @Override
+        public UUID getUniqueID() {
+            return actor;
+        }
+
+        @Override
+        public void addChatMessage(net.minecraft.util.IChatComponent component) {
+            SimpleAssert.that(
+                component instanceof net.minecraft.util.ChatComponentTranslation,
+                "terminal chat remains localized until it reaches the client");
+            receipts++;
         }
     }
 

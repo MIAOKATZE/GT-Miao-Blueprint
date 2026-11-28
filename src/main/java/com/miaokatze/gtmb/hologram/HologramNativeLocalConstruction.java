@@ -21,9 +21,6 @@ import net.minecraft.world.World;
 import com.google.gson.JsonObject;
 import com.gtnewhorizon.gtnhlib.util.CoordinatePacker;
 import com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector;
-import com.miaokatze.gtmb.hologram.HologramConstructionTaskGate.End;
-import com.miaokatze.gtmb.hologram.HologramConstructionTaskGate.Permit;
-import com.miaokatze.gtmb.hologram.HologramConstructionTaskGate.Settlement;
 import com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintPairStore;
 import com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintSpatialView;
 import com.miaokatze.gtmb.util.ServerTaskScheduler;
@@ -34,12 +31,11 @@ import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 public final class HologramNativeLocalConstruction {
 
     private static final java.util.Set<Attempt> PENDING = java.util.concurrent.ConcurrentHashMap.newKeySet();
-    private static final Map<UUID, Job> JOBS = new LinkedHashMap<>();
 
     private HologramNativeLocalConstruction() {}
 
     static boolean active(EntityPlayerMP player) {
-        return player != null && JOBS.containsKey(player.getUniqueID());
+        return HologramConstructionJobs.active(player);
     }
 
     public enum Phase {
@@ -71,6 +67,10 @@ public final class HologramNativeLocalConstruction {
 
         public final UUID id;
         private final AtomicBoolean cancelled = new AtomicBoolean();
+        private final HologramOperationResult feedback;
+        private final long started = System.nanoTime();
+        private boolean executionAccepted;
+        private volatile Supplier<EntityPlayerMP> feedbackPlayer;
         private volatile boolean admitted;
 
         boolean admitted() {
@@ -95,6 +95,7 @@ public final class HologramNativeLocalConstruction {
         Attempt(long intent, UUID id) {
             this.intent = intent;
             this.id = id;
+            feedback = HologramOperationResult.start("build", id);
         }
 
         public Result result() {
@@ -110,11 +111,25 @@ public final class HologramNativeLocalConstruction {
             return (current == Phase.PREPARING || current == Phase.EXECUTING) && cancelled.compareAndSet(false, true);
         }
 
+        void finishResult(EntityPlayerMP player, Phase phase, int placed, int satisfied, int total) {
+            if (executionAccepted) return;
+            feedback.finish(
+                player,
+                phase == Phase.COMPLETE ? "success" : phase == Phase.CANCELLED ? "cancelled" : "failed",
+                placed,
+                satisfied,
+                0,
+                total);
+        }
+
         private void publish(Phase phase, int placed, int satisfied, int total, String detail) {
             result = new Result(phase, placed, satisfied, total, result.sequence + 1, detail);
             if (phase == Phase.COMPLETE || phase == Phase.CANCELLED || phase == Phase.FAILED) {
                 PENDING.remove(this);
                 release();
+                Supplier<EntityPlayerMP> owner = feedbackPlayer;
+                if (owner != null) ServerTaskScheduler
+                    .scheduleServerTask(() -> finishResult(owner.get(), phase, placed, satisfied, total));
             }
         }
     }
@@ -224,6 +239,7 @@ public final class HologramNativeLocalConstruction {
 
     public static void submit(Attempt attempt, Prepared prepared, Supplier<EntityPlayerMP> player, String toolId,
         int dimension, int[] anchor, int[] recipe, int reviewedSources, boolean voucher, int[] choices) {
+        attempt.feedbackPlayer = player;
         if (!HologramSavedBindingChoices.valid(choices)) {
             attempt.publish(Phase.FAILED, 0, 0, prepared.total, "量子终端槽位选择无效");
             return;
@@ -311,11 +327,11 @@ public final class HologramNativeLocalConstruction {
                         world.getHeight())) throw new IOException("原生蓝图施工范围超出世界边界");
                 }
         var endpoint = HologramWorkspace.captureActionEndpoint(player.playerNetServerHandler);
-        var gate = HologramWorkspace.constructionGate(endpoint);
+
         final boolean creative = player.capabilities.isCreativeMode;
         var settings = HologramMaterials.read(held);
         var configured = HologramProjectedMainPolicy.captureSaved(settings, creative);
-        if (gate == null || configured == null
+        if (!HologramWorkspace.currentActionEndpoint(endpoint) || configured == null
             || reviewedSources != HologramProjectedMainPolicy.savedPlacementKey(settings, creative))
             throw new IOException("施工权限或材料来源不可用");
         var scope = configured.selectedScope();
@@ -332,6 +348,7 @@ public final class HologramNativeLocalConstruction {
         tx.virtualPreset = prepared.draft.header();
         tx.placementDeidentificationChosen = tx.virtualPreset.deidentificationChosen;
         var stock = new HologramMaterials.Context(player, scope, tx.slot);
+        tx.materialContext = stock;
         // Only the transaction knows whether the target is already satisfied. A gross bill is
         // not a stock admission gate: never reserve/spend for already-present or skipped cells.
         if (tx.jobVoucherRequested && !HologramDecorationVoucher.enabled()) throw new IOException("装饰抵用券不可用，未开始施工");
@@ -340,25 +357,15 @@ public final class HologramNativeLocalConstruction {
             || !toolId.equals(toolId(player.getHeldItem()))
             || player.dimension != dimension
             || !configured.configuredToolMatches(player.getHeldItem())) throw new IOException("原生施工上下文已变化");
-        var intent = new HologramConstructionTaskGate.Request(
+        if (!prepared.currentVersion.getAsBoolean()) throw new IOException("蓝图已更新，请重新打开材料页");
+        if (HologramConstructionAuthority.competingWork(player)) throw new IOException("已有施工或编辑任务");
+        var job = HologramConstructionJobs.start(
             attempt.id,
             attempt.intent,
-            HologramConstructionTaskGate.Kind.LOCAL_BLUEPRINT);
-        if (!prepared.currentVersion.getAsBoolean()) throw new IOException("蓝图已更新，请重新打开材料页");
-        var admitted = gate.acquire(
-            endpoint.constructionScope,
-            intent,
-            HologramConstructionAuthority.competingWork(player) || JOBS.containsKey(player.getUniqueID()),
-            HologramConstructionAuthority.hasKnownRecovery(player));
-        if (admitted.lease == null) throw new IOException("已有施工或待核定结果");
-        JOBS.put(
-            player.getUniqueID(),
-            new Job(
+            new Source(
                 attempt,
                 prepared,
                 endpoint,
-                gate,
-                admitted.lease,
                 tx,
                 configured,
                 stock,
@@ -368,6 +375,8 @@ public final class HologramNativeLocalConstruction {
                 recipe,
                 bindingSlots,
                 creative));
+        attempt.executionAccepted = true;
+        if (job.terminal) return;
         attempt.publish(Phase.PREPARING, 0, 0, prepared.total, "正在核对原生施工目标");
     }
 
@@ -434,17 +443,13 @@ public final class HologramNativeLocalConstruction {
                 .getString(HologramSessionKeys.TOOL_ID);
     }
 
-    /** Same elapsed-time budget as existing world work, never cells per tick. */
+    /** Compatibility test driver; production drives the common queue exactly once per server tick. */
     static void tick(long deadline) {
-        var it = JOBS.values()
-            .iterator();
-        while (it.hasNext()) if (it.next()
-            .step(deadline)) it.remove();
+        HologramConstructionJobs.tick(deadline);
     }
 
     public static void stopServer() {
-        for (Job job : JOBS.values()) job.stop(Phase.CANCELLED, "世界已关闭");
-        JOBS.clear();
+        HologramConstructionJobs.stopAll("世界已关闭");
         for (Attempt pending : PENDING) {
             pending.stop();
             pending.release();
@@ -453,47 +458,36 @@ public final class HologramNativeLocalConstruction {
         HologramPrivateNativeServer.stopLive();
     }
 
-    private static final class Job {
+    private static final class Source implements HologramConstructionJobs.Source {
 
         final Attempt attempt;
         final Prepared prepared;
         final HologramWorkspace.ActionEndpoint endpoint;
-        final HologramConstructionTaskGate gate;
-        final HologramConstructionTaskGate.Lease lease;
         final HologramSession tx;
         final HologramProjectedMainPolicy.Snapshot configured;
         final HologramMaterials.Context stock;
         final String toolId;
-        final int[] anchor;
+        final int[] anchor, recipe, bindingSlots;
         final HologramPreviewPose pose;
         final NativeBlueprintSpatialView.Cursor cursor;
         NativeBlueprintSpatialView.Cursor assetCursor;
         LongOpenHashSet assetPositions;
-        boolean assetsPrepared;
         final int frameX, frameY, frameZ;
         final int[] rotated = new int[3];
         final Map<Long, HologramNativeConstruction.Prepared> samples = new HashMap<>();
+        final java.util.Set<Long> controllers = new java.util.HashSet<>();
         final Iterator<Map.Entry<Long, JsonObject>> unresolved;
-        final int[] recipe, bindingSlots;
-        final HologramPlacementTiming trace;
         final EntityPlayerMP player;
         final World world;
         final boolean creative;
-        long activeDescriptor = Long.MIN_VALUE;
-        HologramNativeConstruction.Prepared activeTarget;
-        int placed, satisfied;
-        boolean uncertain, ready;
+        boolean assetsPrepared, ready;
 
-        Job(Attempt attempt, Prepared prepared, HologramWorkspace.ActionEndpoint endpoint,
-            HologramConstructionTaskGate gate, HologramConstructionTaskGate.Lease lease, HologramSession tx,
+        Source(Attempt attempt, Prepared prepared, HologramWorkspace.ActionEndpoint endpoint, HologramSession tx,
             HologramProjectedMainPolicy.Snapshot configured, HologramMaterials.Context stock, String toolId,
             int[] anchor, HologramPreviewPose pose, int[] recipe, int[] bindingSlots, boolean creative) {
-            this.creative = creative;
             this.attempt = attempt;
             this.prepared = prepared;
             this.endpoint = endpoint;
-            this.gate = gate;
-            this.lease = lease;
             this.tx = tx;
             this.configured = configured;
             this.stock = stock;
@@ -502,115 +496,115 @@ public final class HologramNativeLocalConstruction {
             this.pose = pose;
             this.recipe = recipe;
             this.bindingSlots = bindingSlots;
-            this.unresolved = prepared.targets.entrySet()
+            this.creative = creative;
+            player = endpoint.player;
+            world = endpoint.world;
+            unresolved = prepared.targets.entrySet()
                 .iterator();
-            this.trace = HologramPlacementTiming.open("blueprint", attempt.id);
-            this.cursor = prepared.source.cursor();
+            cursor = prepared.source.cursor();
             var frame = prepared.source.definition()
                 .frame();
             frameX = frame.anchorX;
             frameY = frame.anchorY;
             frameZ = frame.anchorZ;
-            player = endpoint.player;
-            world = player.worldObj;
         }
 
-        boolean current() {
-            return !attempt.cancelled.get() && HologramWorkspace.currentActionEndpoint(endpoint)
-                && player.worldObj == world
-                && !player.isDead
+        public HologramSession session() {
+            return tx;
+        }
+
+        public com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation operation() {
+            return com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.BUILD;
+        }
+
+        public long startedAt() {
+            return attempt.started;
+        }
+
+        public long total() {
+            return prepared.total;
+        }
+
+        public boolean current() {
+            if (attempt.cancelled.get() || !HologramWorkspace.currentActionEndpoint(endpoint)) return false;
+            ItemStack bound = player.inventory.getStackInSlot(tx.slot);
+            return !attempt.cancelled.get() && !player.isDead
                 && player.capabilities.allowEdit
                 && player.capabilities.isCreativeMode == creative
-                && player.inventory.currentItem == tx.slot
-                && toolId.equals(toolId(player.getHeldItem()))
-                && tx.tool == player.getHeldItem()
-                    .getItem()
-                && configured.configuredToolMatches(player.getHeldItem());
+                && bound == tx.boundTool
+                && bound != null
+                && bound.getItem() == tx.tool
+                && toolId.equals(toolId(bound))
+                && configured.configuredToolMatches(bound);
         }
 
-        boolean step(long deadline) {
-            try (var updates = HologramMachineUpdateBatch.open()) {
-                return stepBatch(deadline);
+        public boolean prepare(long deadline) throws IOException {
+            while (unresolved.hasNext() && System.nanoTime() < deadline) {
+                if (!current()) throw new IOException("施工上下文已变化。");
+                var row = unresolved.next();
+                samples.put(row.getKey(), resolve(prepared, tx, row.getKey(), row.getValue(), recipe, bindingSlots));
+                if (prepared.draft.executionCell(row.getKey(), row.getValue()).controller)
+                    controllers.add(row.getKey());
             }
-        }
-
-        private boolean stepBatch(long deadline) {
-            if (!current()) return stop(Phase.CANCELLED, "施工已停止，未完成部分不再扣料");
-            int old = placed + satisfied;
-            try {
-                if (!ready) {
-                    // The saved histogram groups equal descriptors; no coordinate enumeration or off-thread game
-                    // access.
-                    // Validate the entire cohort before changing the world or charging a material source.
-                    while (unresolved.hasNext() && System.nanoTime() < deadline) {
-                        if (!current()) return stop(Phase.CANCELLED, "施工已取消，未扣料");
-                        var row = unresolved.next();
-                        samples.put(
-                            row.getKey(),
-                            resolve(prepared, tx, row.getKey(), row.getValue(), recipe, bindingSlots));
+            if (unresolved.hasNext()) return false;
+            if (!assetsPrepared) {
+                if (assetCursor == null && !creative)
+                    for (var target : samples.values()) if (!target.assets.isEmpty()) {
+                        assetCursor = prepared.source.cursor();
+                        assetPositions = new LongOpenHashSet();
+                        break;
                     }
-                    if (unresolved.hasNext()) return false;
-                    if (!assetsPrepared) {
-                        if (assetCursor == null && !creative) {
-                            for (var target : samples.values()) if (!target.assets.isEmpty()) {
-                                assetCursor = prepared.source.cursor();
-                                assetPositions = new LongOpenHashSet();
-                                break;
-                            }
-                        }
-                        if (assetCursor != null) {
-                            while (assetCursor.hasNext() && System.nanoTime() < deadline) {
-                                if (!current()) return stop(Phase.CANCELLED, "施工已取消，未扣料");
-                                assetCursor.advance();
-                                var target = samples.get(assetCursor.descriptor());
-                                if (target == null || target.assets.isEmpty()) continue;
-                                position(assetCursor.x(), assetCursor.y(), assetCursor.z());
-                                int x = rotated[0], y = rotated[1], z = rotated[2];
-                                // Unknown/unloaded cells conservatively keep their budget; execution never loads them.
-                                if (!world.blockExists(x, y, z)
-                                    || !HologramNativeConstruction.matches(tx, target, x, y, z))
-                                    addAssetBudget(CoordinatePacker.pack(x, y, z), target);
-                            }
-                            if (assetCursor.hasNext()) return false;
-                            assetCursor = null;
-                        }
-                        assetsPrepared = true;
+                if (assetCursor != null) {
+                    while (assetCursor.hasNext() && System.nanoTime() < deadline) {
+                        if (!current()) throw new IOException("施工上下文已变化。");
+                        assetCursor.advance();
+                        var target = samples.get(assetCursor.descriptor());
+                        if (target == null || target.assets.isEmpty()) continue;
+                        position(assetCursor.x(), assetCursor.y(), assetCursor.z());
+                        if (!world.blockExists(rotated[0], rotated[1], rotated[2])
+                            || !HologramNativeConstruction.matches(tx, target, rotated[0], rotated[1], rotated[2]))
+                            addAssetBudget(CoordinatePacker.pack(rotated[0], rotated[1], rotated[2]), target);
                     }
-                    if (!current()) return stop(Phase.CANCELLED, "施工已取消，未扣料");
-                    if (!prepared.currentVersion.getAsBoolean()) return stop(Phase.FAILED, "蓝图已更新，请重新打开材料页");
-                    ready = true;
-                    // Only fully validated uploads may become retained cache entries on termination.
-                    attempt.admitted = true;
-                    attempt.publish(Phase.EXECUTING, 0, 0, prepared.total, "开始原生蓝图施工");
+                    if (assetCursor.hasNext()) return false;
+                    assetCursor = null;
                 }
-                while (cursor.hasNext() && System.nanoTime() < deadline) {
-                    if (!current()) return stop(Phase.CANCELLED, "施工已停止，未完成部分不再扣料");
-                    cursor.advance();
-                    long descriptor = cursor.descriptor();
-                    if (descriptor != activeDescriptor) {
-                        activeDescriptor = descriptor;
-                        // Only included descriptors have resolved, authenticated targets.
-                        activeTarget = samples.get(descriptor);
-                    }
-                    if (activeTarget != null && !place(cursor.x(), cursor.y(), cursor.z(), activeTarget)) return stop(
-                        attempt.cancelled.get() ? Phase.CANCELLED : Phase.FAILED,
-                        uncertain ? "施工结果待核定，已停止" : tx.status.isEmpty() ? "施工受阻或缺料，已停止" : tx.status);
-                }
-            } catch (IOException | RuntimeException | LinkageError invalid) {
-                if (!ready && invalid instanceof IOException) return stop(Phase.FAILED, invalid.getMessage());
-                return stop(Phase.FAILED, uncertain ? "施工结果待核定，已停止" : "读取或执行原生蓝图失败，已停止");
+                assetsPrepared = true;
             }
-            if (!cursor.hasNext()) return stop(Phase.COMPLETE, "原生蓝图施工完成");
-            if (old != placed + satisfied)
-                attempt.publish(Phase.EXECUTING, placed, satisfied, prepared.total, "原生蓝图施工中");
-            return false;
+            if (!prepared.currentVersion.getAsBoolean()) throw new IOException("蓝图已更新，请重新打开材料页");
+            if (!ready) {
+                ready = true;
+                attempt.admitted = true;
+                attempt.publish(Phase.EXECUTING, 0, 0, prepared.total, "开始原生蓝图施工");
+            }
+            return true;
         }
 
-        private void position(int baseX, int baseY, int baseZ) {
+        public boolean exhausted() {
+            return !cursor.hasNext();
+        }
+
+        public HologramConstructionJobs.Target next(long deadline) throws IOException {
+            while (cursor.hasNext() && System.nanoTime() < deadline) {
+                cursor.advance();
+                var target = samples.get(cursor.descriptor());
+                if (target == null) continue;
+                position(cursor.x(), cursor.y(), cursor.z());
+                return new HologramConstructionJobs.Target(
+                    rotated[0],
+                    rotated[1],
+                    rotated[2],
+                    target,
+                    false,
+                    controllers.contains(cursor.descriptor()));
+            }
+            return null;
+        }
+
+        private void position(int x, int y, int z) {
             pose.apply(
-                Math.subtractExact(baseX, frameX),
-                Math.subtractExact(baseY, frameY),
-                Math.subtractExact(baseZ, frameZ),
+                Math.subtractExact(x, frameX),
+                Math.subtractExact(y, frameY),
+                Math.subtractExact(z, frameZ),
                 rotated);
             for (int axis = 0; axis < 3; axis++) rotated[axis] = Math.addExact(anchor[axis], rotated[axis]);
         }
@@ -618,74 +612,55 @@ public final class HologramNativeLocalConstruction {
         private void addAssetBudget(long position, HologramNativeConstruction.Prepared target) {
             if (!assetPositions.add(position)) return;
             for (var cost : target.assets.entrySet())
-                tx.pendingAssetBudget.merge(cost.getKey(), cost.getValue(), (a, b) -> Math.addExact(a, b));
+                tx.pendingAssetBudget.merge(cost.getKey(), cost.getValue(), Math::addExact);
         }
 
-        private void completeAssetBudget(long position, HologramNativeConstruction.Prepared target) {
-            if (assetPositions == null || !assetPositions.remove(position)) return;
-            for (var cost : target.assets.entrySet()) {
+        public void before(HologramConstructionJobs.Target cell) throws IOException {
+            if (!HologramWorldFlow.worldPosition(cell.x, cell.y, cell.z, world.getHeight()))
+                throw new IOException("蓝图目标超出世界边界");
+            if (!creative && !tx.jobVoucherConsumed
+                && HologramNativeConstruction.usesVoucher(tx, cell.prepared)
+                && HologramDecorationVoucher.available(player) == 0
+                && !HologramNativeConstruction.matches(tx, cell.prepared, cell.x, cell.y, cell.z))
+                throw new IOException("装饰抵用券不足，本格未施工。");
+            if (creative || cell.prepared.assets.isEmpty()) return;
+            long position = CoordinatePacker.pack(cell.x, cell.y, cell.z);
+            if (!assetPositions.contains(position)
+                && !HologramNativeConstruction.matches(tx, cell.prepared, cell.x, cell.y, cell.z)) {
+                addAssetBudget(position, cell.prepared);
+                stock.resetAssetReservations();
+            }
+        }
+
+        public void committed(HologramConstructionJobs.Target cell, boolean changed) {
+            if (creative || cell.prepared.assets.isEmpty()
+                || assetPositions == null
+                || !assetPositions.remove(CoordinatePacker.pack(cell.x, cell.y, cell.z))) return;
+            for (var cost : cell.prepared.assets.entrySet()) {
                 long remaining = tx.pendingAssetBudget.getOrDefault(cost.getKey(), 0L) - cost.getValue();
                 if (remaining <= 0) tx.pendingAssetBudget.remove(cost.getKey());
                 else tx.pendingAssetBudget.put(cost.getKey(), remaining);
             }
-            stock.assetsCommitted(target.assets);
+            stock.assetsCommitted(cell.prepared.assets);
         }
 
-        boolean place(int baseX, int baseY, int baseZ, HologramNativeConstruction.Prepared target) throws IOException {
-            position(baseX, baseY, baseZ);
-            int x = rotated[0], y = rotated[1], z = rotated[2];
-            if (!HologramWorldFlow.worldPosition(x, y, z, world.getHeight()) || !world.blockExists(x, y, z))
-                return false;
-            long assetPosition = 0;
-            if (!creative && !target.assets.isEmpty()) {
-                assetPosition = CoordinatePacker.pack(x, y, z);
-                // A once-satisfied cell can change after preflight. Rebuild stock pools before charging it.
-                if (!assetPositions.contains(assetPosition)
-                    && !HologramNativeConstruction.matches(tx, target, x, y, z)) {
-                    addAssetBudget(assetPosition, target);
-                    stock.resetAssetReservations();
-                }
-            }
-            Permit permit = gate.beginTransaction(lease);
-            if (permit == null) return false;
-            boolean settled = false;
-            try {
-                tx.materialContext = stock;
-                var outcome = HologramNativeConstruction
-                    .place(tx, target, x, y, z, () -> current() && gate.transactionCurrent(permit));
-                if (tx.job == 4 || HologramConstructionJournal.pending(player)) return false;
-                boolean committed = outcome == HologramNativeConstruction.Outcome.PLACED;
-                boolean wasSatisfied = outcome == HologramNativeConstruction.Outcome.SATISFIED;
-                settled = gate.settle(permit, committed ? Settlement.COMMITTED : Settlement.ROLLED_BACK);
-                if (settled && (committed || wasSatisfied) && !creative && !target.assets.isEmpty())
-                    completeAssetBudget(assetPosition, target);
-                if (settled && committed) {
-                    placed++;
-                    if (trace != null) trace.written();
-                }
-                if (settled && wasSatisfied) satisfied++;
-                return settled && (committed || wasSatisfied);
-            } finally {
-                if (!settled) {
-                    uncertain = true;
-                    gate.settle(permit, Settlement.RECOVERY_PENDING);
-                }
-                tx.materialContext = null;
-            }
+        public void progress(HologramConstructionJobs.Job job) {
+            attempt.publish(
+                ready ? Phase.EXECUTING : Phase.PREPARING,
+                (int) job.completed,
+                (int) job.satisfied,
+                prepared.total,
+                "原生蓝图施工中");
         }
 
-        boolean stop(Phase phase, String detail) {
-            if (!uncertain) {
-                if (phase == Phase.CANCELLED) gate.cancel(lease.scope, lease.request);
-                else if (!gate.finish(lease, phase == Phase.COMPLETE ? End.COMPLETE : End.FAILED)
-                    && phase == Phase.COMPLETE) {
-                        phase = Phase.FAILED;
-                        detail = "施工结果不能确认";
-                    }
-            }
-            if (trace != null) trace.finish(phase.name(), placed);
-            attempt.publish(phase, placed, satisfied, prepared.total, detail);
-            return true;
+        public void finished(HologramConstructionJobs.Job job) {
+            attempt.publish(
+                job.end == HologramConstructionJobs.End.COMPLETE ? Phase.COMPLETE
+                    : job.end == HologramConstructionJobs.End.CANCELLED ? Phase.CANCELLED : Phase.FAILED,
+                (int) job.completed,
+                (int) job.satisfied,
+                prepared.total,
+                job.reason);
         }
     }
 }

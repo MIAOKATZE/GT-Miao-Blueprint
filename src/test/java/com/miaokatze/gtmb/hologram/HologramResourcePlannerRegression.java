@@ -1155,15 +1155,19 @@ public final class HologramResourcePlannerRegression {
             s.pins.put(0, decorTarget);
             s.planTargets.set(0, decorTarget);
             world.occupied = decor;
-            long ordinaryBefore = classifier.ordinaryCells;
+            long ordinaryBefore = classifier.ordinaryCells, fallbackBefore = classifier.fallbackCells;
             SimpleAssert.eq(
                 HologramPlanPolicy.classify(s, cell, 0),
                 classifier.classify(s, cell, 0, true, decor, 0, null),
                 "ordinary mod decoration preserves native physical identity classification");
             SimpleAssert.eq(
-                ordinaryBefore + 1,
+                ordinaryBefore,
                 classifier.ordinaryCells,
-                "ordinary mod decoration reuses the audited native method descriptor");
+                "an unregistered mod declaration does not acquire the old reflected method proof");
+            SimpleAssert.eq(
+                fallbackBefore + 1,
+                classifier.fallbackCells,
+                "mod decoration uses the real native fallback while preserving exact physical classification");
             SimpleAssert.that(
                 classifier.resources(s, cell, 0).items.isEmpty(),
                 "ordinary no-NBT mod decoration has no hidden inventory bill");

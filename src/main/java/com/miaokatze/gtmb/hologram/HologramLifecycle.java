@@ -13,8 +13,6 @@ import cpw.mods.fml.common.gameevent.TickEvent;
 /** Drives construction exclusively on the server thread. */
 public final class HologramLifecycle {
 
-    private boolean stockFirst;
-
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public void onServerTickStart(TickEvent.ServerTickEvent event) {
         if (event.phase == TickEvent.Phase.START) HologramWorkBudget.startServerTick();
@@ -27,14 +25,10 @@ public final class HologramLifecycle {
             HologramAeCraftingOrders.tick();
             HologramDemolition.tick();
             HologramService.tick();
-            // Native construction shares the remaining tick headroom, not a fixed 5 ms cap.
-            // Earlier world and mod work has already been charged against the 40 ms tick target.
-            long deadline = HologramWorkBudget.deadline(HologramWorkBudget.tickNanos());
-            stockFirst = !stockFirst;
-            if (stockFirst) HologramNetwork.tickStockNativeServer(deadline);
-            HologramNativeLocalConstruction.tick(deadline);
+            long deadline = System.nanoTime() + Math.max(5_000_000L, HologramWorkBudget.tickNanos());
+            HologramNetwork.tickStockNativeServer(deadline);
+            HologramConstructionJobs.tick(deadline);
             HologramPrivateNativeServer.tickLive();
-            if (!stockFirst) HologramNetwork.tickStockNativeServer(deadline);
         } finally {
             HologramWorkBudget.endServerTick();
         }

@@ -480,7 +480,7 @@ public final class HologramBlueprintNbt {
         if (!HologramAeBlueprint.supports(block, source)) {
             NBTTagCompound result = forPlacement(source, ownerUuid, ownerName, x, y, z, retainNbt, retainCovers, keys);
             validateTargetCapabilities(block, result);
-            return result;
+            return tileStateForPlacement(block, metadata, result);
         }
         if (source == null) return null;
         NBTTagCompound selected = filter(source, retainNbt ? keys : java.util.Collections.emptyList(), retainCovers);
@@ -489,7 +489,17 @@ public final class HologramBlueprintNbt {
         if (analysis.blocking) throw new IOException("AE blueprint has unresolved schema/slot issues");
         NBTTagCompound canonical = nativePayload(analysis.payload());
         bindTarget(canonical, x, y, z);
-        return canonical;
+        return tileStateForPlacement(block, metadata, canonical);
+    }
+
+    /** Binding coordinates are transport, not selected device state; native items may initialize their own empty TE. */
+    static NBTTagCompound tileStateForPlacement(Block block, int metadata, NBTTagCompound payload) {
+        if (payload == null || block == null) return payload;
+        for (Object raw : payload.func_150296_c()) {
+            String key = (String) raw;
+            if (!(key.equals("x") || key.equals("y") || key.equals("z")) || !payload.hasKey(key, 3)) return payload;
+        }
+        return null;
     }
 
     private static void validateTargetCapabilities(Block block, NBTTagCompound payload) throws IOException {

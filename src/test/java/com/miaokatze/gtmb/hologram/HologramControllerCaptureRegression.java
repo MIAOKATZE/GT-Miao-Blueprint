@@ -1190,589 +1190,26 @@ public final class HologramControllerCaptureRegression {
         return task.nativeItemBill();
     }
 
-    @SuppressWarnings("unchecked")
     private static void readyNativePlacement(HologramSession s, HologramServiceEditRegression.ReadOnlyWorld world,
         HologramDynamicDefinitionRegression.DynamicController machine,
         com.gtnewhorizon.structurelib.structure.IStructureDefinition<?> definition,
-        com.miaokatze.gtmb.api.GTMBExtensions.Registration legacySource, sun.misc.Unsafe unsafe)
-        throws ReflectiveOperationException {
-        String flag = "gtmb.experimental.nativeReadyPlace";
-        String previousFlag = System.getProperty(flag);
-        java.util.List<String> receipts = new java.util.ArrayList<>();
-        HologramNativeReadyPlacement.Receipt receipt = (player, id, accepted, reason) -> {
-            SimpleAssert.that(player == s.player, "one terminal decision belongs to the original player");
-            receipts.add(id + ":" + accepted);
-        };
-        try {
-            System.clearProperty(flag);
-            NBTTagCompound off = nativeReadyRequest(s);
-            HologramNativeReadyPlacement.receive(s.player, off, receipt);
-            SimpleAssert.that(
-                s.nativeReadyPlacement == null && receipts
-                    .equals(java.util.Collections.singletonList(off.getString("placementRequestId") + ":false")),
-                "default off never queues construction");
-
-            System.setProperty(flag, "true");
-            NBTTagCompound unprepared = nativeReadyRequest(s);
-            HologramNativeReadyPlacement.receive(s.player, unprepared, receipt);
-            SimpleAssert.that(
-                s.nativeReadyPlacement == null && receipts.size() == 2,
-                "opt-in cannot turn an unprepared capture into construction authority");
-            s.materialSettings.me = false;
-            s.materialContext = null;
-            s.scope = 0;
-            s.pins.clear();
-            s.coordinatePins.clear();
-            s.facingPins.clear();
-            s.projectionEdits.clear();
-            s.manualPositions.clear();
-            s.suppressedAuto.clear();
-            s.allocationsFrozen = false;
-            s.player.inventory.mainInventory[1].stackSize = 2;
-            HologramControllerCapture.collect(s);
-            complete(s);
-            NBTTagCompound legacy = nativeReadyRequest(s);
-            HologramNativeReadyPlacement.receive(s.player, legacy, receipt);
-            SimpleAssert.that(
-                s.nativeReadyBill == null && s.nativeReadyPlacement == null
-                    && receipts.get(2)
-                        .equals(legacy.getString("placementRequestId") + ":false"),
-                "legacy source registration with no read set grants no compact admission authority");
-            legacySource.close();
-            machine.presetActionDefinition = (com.gtnewhorizon.structurelib.structure.IStructureDefinition<HologramDynamicDefinitionRegression.DynamicController>) definition;
-            HologramControllerCapture.collect(s);
-            complete(s);
-            SimpleAssert.that(
-                s.nativeReadyBill != null && s.nativeReadyBill.observedStockSufficient(s),
-                "real native buildPiece capture retains exact ready item rows without opening a new quote");
-
-            // The original interpretation cache generation is unchanged by a first registration.
-            NBTTagCompound drift = nativeReadyRequest(s);
-            HologramNativeReadyPlacement.receive(s.player, drift, receipt);
-            SimpleAssert.that(s.nativeReadyPlacement != null, "native request initially matches the prepared plan");
-            HologramNativeReadyPlacement.tick(s, 1, Long.MAX_VALUE, System::nanoTime, receipt);
-            long generation = HologramDeclarationAdapters.generation();
-            var observed = s.capture;
-            var registration = new HologramPureElementsRegression.Leaf(true);
-            HologramDeclarationAdapters.register(
-                registration,
-                new HologramDeclarationAdapters.Declaration(StructureUtility.ofBlock(Blocks.stone, 0)));
-            SimpleAssert.eq(
-                generation,
-                HologramDeclarationAdapters.generation(),
-                "first-time registration does not advance the old cache generation");
-            SimpleAssert.that(
-                !observed.readyPlacementCurrent(s) && !observed.incomplete,
-                "compact source proof refuses immediately without refreshing or invalidating the legacy capture");
-            long readsBeforeDrift = world.permissionReads;
-            finishNativeReady(s, receipt);
-            SimpleAssert.that(
-                s.job == 0 && s.work.isEmpty()
-                    && s.capture == observed
-                    && world.permissionReads == readsBeforeDrift
-                    && receipts.get(3)
-                        .equals(drift.getString("placementRequestId") + ":false"),
-                "a real declaration generation change denies queued work before examining more cells");
-            SimpleAssert.that(
-                observed.sourceCurrent(HologramSessionPolicy.trigger(s)),
-                "ordinary source validation can still refresh an unrelated declaration without a recapture");
-            NBTTagCompound retired = nativeReadyRequest(s);
-            HologramNativeReadyPlacement.receive(s.player, retired, receipt);
-            SimpleAssert.that(
-                s.nativeReadyPlacement == null && receipts.get(4)
-                    .equals(retired.getString("placementRequestId") + ":false"),
-                "even a new UUID cannot admit the same stale ready plan after declaration drift");
-            HologramControllerCapture.collect(s);
-            complete(s);
-            int constructionsBeforeRequest = machine.constructions;
-            int definitionsBeforeRequest = machine.definitionBuilds;
-
-            NBTTagCompound stale = nativeReadyRequest(s);
-            stale.setLong("planRevision", s.planRevision - 1);
-            HologramNativeReadyPlacement.receive(s.player, stale, receipt);
-            NBTTagCompound geometry = nativeReadyRequest(s);
-            geometry.setTag("cells", new net.minecraft.nbt.NBTTagList());
-            HologramNativeReadyPlacement.receive(s.player, geometry, receipt);
-            SimpleAssert.that(
-                s.nativeReadyPlacement == null && receipts.size() == 7,
-                "stale plan revisions and even empty client geometry are never admitted");
-
-            var capture = s.capture;
-            var quote = s.materialQuote;
-            long revision = s.planRevision;
-            long primaryReads = world.permissionReads;
-            NBTTagCompound shortage = nativeReadyRequest(s);
-            HologramNativeReadyPlacement.receive(s.player, shortage, receipt);
-            HologramNativeReadyPlacement.receive(s.player, shortage, receipt);
-            SimpleAssert.that(
-                s.nativeReadyPlacement != null && receipts.size() == 7
-                    && s.job == 0
-                    && s.work.isEmpty()
-                    && world.permissionReads == primaryReads,
-                "packet intake queues one logical intent with no world-cell scan, quote or debit");
-            HologramNativeReadyPlacement.tick(s, 1, Long.MAX_VALUE, System::nanoTime, receipt);
-            SimpleAssert.that(
-                s.job == 0 && receipts.size() == 7 && world.permissionReads - primaryReads <= 1,
-                "shared slice cannot admit or scan all native work in its first one-row allowance");
-            s.player.inventory.mainInventory[1].stackSize = 1;
-            finishNativeReady(s, receipt);
-            SimpleAssert.that(
-                s.job == 0 && s.work.isEmpty()
-                    && s.capture == capture
-                    && s.planRevision == revision
-                    && HologramWorkspace.find(s.player.getUniqueID()) == s
-                    && s.materialQuote == quote
-                    && receipts.get(7)
-                        .equals(shortage.getString("placementRequestId") + ":false"),
-                "new stock shortage emits one denial and leaves the previous workspace intact");
-
-            s.player.inventory.mainInventory[1].stackSize = 2;
-            NBTTagCompound guarded = nativeReadyRequest(s);
-            HologramNativeReadyPlacement.receive(s.player, guarded, receipt);
-            world.denyMine = true;
-            finishNativeReady(s, receipt);
-            world.denyMine = false;
-            SimpleAssert.that(
-                s.job == 0 && receipts.get(8)
-                    .equals(guarded.getString("placementRequestId") + ":false"),
-                "live edit protection still prevents known-stock native construction");
-
-            NBTTagCompound recovery = new NBTTagCompound();
-            recovery.setString("phase", "suspended");
-            var owner = HologramConstructionJournal.owner(s.player);
-            owner.setTag(HologramConstructionJournal.KEY, recovery);
-            try {
-                NBTTagCompound overlap = nativeReadyRequest(s);
-                HologramNativeReadyPlacement.receive(s.player, overlap, receipt);
-                SimpleAssert.that(
-                    s.nativeReadyPlacement == null && s.job == 0
-                        && receipts.get(9)
-                            .equals(overlap.getString("placementRequestId") + ":false"),
-                    "outstanding recovery rejects intake rather than accepting a job that immediately stops");
-            } finally {
-                owner.removeTag(HologramConstructionJournal.KEY);
-            }
-            NBTTagCompound lateRecovery = nativeReadyRequest(s);
-            HologramNativeReadyPlacement.receive(s.player, lateRecovery, receipt);
-            SimpleAssert.that(s.nativeReadyPlacement != null, "clean journal initially allows sliced verification");
-            HologramNativeReadyPlacement.tick(s, 1, Long.MAX_VALUE, System::nanoTime, receipt);
-            owner.setTag(HologramConstructionJournal.KEY, recovery);
-            try {
-                finishNativeReady(s, receipt);
-                SimpleAssert.that(
-                    s.job == 0 && s.work.isEmpty()
-                        && s.capture == capture
-                        && owner.getCompoundTag(HologramConstructionJournal.KEY) == recovery
-                        && receipts.get(10)
-                            .equals(lateRecovery.getString("placementRequestId") + ":false"),
-                    "new recovery before final admission is left intact and produces no accepted receipt");
-            } finally {
-                owner.removeTag(HologramConstructionJournal.KEY);
-            }
-
-            NBTTagCompound start = nativeReadyRequest(s);
-            var dispatch = HologramNetwork.class
-                .getDeclaredMethod("dispatch", EntityPlayerMP.class, NBTTagCompound.class);
-            dispatch.setAccessible(true);
-            dispatch.invoke(null, s.player, start);
-            finishNativeReady(s, receipt);
-            SimpleAssert.that(
-                s.job == 1 && s.work.size() == 3
-                    && s.work.stream()
-                        .noneMatch(i -> capture.cells.get(i).anchor)
-                    && !s.replacementAuthorized
-                    && s.player.inventory.mainInventory[1].stackSize == 2
-                    && s.capture == capture
-                    && s.materialQuote == quote
-                    && s.planRevision == revision
-                    && receipts.get(11)
-                        .equals(start.getString("placementRequestId") + ":true"),
-                "real compact useBlock dispatch starts the canonical job exactly once without replacing the workspace or prepaying");
-            HologramNativeReadyPlacement.receive(s.player, start, receipt);
-            SimpleAssert.eq(12, receipts.size(), "a completed request has one correlated response under replay");
-            SimpleAssert.that(
-                machine.constructions == constructionsBeforeRequest
-                    && machine.definitionBuilds == definitionsBeforeRequest,
-                "neither intake nor the whole ready-placement continuation rediscovers the native source");
-            compactNativeFromExplicitIntent(s, machine, dispatch);
-            try {
-                ordinaryNativeFirstFixtureWrite(unsafe, dispatch);
-            } catch (java.io.IOException invalid) {
-                throw new AssertionError("valid ordinary stock action", invalid);
-            }
-        } finally {
-            world.denyMine = false;
-            if (previousFlag == null) System.clearProperty(flag);
-            else System.setProperty(flag, previousFlag);
-        }
-    }
-
-    private static void compactNativeFromExplicitIntent(HologramSession prior,
-        HologramDynamicDefinitionRegression.DynamicController machine, java.lang.reflect.Method dispatch)
-        throws ReflectiveOperationException {
-        HologramWorkspace.clear();
-        EntityPlayerMP player = prior.player;
-        player.inventory.mainInventory[player.inventory.currentItem] = new ItemStack(
-            new com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector());
-        player.inventory.mainInventory[1] = new ItemStack(Blocks.stone, 3);
-        var definition = com.gtnewhorizon.structurelib.structure.StructureDefinition.<HologramDynamicDefinitionRegression.DynamicController>builder()
-            .addShape("preset", new String[][] { { "XXX" } })
-            .addElement('X', StructureUtility.ofBlock(Blocks.stone, 0))
-            .addChannel("native_fixture_tier", 1, 3)
-            .build();
-        machine.presetActionDefinition = definition;
-        try (var registration = com.miaokatze.gtmb.api.StructureSources.registerCompactNative(
-            "gtmb_test:compact_native",
-            HologramDynamicDefinitionRegression.DynamicController.class,
-            definition,
-            "preset",
-            -1,
-            0,
-            0,
-            4)) {
-            NBTTagCompound screen = new NBTTagCompound(), confirmed = new NBTTagCompound();
-            screen.setInteger(
-                "facing",
-                machine.getExtendedFacing()
-                    .ordinal());
-            screen.setBoolean("mainExplicit", true);
-            confirmed.setInteger("main", 2);
-            confirmed.setInteger("scope", 0);
-            confirmed.setInteger("materialPriority", 0);
-            confirmed.setBoolean("noHatches", false);
-            confirmed.setBoolean("materialMain", true);
-            confirmed.setBoolean("materialContainers", false);
-            confirmed.setBoolean("materialMe", false);
-            NBTTagCompound channels = new NBTTagCompound();
-            channels.setInteger("native_fixture_tier", 3);
-            confirmed.setTag("channels", channels);
-            java.util.UUID id = java.util.UUID.randomUUID();
-            NBTTagCompound compact;
-            try {
-                compact = HologramCompactNativeRequest
-                    .encode(id, prior.target, prior.side, player.inventory.currentItem, screen, confirmed, true);
-                confirmed.setBoolean("materialContainers", true);
-                try {
-                    HologramCompactNativeRequest
-                        .encode(id, prior.target, prior.side, player.inventory.currentItem, screen, confirmed, true);
-                    throw new AssertionError("mixed stock cannot silently become main inventory");
-                } catch (java.io.IOException expected) {}
-                confirmed.setBoolean("materialContainers", false);
-                try {
-                    HologramCompactNativeRequest
-                        .encode(id, prior.target, prior.side, player.inventory.currentItem, screen, confirmed, false);
-                    throw new AssertionError("manual hatch position cannot silently become default");
-                } catch (java.io.IOException expected) {}
-            } catch (java.io.IOException invalid) {
-                throw new AssertionError("supported native dialog configuration", invalid);
-            }
-            var wire = io.netty.buffer.Unpooled.buffer();
-            var decoded = new HologramNetwork.Action();
-            int bytes;
-            try {
-                new HologramNetwork.Action(compact).toBytes(wire);
-                bytes = wire.readableBytes();
-                decoded.fromBytes(wire);
-            } finally {
-                wire.release();
-            }
-            SimpleAssert.that(
-                bytes < 512 && HologramCompactNativeRequest.valid(decoded.tag)
-                    && decoded.tag.hasKey("clientSnapshotFlow", 3)
-                    && !decoded.tag.hasKey("cells")
-                    && !decoded.tag.hasKey("planRevision")
-                    && !decoded.tag.hasKey("session"),
-                "ordinary compact intent survives actual Action encoding without geometry or a synthetic server revision");
-            NBTTagCompound invalid = (NBTTagCompound) decoded.tag.copy();
-            invalid.setString(
-                "placementRequestId",
-                java.util.UUID.randomUUID()
-                    .toString());
-            invalid.getCompoundTag("channels")
-                .setInteger("native_fixture_tier", 4);
-            var refused = new java.util.ArrayList<Boolean>();
-            HologramNativeCompactStart
-                .receive(player, invalid, (p, request, accepted, reason) -> refused.add(accepted));
-            SimpleAssert.that(
-                refused.equals(java.util.Collections.singletonList(false))
-                    && HologramWorkspace.find(player.getUniqueID()) == null,
-                "server refuses a typed channel outside the declaration domain without touching any workspace");
-            HologramSession original = new HologramSession(player, prior.x, prior.y, prior.z, true, prior.side);
-            HologramWorkspace.activate(player.getUniqueID(), original);
-            long oldEpoch = original.editorWorkspaceEpoch;
-            NBTTagCompound other = (NBTTagCompound) decoded.tag.copy();
-            String cancelId = java.util.UUID.randomUUID()
-                .toString();
-            other.setString("placementRequestId", cancelId);
-            original.job = 1;
-            HologramNativeCompactStart.receive(player, other, (p, request, accepted, reason) -> refused.add(accepted));
-            SimpleAssert.that(
-                refused.equals(java.util.Arrays.asList(false, false))
-                    && HologramWorkspace.find(player.getUniqueID()) == original
-                    && original.job == 1,
-                "a compact request cannot replace a live busy workspace");
-            original.job = 0;
-            cancelId = java.util.UUID.randomUUID()
-                .toString();
-            other.setString("placementRequestId", cancelId);
-            HologramNativeCompactStart.receive(player, other, (p, request, accepted, reason) -> refused.add(accepted));
-            SimpleAssert.that(
-                HologramNativeCompactStart.cancel(player, cancelId)
-                    && refused.equals(java.util.Arrays.asList(false, false, false))
-                    && HologramWorkspace.find(player.getUniqueID()) == original
-                    && original.editorWorkspaceEpoch == oldEpoch,
-                "cancelling private preparation restores the exact previous workspace and epoch");
-            HologramWorkspace.clear();
-            int constructs = machine.constructions, definitions = machine.definitionBuilds;
-            dispatch.invoke(null, player, decoded.tag);
-            HologramSession active = HologramWorkspace.find(player.getUniqueID());
-            SimpleAssert.that(
-                active != null && active.nativeCompactStart != null && active.capture == null && active.job == 0,
-                "the real ordinary action owns an empty physical workspace before starting any capture");
-            var scheduled = HologramWorkspaceScheduler.class.getDeclaredMethod("tickSession", HologramSession.class);
-            scheduled.setAccessible(true);
-            for (int tick = 0; active.nativeCompactStart != null && tick < 500; tick++) scheduled.invoke(null, active);
-            SimpleAssert.that(
-                active.job == 1 && active.work.size() == 3
-                    && active.nativeCompactStart == null
-                    && id.toString()
-                        .equals(active.nativeCompactRequestId)
-                    && active.main == 2
-                    && active.channels.getInteger("native_fixture_tier") == 3
-                    && machine.constructions == constructs
-                    && machine.definitionBuilds == definitions
-                    && active.materialQuote.hasNoTags()
-                    && player.inventory.mainInventory[1].stackSize == 3,
-                "a fresh server-owned native plan goes through canonical admission, without discovery, quote or predebit: "
-                    + operationState(active));
-        }
-    }
-
-    private static void ordinaryNativeFirstFixtureWrite(sun.misc.Unsafe unsafe, java.lang.reflect.Method dispatch)
-        throws ReflectiveOperationException, java.io.IOException {
-        HologramPlacementFixtureWorld world = HologramPlacementFixtureWorld.create(unsafe);
-        EntityPlayerMP player = HologramLibraryServiceRegression
-            .placementPlayer(unsafe, world, "NativeActualWriteFixture");
-        player.capabilities.isCreativeMode = false;
-        player.capabilities.allowEdit = true;
-        player.posX = player.posZ = .5;
-        player.posY = 64;
-        HologramDynamicDefinitionRegression.DynamicController machine = controller(unsafe, world, 0);
-        world.seed(0, 64, 0, GregTechAPI.sBlockMachines, 0);
-        HologramSession prior = new HologramSession(player, 0, 64, 0, true, 2);
-        Field channel = HologramNetwork.class.getDeclaredField("channel");
-        channel.setAccessible(true);
-        Object previous = channel.get(null);
-        java.nio.file.Path parent = HologramConstructionJournal.STORAGE_ROOT.get();
-        java.nio.file.Path scratch = java.nio.file.Files.createTempDirectory("gtmb-native-first-write-");
-        try {
-            HologramConstructionJournal.STORAGE_ROOT.set(scratch);
-            WIRE.clear();
-            channel.set(null, unsafe.allocateInstance(RecordingChannel.class));
-            ordinaryNativeWithoutExperimentalSource(prior, machine, dispatch);
-        } finally {
-            channel.set(null, previous);
-            WIRE.clear();
-            player.playerNetServerHandler.netManager.channel()
-                .close();
-            if (parent == null) HologramConstructionJournal.STORAGE_ROOT.remove();
-            else HologramConstructionJournal.STORAGE_ROOT.set(parent);
-            java.nio.file.Files.deleteIfExists(scratch.resolve("gtmb-construction-recovery"));
-            java.nio.file.Files.deleteIfExists(scratch);
-        }
-    }
-
-    private static void ordinaryNativeWithoutExperimentalSource(HologramSession prior,
-        HologramDynamicDefinitionRegression.DynamicController machine, java.lang.reflect.Method dispatch)
-        throws ReflectiveOperationException, java.io.IOException {
-        System.clearProperty("gtmb.experimental.nativeReadyPlace");
-        HologramWorkspace.clear();
-        EntityPlayerMP player = prior.player;
-        player.inventory.mainInventory[player.inventory.currentItem] = new ItemStack(
-            new com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector());
-        player.inventory.mainInventory[1] = new ItemStack(Blocks.stone, 3);
-        machine.presetActionDefinition = com.gtnewhorizon.structurelib.structure.StructureDefinition.<HologramDynamicDefinitionRegression.DynamicController>builder()
-            .addShape("preset", new String[][] { { "XXX" } })
-            .addElement('X', StructureUtility.ofBlock(Blocks.stone, 0))
-            .addChannel("native_fixture_tier", 1, 3)
-            .build();
-        SimpleAssert.that(
-            !HologramCompactNativeRequest.enabled()
-                && com.miaokatze.gtmb.api.StructureSources.compactNative(machine.getClass()) == null,
-            "ordinary native construction does not require a feature flag or registered compact definition");
-        NBTTagCompound screen = new NBTTagCompound(), confirm = new NBTTagCompound(), channels = new NBTTagCompound();
-        screen.setInteger(
-            "facing",
-            machine.getExtendedFacing()
-                .ordinal());
-        screen.setBoolean("mainExplicit", true);
-        confirm.setInteger("main", 2);
-        confirm.setInteger("scope", 0);
-        confirm.setInteger("materialPriority", 0);
-        confirm.setBoolean("noHatches", false);
-        confirm.setBoolean("materialMain", true);
-        confirm.setBoolean("materialContainers", true);
-        confirm.setBoolean("materialMe", true);
-        channels.setInteger("native_fixture_tier", 3);
-        confirm.setTag("channels", channels);
-        java.util.UUID id = java.util.UUID.randomUUID();
-        NBTTagCompound withMe = HologramCompactNativeRequest
-            .encodeOrdinary(id, prior.target, prior.side, player.inventory.currentItem, screen, confirm, true);
-        SimpleAssert.that(
-            withMe.getBoolean("materialMe") && withMe.getBoolean("materialContainers"),
-            "wire preserves both explicitly enabled non-main sources");
-        // Container detection also touches AEApi; the standalone GT harness covers exact main stock only.
-        confirm.setBoolean("materialMe", false);
-        confirm.setBoolean("materialContainers", false);
-        confirm.setIntArray("selectedIndices", new int[] { 0 });
-        try {
-            HologramCompactNativeRequest
-                .encodeOrdinary(id, prior.target, prior.side, player.inventory.currentItem, screen, confirm, true);
-            throw new AssertionError("ordinary wire must not widen a selected scope");
-        } catch (java.io.IOException expected) {}
-        confirm.removeTag("selectedIndices");
-        NBTTagCompound action = HologramCompactNativeRequest
-            .encodeOrdinary(id, prior.target, prior.side, player.inventory.currentItem, screen, confirm, true);
-        NBTTagCompound configured = (NBTTagCompound) action.copy();
-        String configuredId = java.util.UUID.randomUUID()
-            .toString();
-        configured.setString("placementRequestId", configuredId);
-        configured.getCompoundTag("channels")
-            .setInteger("gt_hatch", 3);
-        java.util.List<String> refused = new java.util.ArrayList<>();
-        HologramNativeCompactStart.receive(
-            player,
-            configured,
-            (p, request, accepted, reason) -> refused.add(request + ":" + accepted + ":" + reason));
-        SimpleAssert.that(
-            refused.equals(
-                java.util.Collections.singletonList(
-                    configuredId + ":false:" + HologramCompactNativeRequest.HATCH_PRESET_REVIEW_REQUIRED))
-                && HologramWorkspace.find(player.getUniqueID()) == null,
-            "an explicitly configured hatch tier cannot silently become the default or change the workspace");
-        var buffer = io.netty.buffer.Unpooled.buffer();
-        var decoded = new HologramNetwork.Action();
-        try {
-            new HologramNetwork.Action(action).toBytes(buffer);
-            int bytes = buffer.readableBytes();
-            decoded.fromBytes(buffer);
-            SimpleAssert.that(
-                bytes < 512 && HologramCompactNativeRequest.ordinary(decoded.tag)
-                    && !decoded.tag.hasKey("cells")
-                    && !decoded.tag.hasKey(HologramCompactNativeRequest.FLAG),
-                "the flag-off production action carries intent, not geometry");
-        } finally {
-            buffer.release();
-        }
-        dispatch.invoke(null, player, decoded.tag);
-        var session = HologramWorkspace.find(player.getUniqueID());
-        if (session == null || session.nativeCompactStart == null || session.job != 0) {
-            NBTTagCompound evidence = (NBTTagCompound) decoded.tag.copy();
-            evidence.setString(
-                "placementRequestId",
-                java.util.UUID.randomUUID()
-                    .toString());
-            java.util.List<String> rejected = new java.util.ArrayList<>();
-            HologramNativeCompactStart
-                .receive(player, evidence, (p, request, accepted, reason) -> rejected.add(reason));
-            throw new AssertionError("ordinary default did not prepare: " + rejected);
-        }
-        var scheduled = HologramWorkspaceScheduler.class.getDeclaredMethod("tickSession", HologramSession.class);
-        scheduled.setAccessible(true);
-        for (int tick = 0; session.nativeCompactStart != null && tick < 500; tick++) scheduled.invoke(null, session);
-        SimpleAssert.that(
-            session.job == 1 && session.work.size() == 3
-                && session.nativeCompactStart == null
-                && session.work.stream()
-                    .noneMatch(i -> session.capture.cells.get(i).anchor)
-                && id.toString()
-                    .equals(session.nativeCompactRequestId)
-                && !session.replacementAuthorized
-                && session.main == 2
-                && session.channels.getInteger("native_fixture_tier") == 3
-                && session.materialSettings.main
-                && !session.materialSettings.containers
-                && !session.materialSettings.me
-                && session.materialQuote.hasNoTags()
-                && player.inventory.mainInventory[1].stackSize == 3,
-            "flag-off native plan admits actual live scope once, preserves all sources and does not prepay: "
-                + operationState(session));
-        int constructs = machine.constructions;
-        dispatch.invoke(null, player, decoded.tag);
-        SimpleAssert.that(
-            HologramWorkspace.find(player.getUniqueID()) == session && machine.constructions == constructs
-                && player.inventory.mainInventory[1].stackSize == 3,
-            "replaying the ordinary native intent neither rescans nor spends");
-        HologramPlacementFixtureWorld world = (HologramPlacementFixtureWorld) player.worldObj;
-        SimpleAssert.that(
-            world.writes()
-                .isEmpty()
-                && WIRE.stream()
-                    .filter(
-                        receipt -> id.toString()
-                            .equals(receipt.getString("placementRequestId"))
-                            && receipt.getBoolean("placementRequestAccepted"))
-                    .count() == 1,
-            "ordinary dispatch sends one accepted reply before any block write");
-        int first = session.work.get(0);
-        HologramCapture.Cell expected = session.capture.cells.get(first);
-        String position = HologramPlacementFixtureWorld.position(expected.x, expected.y, expected.z);
-        SimpleAssert.eq(
-            Blocks.air,
-            world.getBlock(expected.x, expected.y, expected.z),
-            "the admitted native first cell starts empty");
-        world.arm();
-        HologramPlacementFixtureWorld.firstJobTick(session);
-        SimpleAssert.that(
-            session.cursor == 1 && session.completed == 1
-                && "placed".equals(expected.status)
-                && world.writes()
-                    .equals(java.util.Collections.singletonList(position))
-                && world.getBlock(expected.x, expected.y, expected.z) == Blocks.stone
-                && world.getBlockMetadata(expected.x, expected.y, expected.z) == 0
-                && player.inventory.mainInventory[1].stackSize == 2
-                && world.getTileEntity(0, 64, 0) == prior.target,
-            "actual native transaction writes one declared stone and "
-                + "debits one carried item, preserving the controller: "
-                + operationState(session));
-        dispatch.invoke(null, player, decoded.tag);
-        SimpleAssert.that(
-            HologramWorkspace.find(player.getUniqueID()) == session && world.writes()
-                .size() == 1 && player.inventory.mainInventory[1].stackSize == 2,
-            "duplicate native packet cannot write or debit again");
-        long second = 1_000_000_000L;
-        SimpleAssert.that(
-            HologramNativeCompactStart.preparationTimeout(true, 0, 32 * second, 34 * second) == null
-                && HologramNativeCompactStart.preparationTimeout(true, 0, 3 * second, 34 * second) != null
-                && HologramNativeCompactStart.preparationTimeout(false, 0, 32 * second, 34 * second) != null
-                && HologramNativeCompactStart.preparationTimeout(true, 0, 599 * second, 600 * second) != null,
-            "real ordinary progress can cross 30 seconds while stalls and an absolute lease remain bounded");
-    }
-
-    private static NBTTagCompound nativeReadyRequest(HologramSession s) {
-        NBTTagCompound intent = new NBTTagCompound();
-        intent.setString("action", "useBlock");
-        intent.setBoolean(HologramNativeReadyPlacement.FLAG, true);
-        intent.setString(
+        com.miaokatze.gtmb.api.GTMBExtensions.Registration legacySource, sun.misc.Unsafe unsafe) {
+        NBTTagCompound request = new NBTTagCompound();
+        request.setString(
             "placementRequestId",
-            java.util.UUID.randomUUID()
+            UUID.randomUUID()
                 .toString());
-        intent.setString("session", s.id);
-        intent.setInteger("x", s.x);
-        intent.setInteger("y", s.y);
-        intent.setInteger("z", s.z);
-        intent.setInteger("side", s.side);
-        intent.setLong("uiSequence", s.uiSequence);
-        intent.setLong("editorWorkspaceEpoch", s.editorWorkspaceEpoch);
-        intent.setLong("planRevision", s.planRevision);
-        intent.setLong("sourceRevision", com.miaokatze.gtmb.api.StructureSources.revision());
-        return intent;
-    }
-
-    private static void finishNativeReady(HologramSession s, HologramNativeReadyPlacement.Receipt receipt) {
-        for (int slice = 0; s.nativeReadyPlacement != null && slice < 100; slice++)
-            HologramNativeReadyPlacement.tick(s, 1, Long.MAX_VALUE, System::nanoTime, receipt);
-        SimpleAssert.eq(null, s.nativeReadyPlacement, "bounded native ready placement reaches one terminal decision");
+        request.setBoolean(HologramNativeReadyPlacement.FLAG, true);
+        int[] replies = { 0 };
+        HologramNativeReadyPlacement.receive(s.player, request, (owner, id, accepted, reason) -> {
+            SimpleAssert.that(
+                owner == s.player && !accepted && reason != null && !reason.isEmpty(),
+                "retired Ready-native envelope receives an explicit refusal");
+            replies[0]++;
+        });
+        SimpleAssert.that(
+            replies[0] == 1 && s.nativeReadyPlacement == null && s.nativeCompactStart == null,
+            "retired Ready/Compact code cannot schedule an independent placement loop");
     }
 
     private static NBTTagCompound presetAction(HologramSession s, String operation) {
@@ -1819,14 +1256,14 @@ public final class HologramControllerCaptureRegression {
                 world.occupied = Blocks.stone;
                 world.occupiedX = cell.x;
                 SimpleAssert.eq(
-                    "blocked",
+                    "pending",
                     HologramPlanPolicy.classify(s, cell, index),
-                    "occupied native required air remains a real structural blocker");
+                    "occupied native required air reaches the native clearing transaction");
                 s.mode = 1;
                 SimpleAssert.eq(
-                    "protected",
+                    "pending",
                     HologramPlanPolicy.classify(s, cell, index),
-                    "replacement cannot remove an occupant of required-air space");
+                    "replacement delegates an explicit required-air occupant to native harvest permissions");
                 s.mode = 2;
                 SimpleAssert.that(
                     "satisfied".equals(HologramPlanPolicy.classify(s, cell, index))
@@ -2181,29 +1618,24 @@ public final class HologramControllerCaptureRegression {
         build.setLong("placementReviewNonce", s.placementReviewNonce);
         HologramActionDispatcher.handle(s.player, build);
         SimpleAssert.that(
-            s.job == 1 && s.work.size() == 3 && s.player.inventory.mainInventory[1].stackSize == 2,
-            "a current confirmed native plan with sufficient stock reaches the existing bounded placement job without prepaying: "
+            s.job == 1 && HologramConstructionJobs.active(s.player)
+                && HologramConstructionJobs.find(s.player).session == s
+                && s.work.stream()
+                    .filter(index -> "pending".equals(s.planStatus.get(index)))
+                    .count() == 3
+                && s.player.inventory.mainInventory[1].stackSize == 2,
+            "a current confirmed native plan admits its three pending targets to the common job without prepaying; matching scope may also be counted: "
                 + operationState(s));
         SimpleAssert.that(
             s.operationReviewSequence == -1 && s.placementReviewNonce > build.getLong("placementReviewNonce"),
             "starting construction consumes the native material confirmation");
-        // Supply committed transaction outcomes to the real job finalizer; physical placement is tested in-game.
-        for (int index : s.work) s.capture.cells.get(index).status = "placed";
-        s.cursor = s.completed = s.work.size();
-        for (int mode : new int[] { 0, 1 }) {
-            s.mode = mode;
-            for (int index = 0; index < s.capture.cells.size(); index++) {
-                HologramCapture.Cell cell = s.capture.cells.get(index);
-                if (HologramElementCatalog.nativeAir(cell.element))
-                    cell.status = HologramPlanPolicy.classify(s, cell, index);
-            }
-            s.job = 1;
-            HologramPlacementJobs.tickJob(s);
-            SimpleAssert.that(
-                s.job == 3 && s.completed == 3 && !s.replacementAuthorized,
-                "real job finalization counts required-air satisfaction in build/replacement without granting replacement authority: "
-                    + operationState(s));
-        }
+        var job = HologramConstructionJobs.find(s.player);
+        SimpleAssert.that(job != null && job.session == s, "reviewed editor source owns the common job");
+        HologramConstructionJobs.cancel(s.player, job.request);
+        SimpleAssert.that(
+            s.job == 4 && !HologramConstructionJobs.active(s.player),
+            "review cancellation retires the accepted common job without a paused continuation");
+
     }
 
     private static String operationState(HologramSession s) {

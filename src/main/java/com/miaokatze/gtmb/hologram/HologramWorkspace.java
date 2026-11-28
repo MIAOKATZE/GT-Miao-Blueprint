@@ -9,7 +9,6 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
-import net.minecraft.entity.Entity;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.item.ItemStack;
@@ -37,7 +36,6 @@ final class HologramWorkspace {
     // Forge's logical-server lifecycle alone publishes/revokes endpoint generations. Network ingress only reads them.
     private static final Map<UUID, ActionEndpoint> ACTION_ENDPOINTS = new ConcurrentHashMap<>();
     // This dormant runtime cannot be activated until competing legacy mutation roots observe its busy/recovery barrier.
-    private static volatile HologramConstructionTaskGate constructionRuntime;
 
     /** Object identity is a generation: going A -> B -> A does not make the first A current again. */
     static final class ActionEndpoint {
@@ -46,8 +44,6 @@ final class HologramWorkspace {
         final EntityPlayerMP player;
         final World world;
         final NetHandlerPlayServer connection;
-        final HologramConstructionTaskGate.Scope constructionScope;
-        private final HologramConstructionTaskGate constructionGate;
         private final NetworkManager network;
         private final Channel channel;
         private final int dimension;
@@ -55,8 +51,7 @@ final class HologramWorkspace {
         private final WeakReference<EntityPlayerMP> provisionalPredecessor;
 
         private ActionEndpoint(UUID actor, EntityPlayerMP player, World world, NetHandlerPlayServer connection,
-            NetworkManager network, Channel channel, WeakReference<EntityPlayerMP> provisionalPredecessor,
-            HologramConstructionTaskGate constructionGate, HologramConstructionTaskGate.Scope constructionScope) {
+            NetworkManager network, Channel channel, WeakReference<EntityPlayerMP> provisionalPredecessor) {
             this.actor = actor;
             this.player = player;
             this.world = world;
@@ -64,8 +59,6 @@ final class HologramWorkspace {
             this.network = network;
             this.channel = channel;
             this.provisionalPredecessor = provisionalPredecessor;
-            this.constructionGate = constructionGate;
-            this.constructionScope = constructionScope;
             dimension = player.dimension;
         }
 
@@ -117,17 +110,8 @@ final class HologramWorkspace {
             && previous.player == player
             && previous.world == world
             && previous.dimension == player.dimension) return;
-        HologramConstructionTaskGate gate = openConstructionRuntime();
-        HologramConstructionTaskGate.Scope expected = previous != null && previous.constructionGate == gate
-            ? previous.constructionScope
-            : null;
-        // Do not use the bare handler as the generation: all transport/world references can match after a round trip.
-        HologramConstructionTaskGate.Scope scope = gate == null ? null
-            : gate.bind(expected, actor, player, world, new Object());
-        if (expected != null && scope == null) gate.revoke(expected);
-        ACTION_ENDPOINTS.put(
-            actor,
-            new ActionEndpoint(actor, player, world, connection, network, channel, provisional, gate, scope));
+        ACTION_ENDPOINTS
+            .put(actor, new ActionEndpoint(actor, player, world, connection, network, channel, provisional));
     }
 
     static void revokeActionEndpoint(EntityPlayerMP player) {
@@ -137,45 +121,20 @@ final class HologramWorkspace {
             && previous.connection == player.playerNetServerHandler
             && previous.network == previous.connection.netManager
             && previous.channel == previous.network.channel()
-            && ACTION_ENDPOINTS.remove(actor, previous)
-            && previous.constructionScope != null
-            && previous.constructionGate.onOwnerThread()) previous.constructionGate.revoke(previous.constructionScope);
-    }
-
-    private static synchronized HologramConstructionTaskGate openConstructionRuntime() {
-        HologramConstructionTaskGate gate = constructionRuntime;
-        if (gate == null || gate.stoppedAndDrained()) {
-            gate = new HologramConstructionTaskGate(256, 16, 256);
-            constructionRuntime = gate;
+            && ACTION_ENDPOINTS.remove(actor, previous)) {
+            var job = HologramConstructionJobs.find(player);
+            if (job != null) HologramConstructionJobs.cancel(player, job.request);
         }
-        return gate.onOwnerThread() ? gate : null;
     }
 
-    private static synchronized void stopConstructionRuntime() {
-        HologramConstructionTaskGate gate = constructionRuntime;
-        // If the old runtime still has an uncertain permit, it remains the owner of that evidence. A new
-        // server thread cannot replace it on login just because no job appears in the legacy workspace.
-        if (gate != null && gate.onOwnerThread() && gate.shutdown()) constructionRuntime = null;
+    private static void stopConstructionRuntime() {
+        HologramConstructionJobs.stopAll("施工运行时已关闭。");
     }
 
-    /**
-     * Server-thread lookup for explicitly scoped construction only. Never binds on ingress, reads a journal,
-     * or grants authority to a stale endpoint. Keep the original gate and permit for later exact settlement.
-     */
-    static HologramConstructionTaskGate constructionGate(ActionEndpoint endpoint) {
-        if (endpoint == null || endpoint.constructionScope == null
-            || !endpoint.constructionGate.onOwnerThread()
-            || !currentActionEndpoint(endpoint)
-            || !endpoint.constructionGate.scopeCurrent(endpoint.constructionScope)) return null;
-        return endpoint.constructionGate;
-    }
-
-    /** No scope binding here: old authorities must respect the same actor barrier, even after a reconnect. */
     static String legacyGateRefusal(UUID actor) {
-        HologramConstructionTaskGate gate = constructionRuntime;
-        if (gate == null) return null;
-        if (!gate.onOwnerThread()) return gate.stoppedAndDrained() ? null : "上一施工运行时尚有结果待核定，未开始新操作";
-        return gate.busy(actor) ? "已有施工任务或待核定的施工结果，未开始新操作" : null;
+        for (var player : ACTION_ENDPOINTS.values())
+            if (player.actor.equals(actor) && HologramConstructionJobs.active(player.player)) return "已有施工任务，未开始新操作";
+        return null;
     }
 
     static String legacyConstructionRefusal(EntityPlayerMP player) {
@@ -217,49 +176,18 @@ final class HologramWorkspace {
         ActionEndpoint endpoint = ACTION_ENDPOINTS.get(player.getUniqueID());
         return endpoint != null && endpoint.player == player
             && endpoint.connection == sender
-            && endpoint.transportCurrent() ? endpoint : null;
+            && currentActionEndpoint(endpoint) ? endpoint : null;
     }
 
     static boolean currentActionEndpoint(ActionEndpoint endpoint) {
         return endpoint != null && ACTION_ENDPOINTS.get(endpoint.actor) == endpoint
             && endpoint.player.worldObj == endpoint.world
             && endpoint.player.dimension == endpoint.dimension
-            && endpoint.transportCurrent();
-    }
-
-    private static final ClassValue<Boolean> EBF_RECEIPT_GETTER = new ClassValue<>() {
-
-        @Override
-        protected Boolean computeValue(Class<?> player) {
-            try {
-                // The existing scoped ledger calls getEntityData when retiring its receipt. In EBF's
-                // final pure phase this must remain Forge Entity's normal stored-compound accessor.
-                return player.getMethod("getEntityData")
-                    .getDeclaringClass() == Entity.class;
-            } catch (NoSuchMethodException | SecurityException | LinkageError unknown) {
-                return false;
-            }
-        }
-    };
-
-    /** EBF's callback-free tail after live transport. Exact NetworkManager getters are just field reads. */
-    static boolean ebfActionCurrentPure(ActionEndpoint endpoint, HologramConstructionTaskGate gate) {
-        return endpoint != null && ACTION_ENDPOINTS.get(endpoint.actor) == endpoint
+            && endpoint.transportCurrent()
+            // Transport getters can reenter lifecycle callbacks; the same objects can then belong to a newer endpoint.
+            && ACTION_ENDPOINTS.get(endpoint.actor) == endpoint
             && endpoint.player.worldObj == endpoint.world
-            && endpoint.player.dimension == endpoint.dimension
-            && endpoint.player.playerNetServerHandler == endpoint.connection
-            && endpoint.connection.playerEntity == endpoint.player
-            && endpoint.connection.netManager == endpoint.network
-            && endpoint.network.getClass() == NetworkManager.class
-            && endpoint.network.getNetHandler() == endpoint.connection
-            && endpoint.network.channel() == endpoint.channel
-            && EBF_RECEIPT_GETTER.get(endpoint.player.getClass())
-            && gate != null
-            && gate == endpoint.constructionGate
-            && gate == constructionRuntime
-            && gate.onOwnerThread()
-            && endpoint.constructionScope != null
-            && gate.scopeCurrent(endpoint.constructionScope);
+            && endpoint.player.dimension == endpoint.dimension;
     }
 
     /** Cut precommit tail: only owned fields and in-memory gate state, never transport or journal callbacks. */
@@ -270,12 +198,7 @@ final class HologramWorkspace {
             || endpoint.player.playerNetServerHandler != endpoint.connection
             || endpoint.connection.playerEntity != endpoint.player
             || endpoint.connection.netManager != endpoint.network) return false;
-        HologramConstructionTaskGate gate = endpoint.constructionGate;
-        return gate != null && gate == constructionRuntime
-            && gate.onOwnerThread()
-            && endpoint.constructionScope != null
-            && gate.scopeCurrent(endpoint.constructionScope)
-            && !gate.busy(endpoint.actor);
+        return !HologramConstructionJobs.active(endpoint.player);
     }
 
     static void activate(UUID player, HologramSession session) {
@@ -405,7 +328,7 @@ final class HologramWorkspace {
 
     static boolean reserveStockNative(ActionEndpoint endpoint, HologramSession previous, long epoch, long plan,
         HologramSession target) {
-        if (constructionGate(endpoint) == null || target == null
+        if (!currentActionEndpoint(endpoint) || target == null
             || !target.stockNativePrivate
             || target.player != endpoint.player
             || target.libraryWorld != endpoint.world
@@ -601,8 +524,7 @@ final class HologramWorkspace {
 
     /** Main-thread runtime reset. Completed transactions and durable cut/material journals are not undone. */
     static int restartRuntime(String reason) {
-        HologramConstructionTaskGate gate = constructionRuntime;
-        if (gate != null && gate.onOwnerThread()) gate.stopActiveJobs();
+        HologramConstructionJobs.stopAll(reason);
         HologramDemolition.clear();
         HologramEditorWorkspaceRegistry.clear();
         // Retire old full snapshots before publishing terminal receipts; otherwise a stale DTO could

@@ -75,7 +75,7 @@ public final class HologramConstructionPerformanceProbe {
     public boolean step() {
         int cursor = session.cursor;
         long start = System.nanoTime(), writes = HologramConstructionJournal.publications;
-        HologramPlacementJobs.tickJob(session);
+        HologramTestLabConstructionDriver.step(session);
         NBTTagCompound slice = new NBTTagCompound();
         slice.setInteger("attemptedCells", session.cursor - cursor);
         slice.setLong("nanos", System.nanoTime() - start);

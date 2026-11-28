@@ -60,9 +60,27 @@ public final class HologramNativeConfigurationRegression {
     }
 
     private static void verify() throws Exception {
+        positionOnlyShellContracts();
         Block oldBlock = GregTechAPI.sBlockMachines;
         IMetaTileEntity oldMachine = GregTechAPI.METATILEENTITIES[ID];
-        Block host = new Block(Material.iron) {};
+        Block host = new Block(Material.iron) {
+
+            @Override
+            public boolean hasTileEntity(int metadata) {
+                return true;
+            }
+
+            @Override
+            public net.minecraft.tileentity.TileEntity createTileEntity(net.minecraft.world.World world, int metadata) {
+                return new Tile();
+            }
+
+            @Override
+            public void onBlockPlacedBy(net.minecraft.world.World world, int x, int y, int z,
+                net.minecraft.entity.EntityLivingBase actor, ItemStack item) {
+                ItemStateController.nativePlacements++;
+            }
+        };
         Block.blockRegistry.addObject(4070, "gtmb:native_configuration_fixture", host);
         Item.itemRegistry.addObject(4070, "gtmb:native_configuration_fixture", new ItemMachines(host));
         GregTechAPI.sBlockMachines = host;
@@ -98,9 +116,9 @@ public final class HologramNativeConfigurationRegression {
             }, "unknown selected state");
             reject(() -> {
                 NBTTagCompound invalid = legacy();
-                invalid.setInteger("machineMode", 99);
+                invalid.setInteger("machineMode", -1);
                 HologramExecutionEligibility.gtState(invalid, sample, true, true);
-            }, "native mode domain");
+            }, "negative native mode");
 
             Tile tile = tile();
             Controller machine = (Controller) tile.getMetaTileEntity();
@@ -250,10 +268,138 @@ public final class HologramNativeConfigurationRegression {
                 gregtech.api.enums.Textures.BlockIcons.casingTexturePages = textures;
             }
             geometryContracts(sample, (EntityPlayerMP) player);
+            nativeItemContracts(sample);
         } finally {
             GregTechAPI.sBlockMachines = oldBlock;
             GregTechAPI.METATILEENTITIES[ID] = oldMachine;
         }
+    }
+
+    private static void positionOnlyShellContracts() throws Exception {
+        NBTTagCompound coordinates = new NBTTagCompound();
+        HologramBlueprintNbt.bindTarget(coordinates, 7, 65, 9);
+        NBTTagCompound original = (NBTTagCompound) coordinates.copy();
+        HologramExecutionEligibility
+            .validateSaved(Blocks.stone, 0, new ItemStack(Blocks.stone), -1, false, coordinates, null, false);
+        SimpleAssert.that(
+            HologramBlueprintNbt.tileStateForPlacement(Blocks.stone, 0, coordinates) == null,
+            "native no-TE shells have no device state merely because their placement location was bound");
+        SimpleAssert.eq(original, coordinates, "location-only normalization never mutates the captured document");
+        NBTTagCompound unknown = (NBTTagCompound) coordinates.copy();
+        unknown.setInteger("unknownPrivateState", 1);
+        reject(
+            () -> HologramExecutionEligibility
+                .validateSaved(Blocks.stone, 0, new ItemStack(Blocks.stone), -1, false, unknown, null, false),
+            "unknown nonempty no-TE payload");
+        HologramExecutionEligibility
+            .validateSaved(Blocks.chest, 0, new ItemStack(Blocks.chest), -1, false, coordinates, null, false);
+        SimpleAssert.that(
+            HologramBlueprintNbt.tileStateForPlacement(Blocks.chest, 0, coordinates) == null,
+            "an ordinary native item initializes its default empty TE without selecting stored device state");
+        reject(
+            () -> HologramExecutionEligibility
+                .validateSaved(Blocks.chest, 0, new ItemStack(Blocks.chest), -1, false, unknown, null, false),
+            "unknown selected native TE state remains unsupported");
+    }
+
+    private static void nativeItemContracts(ItemStack ordinary) throws Exception {
+        GregTechAPI.METATILEENTITIES[ID] = new ItemStateController();
+        ItemStack paid = ordinary.copy();
+        NBTTagCompound intrinsic = new NBTTagCompound();
+        intrinsic.setLong("recipeSize", 8192L);
+        paid.setTagCompound(intrinsic);
+        int nativeCalls = ItemStateController.nativePlacements;
+        SimpleAssert.eq(intrinsic, HologramGtNativeItemState.canonical(paid), "native item roundtrip");
+        SimpleAssert.eq(
+            nativeCalls + 1,
+            ItemStateController.nativePlacements,
+            "baseline executes the real item placement callback");
+        NBTTagCompound defaultTile = identity();
+        defaultTile.setLong("recipeSize", 1600L);
+        SimpleAssert.that(
+            !HologramExecutionEligibility.gtState(defaultTile, ordinary, true, true)
+                .hasKey("recipeSize"),
+            "native tile default need not occur explicitly in portable ItemNBT");
+        NBTTagCompound retained = identity();
+        retained.setLong("recipeSize", 8192L);
+        NBTTagCompound projected = HologramExecutionEligibility.gtState(retained, paid, true, true);
+        SimpleAssert.that(!projected.hasKey("recipeSize"), "paid native state is never replayed from raw tile NBT");
+        SimpleAssert.eq(
+            intrinsic,
+            HologramGtNativeItemState.placementItem(paid, null),
+            "retention off keeps the exact material's native recipe state");
+        reject(() -> {
+            NBTTagCompound conflict = identity();
+            conflict.setLong("recipeSize", 32768L);
+            HologramExecutionEligibility.gtState(conflict, paid, true, true);
+        }, "unpaid native variant");
+        reject(() -> {
+            NBTTagCompound unknown = identity();
+            unknown.setLong("privateRuntimeValue", 1);
+            HologramExecutionEligibility.gtState(unknown, paid, true, true);
+        }, "unrecognized raw state stays blocked");
+        Tile tile = tile();
+        ItemStateController machine = (ItemStateController) tile.getMetaTileEntity();
+        machine.recipeSize = 8192;
+        SimpleAssert.that(HologramGtNativeItemState.matches(tile, paid), "native placed recipe state readback");
+        SimpleAssert.that(
+            !HologramGtNativeItemState.matches(tile, ordinary),
+            "same meta ID does not make an upgraded machine a default material");
+        machine.recipeSize = 32768;
+        SimpleAssert.that(!HologramGtNativeItemState.matches(tile, paid), "different native capacities stay distinct");
+        machine.recipeSize = 8192;
+        var variant = new HologramNativeTargetPlan.Cell(
+            0,
+            0,
+            0,
+            GregTechAPI.sBlockMachines,
+            0,
+            paid,
+            -1,
+            null,
+            null,
+            null,
+            null,
+            false);
+        var variants = new HologramNativeConstruction.ProjectionCache();
+        int before = ItemStateController.creations;
+        var prepared = variants.get(variant);
+        SimpleAssert.eq(before + 1, ItemStateController.creations, "one canonical machine per prepared variant");
+        for (int i = 0; i < 3; i++) {
+            SimpleAssert.that(variants.get(variant) == prepared, "descriptor reuses its prepared variant");
+            SimpleAssert.that(
+                HologramGtNativeItemState.matches(tile, paid, prepared.nativeItem),
+                "pre/post/notify checks reuse the prepared native expectation");
+        }
+        SimpleAssert.eq(
+            before + 1,
+            ItemStateController.creations,
+            "repeated matching never constructs another detached machine");
+        ItemStack sealed = paid.copy();
+        sealed.getTagCompound()
+            .setTag(HologramRecovery.TAG, new NBTTagCompound());
+        before = ItemStateController.creations;
+        SimpleAssert.that(
+            HologramGtNativeItemState.matches(tile, sealed) && HologramGtNativeItemState.matches(tile, sealed, null),
+            "the supplemental item check leaves sealed originals to complete recovery matching");
+        reject(() -> HologramGtNativeItemState.canonical(sealed), "sealed original canonical conversion");
+        SimpleAssert.eq(before, ItemStateController.creations, "seal bypass never creates a native validator");
+        for (String key : new String[] { "mID", "mOwnerUuid", HologramNetworkBindings.GROUP,
+            "GTSWN_IncorporationIdentity", "proxy" }) {
+            ItemStack authority = paid.copy();
+            authority.getTagCompound()
+                .setString(key, "foreign");
+            NBTTagCompound same = (NBTTagCompound) authority.getTagCompound()
+                .copy();
+            SimpleAssert.that(
+                !HologramGtNativeItemState.paidField(same, key, authority, same),
+                "native item output cannot exempt identity, ownership or binding roots: " + key);
+            reject(() -> HologramGtNativeItemState.canonical(authority), "native material source authority " + key);
+        }
+        ItemStack negativeEnergy = paid.copy();
+        negativeEnergy.getTagCompound()
+            .setLong("mStoredEnergy", -1);
+        reject(() -> HologramGtNativeItemState.canonical(negativeEnergy), "malformed intrinsic energy");
     }
 
     private static void geometryContracts(ItemStack sample, EntityPlayerMP player) throws Exception {
@@ -530,6 +676,36 @@ public final class HologramNativeConfigurationRegression {
             if (copyMode != 2) copiedValue = data.getInteger("value");
             if (copyMode == 3) mInventory[0] = new ItemStack(Blocks.dirt);
             return true;
+        }
+    }
+
+    private static final class ItemStateController extends Controller {
+
+        static int creations, nativePlacements;
+        long recipeSize = 1600;
+
+        @Override
+        public IMetaTileEntity newMetaEntity(IGregTechTileEntity base) {
+            creations++;
+            return new ItemStateController();
+        }
+
+        @Override
+        public void loadNBTData(NBTTagCompound data) {
+            super.loadNBTData(data);
+            recipeSize = data.getLong("recipeSize");
+            if (recipeSize == 0) recipeSize = 1600;
+        }
+
+        @Override
+        public void saveNBTData(NBTTagCompound data) {
+            super.saveNBTData(data);
+            data.setLong("recipeSize", recipeSize);
+        }
+
+        @Override
+        public void setItemNBT(NBTTagCompound data) {
+            if (recipeSize != 1600) data.setLong("recipeSize", recipeSize);
         }
     }
 

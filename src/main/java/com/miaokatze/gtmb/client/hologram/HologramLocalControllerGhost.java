@@ -18,7 +18,7 @@ import com.miaokatze.gtmb.hologram.HologramLocalControllerCapture;
  */
 final class HologramLocalControllerGhost {
 
-    static final long IDLE_VISIBILITY_NANOS = 5_000_000_000L;
+    static final long IDLE_VISIBILITY_NANOS = HologramHeldProjectionLifetime.AWAY_NANOS;
     private static Lease current;
 
     private HologramLocalControllerGhost() {}
@@ -29,8 +29,8 @@ final class HologramLocalControllerGhost {
         final Object world, connection, player, tile, unlinkedStack;
         final int dimension, slot;
         final String tool, serverSession;
-        final long opened;
-        final UUID activeRequest;
+        UUID activeRequest;
+        private final HologramHeldProjectionLifetime lifetime = new HologramHeldProjectionLifetime();
 
         Lease(HologramState target, Object world, Object connection, Object player, Object tile, int dimension,
             int slot, String tool, Object stack, String serverSession, long now) {
@@ -49,7 +49,6 @@ final class HologramLocalControllerGhost {
             this.tool = tool;
             this.unlinkedStack = tool.isEmpty() ? stack : null;
             this.serverSession = serverSession;
-            this.opened = now;
             this.activeRequest = activeRequest;
         }
 
@@ -58,7 +57,14 @@ final class HologramLocalControllerGhost {
                 && this.player == player
                 && this.tile == tile
                 && this.dimension == dimension
-                && (activeRequest != null || now - opened < IDLE_VISIBILITY_NANOS);
+                && lifetime.visible(now);
+        }
+
+        /** Switching back before the deadline renews visibility; an expired lease can never be renewed. */
+        boolean observeHeld(boolean projector, int heldSlot, String heldId, Object stack, long now) {
+            boolean held = projector && heldSlot == slot
+                && (tool.isEmpty() ? stack == unlinkedStack : tool.equals(heldId));
+            return lifetime.observe(held, now);
         }
 
         boolean ownedBy(UUID request) {
@@ -73,11 +79,8 @@ final class HologramLocalControllerGhost {
                 || activeRequest == null && workspaceSession != null && !target.session.equals(workspaceSession);
         }
 
-        boolean show(boolean enabled, boolean screenClosed, boolean projector, int heldSlot, String heldId,
-            Object stack) {
-            return enabled && screenClosed
-                && (activeRequest != null || projector && heldSlot == slot
-                    && (tool.isEmpty() ? stack == unlinkedStack : tool.equals(heldId)));
+        boolean show(boolean enabled, boolean screenClosed, long now) {
+            return enabled && screenClosed && lifetime.visible(now);
         }
     }
 
@@ -130,6 +133,29 @@ final class HologramLocalControllerGhost {
             request);
     }
 
+    /** The existing client tick tracks the held slot even when no world frame is rendered. */
+    static void tickHeld(Minecraft mc) {
+        Lease lease = current;
+        if (lease == null) return;
+        ItemStack held = mc == null || mc.thePlayer == null ? null : mc.thePlayer.getHeldItem();
+        String id = held == null || !held.hasTagCompound() ? ""
+            : held.getTagCompound()
+                .getString("gtitHologramToolId");
+        long now = System.nanoTime();
+        if (mc == null || mc.thePlayer == null
+            || mc.theWorld != lease.world
+            || mc.thePlayer != lease.player
+            || mc.getNetHandler() != lease.connection
+            || mc.thePlayer.dimension != lease.dimension
+            || !lease.observeHeld(
+                ItemNekoHologramProjector.isProjector(held),
+                mc.thePlayer.inventory.currentItem,
+                id,
+                held,
+                now))
+            clear();
+    }
+
     static void observe(Minecraft mc, HologramState server) {
         Lease lease = current;
         if (lease == null) return;
@@ -157,17 +183,7 @@ final class HologramLocalControllerGhost {
     static boolean render(Minecraft mc, boolean enabled, float partialTicks) {
         Lease lease = current;
         if (lease == null || mc.thePlayer == null) return false;
-        ItemStack held = mc.thePlayer.getHeldItem();
-        String id = held == null || !held.hasTagCompound() ? ""
-            : held.getTagCompound()
-                .getString("gtitHologramToolId");
-        if (!lease.show(
-            enabled,
-            mc.currentScreen == null,
-            ItemNekoHologramProjector.isProjector(held),
-            mc.thePlayer.inventory.currentItem,
-            id,
-            held)) return false;
+        if (!lease.show(enabled, mc.currentScreen == null, System.nanoTime())) return false;
         HologramRenderer.world(lease.target, partialTicks);
         return true;
     }
@@ -182,11 +198,16 @@ final class HologramLocalControllerGhost {
     }
 
     static void finish(UUID request) {
-        if (afterTerminal(current, request) != current) clear();
+        afterTerminal(current, request);
     }
 
     static Lease afterTerminal(Lease lease, UUID request) {
-        return lease != null && lease.ownedBy(request) ? null : lease;
+        if (lease != null && lease.ownedBy(request)) lease.activeRequest = null;
+        return lease;
+    }
+
+    static void complete(UUID request) {
+        if (current != null && current.ownedBy(request)) clear();
     }
 
     static void clear() {

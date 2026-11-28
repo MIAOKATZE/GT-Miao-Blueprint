@@ -201,13 +201,12 @@ public final class HologramV0116StructureAcceptanceSmoke {
             require(
                 controller >= 0 && controller < session.work.size() - 1,
                 "old controller-last storage no longer forces controller-last construction");
-            live.mUpdated = false;
-            HologramPlacementJobs.notifyCompletedControllers(session);
-            require(live.mUpdated, "completed controller receives native dirty/update flag");
             require(prototypeBefore.equals(persistence(prototype)), "registration prototype persistence remains exact");
 
             NBTTagCompound result = new NBTTagCompound();
             result.setString("status", "PASS");
+            // This synchronous capture suite does not execute the new construction Job's terminal update.
+            result.setString("completionUpdateCoverage", "not_executed_by_this_capture_suite");
             result.setInteger("controllerId", id);
             result.setInteger("heightCases", 3);
             result.setTag("nativeHeightCases", cases);

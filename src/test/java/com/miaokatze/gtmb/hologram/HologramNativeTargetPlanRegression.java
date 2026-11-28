@@ -32,16 +32,29 @@ final class HologramNativeTargetPlanRegression {
     private static final int ID = 32666;
 
     static void run() {
+        Thread thread = Thread.currentThread();
+        String previousName = thread.getName();
+        // Native GTUtility.isClient uses FML's effective thread side, not FMLRelaunchLog's bootstrap side.
+        thread.setName("Server thread");
         try {
+            SimpleAssert.eq(
+                cpw.mods.fml.relauncher.Side.SERVER,
+                cpw.mods.fml.common.FMLCommonHandler.instance()
+                    .getEffectiveSide(),
+                "native target fixtures execute with FML's actual server-thread semantics");
             HologramNativeSavedWorldRegression.withOfflineRegistries(() -> {
                 try {
                     verify();
+                    verifyRawChoices();
+                    verifyWater();
                 } catch (IOException failure) {
                     throw new AssertionError("native target generation", failure);
                 }
             });
         } catch (Exception failure) {
             throw new AssertionError("native target registry fixture", failure);
+        } finally {
+            thread.setName(previousName);
         }
     }
 
@@ -56,7 +69,7 @@ final class HologramNativeTargetPlanRegression {
         IMetaTileEntity previous = GregTechAPI.METATILEENTITIES[ID];
         try {
             GregTechAPI.sBlockMachines = Blocks.iron_block;
-            GregTechAPI.METATILEENTITIES[ID] = new Controller(0);
+            prototype(ID, new Controller(0));
             HologramNativeTargetPlan target = compile(false);
             SimpleAssert.eq(null, target.definition(), "custom constructor needs no definition");
             SimpleAssert.eq(
@@ -65,7 +78,7 @@ final class HologramNativeTargetPlanRegression {
                     .size(),
                 "unvisited real writes form the complete target");
             Controller built = (Controller) target.context();
-            SimpleAssert.eq(6, built.passes, "four empty cursor slices and a final write reach -1");
+            SimpleAssert.eq(7, built.passes, "four empty cursor slices reach -1 before the final configured replay");
             SimpleAssert.eq(0, built.started + built.completed, "ordinary targets never run NEI hooks");
             for (var cell : target.cells()) {
                 SimpleAssert.eq(null, cell.element(), "custom targets retain optional element absence");
@@ -83,7 +96,7 @@ final class HologramNativeTargetPlanRegression {
                     .contains(new HologramNativeTargetPlan.Offset(7, 0, 0)),
                 "hint-only writes cannot become destruction authority");
 
-            GregTechAPI.METATILEENTITIES[ID] = new Controller(1);
+            prototype(ID, new Controller(1));
             HologramNativeTargetPlan creative = compile(false);
             SimpleAssert.eq(
                 1,
@@ -99,7 +112,7 @@ final class HologramNativeTargetPlanRegression {
             SimpleAssert.eq(0, ((Controller) creative.context()).passes, "creative fallback owns a new controller");
 
             for (int mode : new int[] { 2, 3, 4 }) {
-                GregTechAPI.METATILEENTITIES[ID] = new Controller(mode);
+                prototype(ID, new Controller(mode));
                 try {
                     compile(false);
                     throw new AssertionError("accepted incomplete/invalid native mode " + mode);
@@ -110,7 +123,7 @@ final class HologramNativeTargetPlanRegression {
                 }
             }
 
-            GregTechAPI.METATILEENTITIES[ID] = new Controller(0);
+            prototype(ID, new Controller(0));
             HologramResourceWorld base = HologramResourceWorld.declarations(Blocks.iron_block, 0);
             BaseMetaTileEntity tile = new BaseMetaTileEntity();
             tile.setWorldObj(base);
@@ -128,9 +141,9 @@ final class HologramNativeTargetPlanRegression {
                 SimpleAssert.eq(1, context.started, "NEI start runs once");
                 SimpleAssert.eq(1, context.completed, "NEI completion runs once");
                 SimpleAssert.eq(
-                    2,
+                    1,
                     context.passes,
-                    "NEI ignores survival 0 and finishes after the initial controller change settles");
+                    "NEI finishes its native hook lifecycle without an extra unchanged survival pass");
                 var shown = preview.placements();
                 SimpleAssert.eq(
                     Blocks.glass,
@@ -146,11 +159,226 @@ final class HologramNativeTargetPlanRegression {
         }
     }
 
+    private static void verifyWater() throws IOException {
+        Block oldBlock = GregTechAPI.sBlockMachines;
+        IMetaTileEntity old = GregTechAPI.METATILEENTITIES[ID];
+        try {
+            GregTechAPI.sBlockMachines = Blocks.iron_block;
+            prototype(ID, new Controller(7));
+            var target = compile(false);
+            SimpleAssert.that(
+                target.cells()
+                    .stream()
+                    .noneMatch(cell -> cell.dx() == 1),
+                "actual native air acceptance excludes optional structure water");
+            SimpleAssert.that(
+                target.cells()
+                    .stream()
+                    .anyMatch(cell -> cell.dx() == 2 && cell.block() == Blocks.water)
+                    && target.cells()
+                        .stream()
+                        .anyMatch(cell -> cell.dx() == 3 && cell.block() == Blocks.water),
+                "required literal water and raw water without air evidence remain in the geometry");
+        } finally {
+            GregTechAPI.sBlockMachines = oldBlock;
+            GregTechAPI.METATILEENTITIES[ID] = old;
+        }
+    }
+
+    private static void visited(World world, int x,
+        com.gtnewhorizon.structurelib.structure.IStructureElement<?> element) {
+        try {
+            var constructor = com.gtnewhorizon.structurelib.StructureEvent.StructureElementVisitedEvent.class
+                .getDeclaredConstructor(
+                    World.class,
+                    int.class,
+                    int.class,
+                    int.class,
+                    int.class,
+                    int.class,
+                    int.class,
+                    com.gtnewhorizon.structurelib.structure.IStructureElement.class);
+            constructor.setAccessible(true);
+            new HologramNativeStructurePreview.VisitedListener()
+                .elementVisited(constructor.newInstance(world, x, 128, 0, x, 0, 0, element));
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError(failure);
+        }
+    }
+
+    private static void prototype(int id, IMetaTileEntity prototype) {
+        // Mirror MetaTileEntity's native registration constructor while retaining clone constructors for the fixture.
+        BaseMetaTileEntity base = new BaseMetaTileEntity();
+        prototype.setBaseMetaTileEntity(base);
+        base.setMetaTileID((short) id);
+        GregTechAPI.METATILEENTITIES[id] = prototype;
+    }
+
+    private static final int RAW_ID = 32660, PORT_ID = 32661, REJECT_ID = 32662, MUFFLER_ID = 32663;
+
+    private static void verifyRawChoices() throws IOException {
+        Block oldBlock = GregTechAPI.sBlockMachines;
+        java.util.Map<Class<?>, String> nativeNames;
+        java.util.Map<String, Class<?>> nativeClasses;
+        String fixtureName = "gtmb_native_target_fixture";
+        boolean addedMapping;
+        try {
+            @SuppressWarnings("unchecked")
+            var names = (java.util.Map<Class<?>, String>) cpw.mods.fml.relauncher.ReflectionHelper
+                .findField(net.minecraft.tileentity.TileEntity.class, "classToNameMap", "field_145853_j")
+                .get(null);
+            @SuppressWarnings("unchecked")
+            var classes = (java.util.Map<String, Class<?>>) cpw.mods.fml.relauncher.ReflectionHelper
+                .findField(net.minecraft.tileentity.TileEntity.class, "nameToClassMap", "field_145855_i")
+                .get(null);
+            nativeNames = names;
+            nativeClasses = classes;
+            addedMapping = !names.containsKey(BaseMetaTileEntity.class);
+            if (addedMapping) {
+                var mapping = net.minecraft.tileentity.TileEntity.class
+                    .getDeclaredMethod("addMapping", Class.class, String.class);
+                mapping.setAccessible(true);
+                mapping.invoke(null, BaseMetaTileEntity.class, fixtureName);
+            }
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError("native tile registry fixture", failure);
+        }
+        IMetaTileEntity oldId = GregTechAPI.METATILEENTITIES[ID], oldController = GregTechAPI.METATILEENTITIES[RAW_ID],
+            oldPort = GregTechAPI.METATILEENTITIES[PORT_ID], oldReject = GregTechAPI.METATILEENTITIES[REJECT_ID],
+            oldMuffler = GregTechAPI.METATILEENTITIES[MUFFLER_ID];
+        try {
+            Block block = new Block(net.minecraft.block.material.Material.iron) {
+
+                @Override
+                public boolean hasTileEntity(int meta) {
+                    return true;
+                }
+
+                @Override
+                public net.minecraft.tileentity.TileEntity createTileEntity(World world, int meta) {
+                    return new BaseMetaTileEntity();
+                }
+            };
+            Block.blockRegistry.addObject(4061, "gtmb:projector_raw_fixture", block);
+            net.minecraft.item.Item.itemRegistry
+                .addObject(4061, "gtmb:projector_raw_fixture", new gregtech.common.blocks.ItemMachines(block));
+            GregTechAPI.sBlockMachines = block;
+            prototype(RAW_ID, new Controller(6));
+            prototype(
+                PORT_ID,
+                new gregtech.api.metatileentity.implementations.MTEHatchOutput(
+                    "raw_port",
+                    1,
+                    new String[0],
+                    new ITexture[0][][]));
+            prototype(
+                REJECT_ID,
+                new gregtech.api.metatileentity.implementations.MTEHatchEnergy(
+                    "raw_reject",
+                    1,
+                    new String[0],
+                    new ITexture[0][][]));
+            prototype(
+                MUFFLER_ID,
+                new gregtech.api.metatileentity.implementations.MTEHatchMuffler(
+                    "required_muffler",
+                    1,
+                    new String[0],
+                    new ITexture[0][][]));
+            NBTTagCompound channels = new NBTTagCompound();
+            channels.setInteger("ore_center_sectors", 5);
+            ItemStack signal = HologramNativeTargetPlan.canonicalTrigger(4, channels);
+            HologramNativeTargetPlan raw = HologramNativeTargetPlan
+                .compile(RAW_ID, ExtendedFacing.DEFAULT, signal, new NBTTagCompound());
+            SimpleAssert.that(
+                raw.cells()
+                    .stream()
+                    .anyMatch(cell -> cell.dx() == 7),
+                "raw constructor receives sector five independently of main four");
+            SimpleAssert.that(
+                raw.cells()
+                    .stream()
+                    .allMatch(cell -> cell.element() == null),
+                "raw geometry and hatch seeds need no visited element");
+            SimpleAssert.that(
+                raw.cells()
+                    .stream()
+                    .noneMatch(
+                        cell -> com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor
+                            .hasSubChannel(cell.trigger(), "gt_hatch")),
+                "discovery hatch opt-in never leaks into published native target signals");
+            SimpleAssert.that(
+                raw.cells()
+                    .stream()
+                    .filter(cell -> cell.dx() == 1)
+                    .allMatch(cell -> cell.block() == Blocks.stone),
+                "NEI seed is restored to the exact native default casing");
+            NBTTagCompound config = new NBTTagCompound(), choice = new NBTTagCompound();
+            choice.setInteger("x", 1);
+            choice.setInteger("id", PORT_ID);
+            choice.setInteger("facing", -1);
+            net.minecraft.nbt.NBTTagList choices = new net.minecraft.nbt.NBTTagList();
+            choices.appendTag(choice);
+            config.setTag("nativeHatchChoices", choices);
+            var accepted = HologramNativeTargetPlan.compile(RAW_ID, ExtendedFacing.DEFAULT, signal, config);
+            SimpleAssert.that(
+                accepted.cells()
+                    .stream()
+                    .anyMatch(
+                        cell -> cell.dx() == 1 && cell.material()
+                            .getItemDamage() == PORT_ID),
+                "raw native replay retains the positively tested selected hatch");
+            choice.setInteger("id", REJECT_ID);
+            try {
+                HologramNativeTargetPlan.compile(RAW_ID, ExtendedFacing.DEFAULT, signal, config);
+                throw new AssertionError("raw illegal hatch survived replay");
+            } catch (IOException expected) {}
+            prototype(RAW_ID, new Controller(8));
+            var required = HologramNativeTargetPlan
+                .compile(RAW_ID, ExtendedFacing.DEFAULT, signal, new NBTTagCompound());
+            SimpleAssert.that(
+                required.cells()
+                    .stream()
+                    .anyMatch(
+                        cell -> cell.material() != null && cell.material()
+                            .getItemDamage() == MUFFLER_ID),
+                "EBF native Muffler.newAny remains mandatory without an optional-hatch preset");
+            SimpleAssert.that(
+                ((Controller) required.context()).passes <= 3,
+                "required native muffler does not stall on zero placement rounds");
+            NBTTagCompound preset = new NBTTagCompound();
+            preset.setBoolean("presetActive", true);
+            preset.setInteger("hatchTier", 1);
+            prototype(ID, new Controller(0));
+            var unformed = HologramNativeTargetPlan.compile(
+                ID,
+                ExtendedFacing.DEFAULT,
+                HologramNativeTargetPlan.canonicalTrigger(1, new NBTTagCompound()),
+                preset);
+            SimpleAssert.that(
+                !unformed.nativeFormed() && !unformed.cells()
+                    .isEmpty(),
+                "unformed diagnostics do not erase valid target geometry");
+        } finally {
+            GregTechAPI.sBlockMachines = oldBlock;
+            GregTechAPI.METATILEENTITIES[ID] = oldId;
+            GregTechAPI.METATILEENTITIES[RAW_ID] = oldController;
+            GregTechAPI.METATILEENTITIES[PORT_ID] = oldPort;
+            GregTechAPI.METATILEENTITIES[REJECT_ID] = oldReject;
+            GregTechAPI.METATILEENTITIES[MUFFLER_ID] = oldMuffler;
+            if (addedMapping) {
+                nativeNames.remove(BaseMetaTileEntity.class);
+                nativeClasses.remove(fixtureName);
+            }
+        }
+    }
+
     private static final class Controller extends MTEEnhancedMultiBlockBase<Controller>
         implements ISurvivalConstructable, INEIPreviewModifier {
 
         final int mode;
         int passes, started, completed;
+        private IStructureDefinition<Controller> mufflerDefinition;
 
         Controller(int mode) {
             super("gtmb_native_target_fixture");
@@ -159,7 +387,13 @@ final class HologramNativeTargetPlanRegression {
 
         @Override
         public IStructureDefinition<Controller> getStructureDefinition() {
-            return null;
+            if (mode != 8) return null;
+            if (mufflerDefinition == null)
+                mufflerDefinition = com.gtnewhorizon.structurelib.structure.StructureDefinition.<Controller>builder()
+                    .addShape("required_muffler", new String[][] { { "m" } })
+                    .addElement('m', gregtech.api.enums.HatchElement.Muffler.<Controller>newAny(11, 2))
+                    .build();
+            return mufflerDefinition;
         }
 
         @Override
@@ -167,6 +401,47 @@ final class HologramNativeTargetPlanRegression {
             passes++;
             if (started > 0) return 0;
             World world = getBaseMetaTileEntity().getWorld();
+            if (mode == 8) {
+                // Use StructureLib's actual V2 walker: it owns definition/piece/offset/facing in the element env.
+                return getStructureDefinition().survivalBuild(
+                    this,
+                    signal,
+                    "required_muffler",
+                    world,
+                    getExtendedFacing(),
+                    1,
+                    128,
+                    0,
+                    0,
+                    0,
+                    0,
+                    budget,
+                    env,
+                    false);
+            }
+            if (mode == 7) {
+                world.setBlock(1, 128, 0, Blocks.water, 0, 2);
+                world.setBlock(2, 128, 0, Blocks.water, 0, 2);
+                world.setBlock(3, 128, 0, Blocks.water, 0, 2);
+                var water = com.gtnewhorizon.structurelib.structure.StructureUtility
+                    .<Controller>ofBlock(Blocks.water, 0);
+                visited(
+                    world,
+                    1,
+                    com.gtnewhorizon.structurelib.structure.StructureUtility
+                        .ofChain(water, com.gtnewhorizon.structurelib.structure.StructureUtility.<Controller>isAir()));
+                visited(world, 2, water);
+                return -1;
+            }
+            if (mode == 6) {
+                var tile = world.getTileEntity(1, 128, 0);
+                if (!(tile instanceof IGregTechTileEntity gt) || gt.getMetaTileID() != PORT_ID)
+                    world.setBlock(1, 128, 0, Blocks.stone, 0, 2);
+                int sectors = com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor
+                    .getChannelData(signal, "ore_center_sectors");
+                world.setBlock(sectors + 2, 128, 0, Blocks.stone, 0, 2);
+                return -1;
+            }
             if (mode == 2) return 0;
             if (mode == 3) return -3;
             if (mode == 4) throw new IllegalStateException("fixture failure");
@@ -203,6 +478,7 @@ final class HologramNativeTargetPlanRegression {
 
         @Override
         public void construct(ItemStack signal, boolean hints) {
+            if (mode == 6 || mode == 7 || mode == 8) return;
             getBaseMetaTileEntity().getWorld()
                 .setBlock(hints ? 7 : 3, 128, 0, hints ? Blocks.glass : Blocks.gold_block, 0, 3);
         }
@@ -215,6 +491,13 @@ final class HologramNativeTargetPlanRegression {
         @Override
         public void onPreviewStructureComplete(ItemStack signal) {
             completed++;
+            if (mode == 6) {
+                World world = getBaseMetaTileEntity().getWorld();
+                world.setBlock(1, 128, 0, GregTechAPI.sBlockMachines, 0, 2);
+                BaseMetaTileEntity port = (BaseMetaTileEntity) world.getTileEntity(1, 128, 0);
+                port.setInitialValuesAsNBT(null, (short) PORT_ID);
+                return;
+            }
             getBaseMetaTileEntity().getWorld()
                 .setBlock(8, 128, 0, Blocks.glass, 0, 3);
         }

@@ -343,8 +343,6 @@ final class HologramBlueprintServiceRegression {
             .getDeclaredMethod("targetPreviewMeta", type, HologramCapture.Cell.class, ItemStack.class);
         Method quote = HologramCellPolicy.class
             .getDeclaredMethod("cachePlan", type, HologramCapture.Cell.class, int.class);
-        Method operate = HologramWorldTransactions.class
-            .getDeclaredMethod("operateChecked", type, HologramCapture.Cell.class, int.class);
         Method save = HologramBlueprintProjection.class.getDeclaredMethod("blueprint", type, String.class);
         Method installed = HologramCellPolicy.class.getDeclaredMethod(
             "validateOrdinaryPlacedVariant",
@@ -358,8 +356,7 @@ final class HologramBlueprintServiceRegression {
             int.class,
             net.minecraft.block.Block.class,
             int.class);
-        for (Method method : new Method[] { metadata, quote, operate, save, installed, matches })
-            method.setAccessible(true);
+        for (Method method : new Method[] { metadata, quote, save, installed, matches }) method.setAccessible(true);
         net.minecraft.world.World originalWorld = player.worldObj;
         net.minecraft.nbt.NBTTagList inventoryBefore = new net.minecraft.nbt.NBTTagList();
         for (ItemStack stack : player.inventory.mainInventory)
@@ -370,9 +367,6 @@ final class HologramBlueprintServiceRegression {
             expectVariantFailure(metadata, session, wool, white);
             expectVariantFailure(quote, session, wool, 0);
             expectVariantFailure(save, session, "malformed white shell");
-            SimpleAssert.that(
-                !(Boolean) operate.invoke(null, session, wool, 0),
-                "white payment plus imported black world metadata rejects before any world write or reservation");
             SimpleAssert.eq(15, wool.meta, "rejection does not silently normalize the imported material identity");
             wool.meta = 0;
             targets.set(0, black);

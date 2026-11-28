@@ -185,6 +185,13 @@ final class HologramRegionCache {
         return region == null ? null : region.at(local(x, y, z));
     }
 
+    /** Reuse the published 16-cube index; full chunk data may also clear omitted sections. */
+    boolean intersectsChunk(int x, int z, int sections) {
+        for (int y = 0; y < 16; y++)
+            if ((sections & (1 << y)) != 0 && regions.get(new Key(x, y, z)) != null) return true;
+        return false;
+    }
+
     private static Long2ObjectOpenHashMap<Region> packedRegions(Map<Key, List<HologramState.Cell>> regions) {
         Long2ObjectOpenHashMap<Region> packed = new Long2ObjectOpenHashMap<>(regions.size());
         regions.forEach(

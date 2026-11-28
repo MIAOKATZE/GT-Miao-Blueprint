@@ -304,12 +304,27 @@ public final class HologramWorldServiceRegression {
             s.virtualPreset = preset;
             HologramBlueprintProjection.populateVirtual(s);
             SimpleAssert.eq("satisfied", s.capture.cells.get(0).status, "native classifier sees the existing target");
+            net.minecraft.nbt.NBTTagList stockBefore = player.inventory.writeToNBT(new net.minecraft.nbt.NBTTagList());
+            int messages = ((FeedbackPlayer) player).messages;
             HologramPlacementJobs.start(s);
-            SimpleAssert.eq(0, s.job, "a satisfied plan does not manufacture a running or completed job");
+            var job = HologramConstructionJobs.find(player);
+            SimpleAssert.that(
+                job != null && job.session == s,
+                "satisfied targets are authoritatively rechecked by the common job");
+            job.step(Long.MAX_VALUE);
+            SimpleAssert.that(
+                job.end == HologramConstructionJobs.End.COMPLETE && job.completed == 0 && job.satisfied == 1,
+                "a no-op settlement reports the observed match and never manufactures a placed cell: " + s.status);
             SimpleAssert.eq(0, s.completed, "NOOP does not claim a written cell");
             SimpleAssert.that(
-                s.status.contains("已满足") && s.status.contains("未扣材料"),
-                "no-work confirmation explicitly explains that the target already exists without payment");
+                world.occupied == Blocks.stone && world.occupiedX == 1
+                    && world.occupant == null
+                    && stockBefore.equals(player.inventory.writeToNBT(new net.minecraft.nbt.NBTTagList())),
+                "no-op confirmation preserves exact world and inventory without requiring any material source");
+            SimpleAssert.eq(
+                messages + 1,
+                ((FeedbackPlayer) player).messages,
+                "no-op settlement emits one localized result distinguishing satisfied from placed counts");
         } finally {
             world.occupied = oldBlock;
             world.occupiedX = oldX;
@@ -665,6 +680,7 @@ public final class HologramWorldServiceRegression {
     private static final class FeedbackPlayer extends EntityPlayerMP {
 
         String message;
+        int messages;
 
         private FeedbackPlayer() {
             super(null, null, null, null);
@@ -672,6 +688,7 @@ public final class HologramWorldServiceRegression {
 
         @Override
         public void addChatMessage(net.minecraft.util.IChatComponent component) {
+            messages++;
             message = component.getUnformattedText();
         }
     }

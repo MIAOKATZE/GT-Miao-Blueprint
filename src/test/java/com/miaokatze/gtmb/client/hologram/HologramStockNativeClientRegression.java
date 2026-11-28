@@ -77,6 +77,14 @@ public final class HologramStockNativeClientRegression {
     }
 
     public static void run() throws ReflectiveOperationException {
+        run(false);
+    }
+
+    static void runNotifications() throws ReflectiveOperationException {
+        run(true);
+    }
+
+    private static void run(boolean notificationsOnly) throws ReflectiveOperationException {
         var unsafe = (sun.misc.Unsafe) field(sun.misc.Unsafe.class, "theUnsafe").get(null);
         var client = (Minecraft) unsafe.allocateInstance(Minecraft.class);
         Field instance = field(Minecraft.class, "theMinecraft");
@@ -105,7 +113,7 @@ public final class HologramStockNativeClientRegression {
             if (savedCasing == null) GregTechAPI.sBlockCasings12 = (gregtech.common.blocks.BlockCasings12) unsafe
                 .allocateInstance(gregtech.common.blocks.BlockCasings12.class);
             if (savedMachines == null) GregTechAPI.sBlockMachines = Blocks.iron_block;
-            runPanel(unsafe, client);
+            runPanel(unsafe, client, notificationsOnly);
         } finally {
             GregTechAPI.sBlockCasings12 = savedCasing;
             GregTechAPI.sBlockMachines = savedMachines;
@@ -129,7 +137,8 @@ public final class HologramStockNativeClientRegression {
         }
     }
 
-    private static void runPanel(sun.misc.Unsafe unsafe, Minecraft client) throws ReflectiveOperationException {
+    private static void runPanel(sun.misc.Unsafe unsafe, Minecraft client, boolean notificationsOnly)
+        throws ReflectiveOperationException {
         var world = (CokeWorld) unsafe.allocateInstance(CokeWorld.class);
         var player = (FixturePlayer) unsafe.allocateInstance(FixturePlayer.class);
         var connection = (NetHandlerPlayClient) unsafe.allocateInstance(NetHandlerPlayClient.class);
@@ -206,7 +215,6 @@ public final class HologramStockNativeClientRegression {
                 64,
                 0,
                 HologramStockNativeWire.Stage.CONTROLLER_ONLY,
-                1,
                 nativeState.targetRevision(),
                 ""));
         NBTTagCompound actionState = nativeState.metadata();
@@ -253,6 +261,22 @@ public final class HologramStockNativeClientRegression {
             (reply, inbound) -> HologramClientStockNative.OWNER
                 .receive(reply, inbound, HologramClientStockNative.context(client), System.nanoTime()));
         try {
+            if (notificationsOnly) {
+                nativeState.observe(
+                    new HologramStockNativeWire.ServerObservation(
+                        236,
+                        0,
+                        64,
+                        0,
+                        HologramStockNativeWire.Stage.FORMED,
+                        nativeState.targetRevision(),
+                        ""));
+                displayed = displayed.withMetadata(nativeState.metadata());
+                field(HologramUiSession.class, "state").set(ui.session, displayed);
+                HologramControllerNotificationsRegression
+                    .exercise(unsafe, client, world, screen, connection, other, displayed, recorded.sent);
+                return;
+            }
             verifyNativeRecoveryRouting(ui, screen, displayed, recorded, connection);
             SimpleAssert.that(
                 ui.preview.activateControl(26) && ui.review.localFrame() != null
@@ -286,8 +310,8 @@ public final class HologramStockNativeClientRegression {
                 "reopen the official pane after the pending request clears");
             clickExistingSubmit(ui);
             SimpleAssert.that(
-                recorded.sent.size() == 1 && command(recorded.sent.get(0)) == Command.PROBE,
-                "actual existing material button emits exactly one cold proof request and no eager BEGIN");
+                recorded.sent.size() == 1 && command(recorded.sent.get(0)) == Command.BEGIN,
+                "actual existing material button emits exactly one confirmed BEGIN");
             var projectionConfig = recorded.sent.get(0)
                 .getCompoundTag("projectionConfiguration");
             SimpleAssert.eq(
@@ -316,14 +340,19 @@ public final class HologramStockNativeClientRegression {
                         .getIntArray("projectionHatches").length == 0,
                 "UI admission and source settings stay outside preset configuration; no automatic hatches become explicit choices");
             SimpleAssert.that(
-                ui.review.localFrame() != null && ui.review.localFrame()
-                    .status()
-                    .equals(HologramUiText.projectorOr("stock.await_result", "正在等候本次施工结果。"))
+                client.currentScreen == screen && player.closedScreens == 0
+                    && ui.review.localFrame() != null
+                    && !ui.review.localFrame()
+                        .status()
+                        .isEmpty()
                     && screen.stockNativePending()
-                    && !ui.review.localSubmitAvailable(),
-                "the cold PROBE keeps its pane visible and blocks submission until the exact result");
+                    && !ui.review.localSubmitAvailable()
+                    && ui.review.localSubmitBlocker()
+                        .equals(HologramUiText.projectorOr("stock.await_result", "正在等候本次施工结果。")),
+                "BEGIN waits for server acceptance with its pane visible and duplicate submission blocked");
             clickExistingSubmit(ui, false);
-            SimpleAssert.eq(1, recorded.sent.size(), "a repeated actual footer click sends no duplicate cold PROBE");
+            SimpleAssert
+                .eq(1, recorded.sent.size(), "a repeated actual footer click sends no duplicate confirmed BEGIN");
             var hudOnly = new NBTTagCompound();
             hudOnly.setString("status", "fixture HUD update");
             field(HologramUiSession.class, "state").set(ui.session, displayed.withMetadata(hudOnly));
@@ -333,68 +362,48 @@ public final class HologramStockNativeClientRegression {
                 displayed.data.getLong("nativeTargetRevision"),
                 ui.session.state().data.getLong("nativeTargetRevision"),
                 "a HUD-only update preserves the frozen target revision");
-            Key cold = key(recorded.sent.get(0), 71);
-            var proof = new Reply(cold, Phase.CAPABLE, 0, "");
-            deliver(proof, other);
-            SimpleAssert.eq(1, recorded.sent.size(), "wrong inbound client handler cannot unlock the captured click");
+            Key first = key(recorded.sent.get(0));
+            deliver(new Reply(first, Phase.ACCEPTED, 0, ""), other);
+            SimpleAssert.eq(0, player.closedScreens, "wrong inbound handler cannot accept the captured task");
             var generic = new NBTTagCompound();
             generic.setString(
                 "placementRequestId",
-                cold.request()
+                first.request()
                     .toString());
             generic.setBoolean("placementRequestAccepted", true);
             deliver(generic, connection);
-            SimpleAssert.that(
-                recorded.sent.size() == 1,
-                "old generic placement/material reply does not authorize the new native attempt");
-            deliver(proof, connection);
-            deliver(proof, connection);
-            SimpleAssert.that(
-                recorded.sent.size() == 2 && command(recorded.sent.get(1)) == Command.BEGIN_AFTER_PROBE
-                    && key(recorded.sent.get(1), 71).equals(cold),
-                "one matching nonce emits one unchanged cold BEGIN; no duplicate");
-            deliver(new Reply(cold, Phase.REFUSED, 0, "Fixture terminal"), connection);
+            SimpleAssert.eq(1, recorded.sent.size(), "old generic replies never issue another command");
+            deliver(new Reply(first, Phase.REFUSED, 0, "Fixture terminal"), connection);
             SimpleAssert.that(
                 ui.review.localFrame()
                     .status()
                     .equals("Fixture terminal") && ui.review.localSubmitAvailable(),
-                "a refusal arriving over the real reply codec is visible in the exact material dialog and can be retried");
-            SimpleAssert.that(ui.preview.activateControl(26) && recorded.sent.size() == 2, "reopening remains local");
+                "exact refusal unlocks the material dialog");
+            SimpleAssert.that(ui.preview.activateControl(26), "reopening remains local");
             clickExistingSubmit(ui);
             SimpleAssert.that(
-                recorded.sent.size() == 3 && command(recorded.sent.get(2)) == Command.PROBE,
-                "CAPABLE plus a rejected cold submission does not pre-arm the next deliberate click");
-            Key accepted = key(recorded.sent.get(2), 71);
-            deliver(new Reply(accepted, Phase.CAPABLE, 0, ""), connection);
-            SimpleAssert.that(
-                recorded.sent.size() == 4 && command(recorded.sent.get(3)) == Command.BEGIN_AFTER_PROBE,
-                "second deliberate click is independently confirmed once");
-            client.currentScreen = new GuiScreen() {}; // Inventory/NEI may replace confirmation while BEGIN is in
-                                                       // flight.
+                recorded.sent.size() == 2 && command(recorded.sent.get(1)) == Command.BEGIN,
+                "each deliberate click submits one direct BEGIN");
+            Key accepted = key(recorded.sent.get(1));
+            client.currentScreen = new GuiScreen() {};
             deliver(new Reply(accepted, Phase.ACCEPTED, 0, ""), connection);
             SimpleAssert.that(
                 client.currentScreen == null && player.closedScreens == 1 && screen.stockNativePending(),
-                "authoritative startup closes even a replacement GUI, while retaining the exact live task");
+                "server acceptance closes the replacement GUI and keeps the live task");
             HologramClientStockNative.OWNER.close(screen, HologramClientStockNative.context(client));
             deliver(new Reply(accepted, Phase.STOPPED, 0, ""), connection);
-            client.currentScreen = screen; // The player explicitly reopens the same workspace after it stopped.
-
-            SimpleAssert
-                .that(ui.preview.activateControl(26) && recorded.sent.size() == 4, "warm reopening remains local");
+            client.currentScreen = screen;
+            SimpleAssert.that(ui.preview.activateControl(26), "stopped workspace can be explicitly reopened");
             clickExistingSubmit(ui);
             SimpleAssert.that(
-                recorded.sent.size() == 5 && command(recorded.sent.get(4)) == Command.BEGIN
-                    && recorded.sent.get(4)
-                        .getLong("nativeStockGeneration") == 71,
-                "authoritatively admitted cold action warms the exact live owner, then one direct BEGIN");
+                recorded.sent.size() == 3 && command(recorded.sent.get(2)) == Command.BEGIN,
+                "no generation or proof is needed for the next explicit request");
             HologramClientStockNative.OWNER.tick(screen, HologramClientStockNative.context(client), Long.MAX_VALUE);
             HologramClientStockNative.OWNER.tick(screen, HologramClientStockNative.context(client), Long.MAX_VALUE);
             HologramClientStockNative.OWNER.close(screen, HologramClientStockNative.context(client));
             SimpleAssert.that(
-                recorded.sent.size() == 6 && command(recorded.sent.get(5)) == Command.STOP
-                    && ui.session.notice()
-                        .contains("未确认停工"),
-                "uncertain actual BEGIN issues at most one exact STOP, no retry");
+                recorded.sent.size() == 4 && command(recorded.sent.get(3)) == Command.STOP,
+                "uncertain BEGIN issues at most one exact STOP and never retries BEGIN");
         } finally {
             HologramClientStockNative.OWNER.close(screen, HologramClientStockNative.context(client));
             HologramClientStockNative.OWNER.tick(null, null, System.nanoTime());
@@ -402,9 +411,8 @@ public final class HologramStockNativeClientRegression {
             networkChannel.set(null, previousChannel);
             ui.review.closeLocalMaterials();
         }
-        staleProofFlow();
-        lostAndUnsentFlow();
-        detachedPlacementFlow();
+        directLifecycleFlow();
+        acceptedConstructionClosesOnceAndStillCancels();
     }
 
     private static void verifyNativeRecoveryRouting(HologramUiModules ui, HologramScreen screen,
@@ -416,15 +424,7 @@ public final class HologramStockNativeClientRegression {
             var stage = action == HologramStockNativeWire.Operation.REPAIR ? HologramStockNativeWire.Stage.UNFORMED
                 : HologramStockNativeWire.Stage.FORMED;
             state.observe(
-                new HologramStockNativeWire.ServerObservation(
-                    236,
-                    0,
-                    64,
-                    0,
-                    stage,
-                    2 + action.ordinal(),
-                    state.targetRevision(),
-                    ""));
+                new HologramStockNativeWire.ServerObservation(236, 0, 64, 0, stage, state.targetRevision(), ""));
             SimpleAssert.that(state.select(action), "matching observed stage admits recovery test action");
             field(HologramUiSession.class, "state").set(ui.session, displayed.withMetadata(state.metadata()));
             SimpleAssert.that(
@@ -434,7 +434,7 @@ public final class HologramStockNativeClientRegression {
             SimpleAssert
                 .eq(1, ui.review.nativeRecoveryDestination(), "real recovery widget chooses AE before confirmation");
             clickExistingSubmit(ui);
-            SimpleAssert.eq(1, recorded.sent.size(), "one repair/replacement footer click sends one cold PROBE");
+            SimpleAssert.eq(1, recorded.sent.size(), "one repair/replacement footer click sends one confirmed BEGIN");
             var probe = recorded.sent.get(0);
             SimpleAssert.that(
                 probe.getInteger("projectionOperation") == action.ordinal() && probe.getInteger("destination") == 1
@@ -442,22 +442,20 @@ public final class HologramStockNativeClientRegression {
                 "real confirmation freezes AE recovery in projection and source mask bit 5 for " + action);
             SimpleAssert
                 .that(!ui.review.localRecoveryAvailable(), "pending confirmation locks the recovery destination");
-            Key key = key(probe, 71);
+            Key key = key(probe);
             deliver(new Reply(key, Phase.CAPABLE, 0, ""), connection);
             SimpleAssert.that(
-                recorded.sent.size() == 2 && command(recorded.sent.get(1)) == Command.BEGIN_AFTER_PROBE
-                    && recorded.sent.get(1)
-                        .getInteger("destination") == 1
-                    && recorded.sent.get(1)
-                        .getInteger("sources") == probe.getInteger("sources"),
-                "unchanged source snapshot admits the exact AE recovery intent after proof for " + action);
+                recorded.sent.size() == 1 && command(recorded.sent.get(0)) == Command.BEGIN,
+                "read-only observations cannot issue another construction command");
             deliver(new Reply(key, Phase.REFUSED, 0, "Fixture recovery terminal"), connection);
             SimpleAssert.that(
                 ui.review.localRecoveryAvailable() && !screen.stockNativePending(),
                 "terminal refusal releases the same recovery selector");
             clickExistingRecovery(ui);
             SimpleAssert
-                .eq(0, ui.review.nativeRecoveryDestination(), "real recovery widget restores inventory destination");
+                .eq(2, ui.review.nativeRecoveryDestination(), "recovery widget includes native backpack destination");
+            clickExistingRecovery(ui);
+            SimpleAssert.eq(0, ui.review.nativeRecoveryDestination(), "recovery widget restores inventory destination");
             ui.review.closeLocalMaterials();
             recorded.sent.clear();
         }
@@ -468,7 +466,6 @@ public final class HologramStockNativeClientRegression {
                 64,
                 0,
                 HologramStockNativeWire.Stage.CONTROLLER_ONLY,
-                1,
                 state.targetRevision(),
                 ""));
         field(HologramUiSession.class, "state").set(ui.session, displayed.withMetadata(state.metadata()));
@@ -493,23 +490,7 @@ public final class HologramStockNativeClientRegression {
 
     public static void acceptedConstructionClosesOnceAndStillCancels() {
         var sent = new ArrayList<Command>();
-        var flow = new HologramClientStockNative.Flow(new HologramClientStockNative.Wire() {
-
-            public boolean probe(Confirmation value) {
-                sent.add(Command.PROBE);
-                return true;
-            }
-
-            public boolean begin(Confirmation value, boolean cold) {
-                sent.add(Command.BEGIN_AFTER_PROBE);
-                return true;
-            }
-
-            public boolean stop(Key key) {
-                sent.add(Command.STOP);
-                return true;
-            }
-        });
+        var flow = flow(sent, true);
         Object handler = new Object();
         var context = new HologramClientStockNative.Context(handler, new Object(), new Object(), 0);
         boolean[] visible = { true };
@@ -529,252 +510,101 @@ public final class HologramStockNativeClientRegression {
         var confirmation = flowIntent(1);
         SimpleAssert.that(
             flow.submit(confirmation, context, owner, 0) && exits[0] == 0,
-            "clicking submit never closes before server acceptance");
-        var key = confirmation.forGeneration(32)
-            .key();
-        flow.receive(new Reply(key, Phase.CAPABLE, 0, ""), handler, context, 1);
-        SimpleAssert.eq(0, exits[0], "capability is not construction acceptance");
-        flow.receive(new Reply(key, Phase.ACCEPTED, 0, ""), handler, context, 2);
+            "submit is one BEGIN; GUI remains until authoritative acceptance");
+        flow.receive(new Reply(confirmation.key(), Phase.CAPABLE, 0, ""), handler, context, 1);
+        SimpleAssert.eq(0, exits[0], "read-only capability does not accept a construction");
+        flow.receive(new Reply(confirmation.key(), Phase.ACCEPTED, 0, ""), handler, context, 2);
         flow.close(owner.view(), context);
-        flow.receive(new Reply(key, Phase.ACCEPTED, 0, ""), handler, context, 3);
-        flow.receive(new Reply(key, Phase.ACTIVE, 1, ""), handler, context, 4);
-        SimpleAssert.that(
-            exits[0] == 1 && flow.pendingHere(context),
-            "authoritative acceptance exits once while construction ownership remains alive");
-        SimpleAssert.that(
-            flow.cancelHere(context, 5) && sent.get(sent.size() - 1) == Command.STOP,
-            "detached construction still sends its exact stop command");
-        flow.receive(new Reply(key, Phase.STOPPED, 1, "Cancelled"), handler, context, 6);
+        flow.receive(new Reply(confirmation.key(), Phase.ACCEPTED, 0, ""), handler, context, 3);
+        flow.receive(new Reply(confirmation.key(), Phase.ACTIVE, 1, ""), handler, context, 4);
+        SimpleAssert
+            .that(exits[0] == 1 && flow.pendingHere(context), "acceptance exits exactly once and retains ownership");
+        SimpleAssert.that(flow.cancelHere(context, 5), "detached construction can be cancelled");
+        flow.receive(new Reply(confirmation.key(), Phase.STOPPED, 1, "Cancelled"), handler, context, 6);
+        flow.receive(new Reply(confirmation.key(), Phase.STOPPED, 1, "Cancelled"), handler, context, 7);
         SimpleAssert.that(
             !flow.pendingHere(context) && receipts.size() == 1 && exits[0] == 1,
-            "stopped receipt retires the same task without reopening or reclosing a GUI");
-        int[] coldBegins = { 0 };
-        var preparing = new HologramClientStockNative.Flow(new HologramClientStockNative.Wire() {
+            "one terminal callback retires the job without reopening the GUI");
+        SimpleAssert.eq(
+            java.util.Arrays.asList(Command.BEGIN, Command.STOP),
+            sent,
+            "one explicit BEGIN and one exact STOP; no cold handshake");
+    }
 
-            public boolean probe(Confirmation value) {
-                return true;
-            }
+    private static HologramClientStockNative.Flow flow(List<Command> sent, boolean sends) {
+        return new HologramClientStockNative.Flow(new HologramClientStockNative.Wire() {
 
-            public boolean begin(Confirmation value, boolean cold) {
-                coldBegins[0]++;
-                return true;
+            public boolean begin(Confirmation value) {
+                sent.add(Command.BEGIN);
+                return sends;
             }
 
             public boolean stop(Key key) {
-                throw new AssertionError("Unstarted work has no server stop key");
+                sent.add(Command.STOP);
+                return true;
             }
         });
-        var coldOwner = new HologramClientStockNative.Owner(new Object(), () -> true, () -> true, text -> {}, () -> {});
-        var waiting = flowIntent(9);
-        SimpleAssert.that(preparing.submit(waiting, context, coldOwner, 0), "cold confirmation is pending capability");
-        preparing.cancelCurrent(); // Same entry as the actual footer Cancel button, before any BEGIN.
-        preparing.receive(
+    }
+
+    private static void directLifecycleFlow() {
+        Object handler = new Object();
+        var context = new HologramClientStockNative.Context(handler, new Object(), new Object(), 0);
+        var commands = new ArrayList<Command>();
+        var flow = flow(commands, true);
+        var terminals = new ArrayList<Reply>();
+        var owner = new HologramClientStockNative.Owner(
+            new Object(),
+            () -> true,
+            () -> false,
+            text -> {},
+            terminals::add);
+        var confirmation = flowIntent(2);
+        SimpleAssert.that(flow.submit(confirmation, context, owner, 0), "explicit request is submitted directly");
+        SimpleAssert.that(
+            !flow.submit(flowIntent(3), context, owner, 1),
+            "same client owner cannot start a concurrent request");
+        flow.close(owner.view(), context);
+        flow.receive(new Reply(confirmation.key(), Phase.COMPLETE, 1, ""), new Object(), context, 2);
+        SimpleAssert.that(flow.pendingHere(context), "wrong connection cannot finish detached work");
+        flow.receive(
             new Reply(
-                waiting.forGeneration(32)
-                    .key(),
-                Phase.CAPABLE,
-                0,
+                new Key(
+                    UUID.randomUUID(),
+                    confirmation.key()
+                        .sequence()),
+                Phase.COMPLETE,
+                1,
                 ""),
             handler,
             context,
-            1);
-        SimpleAssert.that(
-            !preparing.pendingHere(context) && coldBegins[0] == 0,
-            "cancelling preparation prevents a late capability reply from starting construction");
-
-    }
-
-    private static void detachedPlacementFlow() {
-        var sent = new ArrayList<Command>();
-        var flow = new HologramClientStockNative.Flow(new HologramClientStockNative.Wire() {
-
-            @Override
-            public boolean probe(Confirmation value) {
-                sent.add(Command.PROBE);
-                return true;
-            }
-
-            @Override
-            public boolean begin(Confirmation value, boolean cold) {
-                sent.add(cold ? Command.BEGIN_AFTER_PROBE : Command.BEGIN);
-                return true;
-            }
-
-            @Override
-            public boolean stop(Key key) {
-                sent.add(Command.STOP);
-                return true;
-            }
-        });
-        var handler = new Object();
-        var scope = new HologramClientStockNative.Context(handler, new Object(), new Object(), 0);
-        boolean[] open = { true };
-        var receipts = new ArrayList<Reply>();
-        var owner = new HologramClientStockNative.Owner(
-            new Object(),
-            () -> open[0],
-            () -> open[0],
-            notice -> { if (!open[0]) throw new AssertionError("Disposed screen received a UI notice"); },
-            receipts::add,
-            () -> true);
-        var first = flowIntent(1);
-        SimpleAssert.that(flow.submit(first, scope, owner, 0), "submit cold construction");
-        open[0] = false;
-        flow.close(owner.view(), scope);
-        SimpleAssert.that(flow.pendingHere(scope), "closing before capability does not cancel the frozen intent");
-        var key = first.forGeneration(32)
-            .key();
-        flow.receive(new Reply(key, Phase.CAPABLE, 0, ""), handler, scope, 1);
-        flow.close(owner.view(), scope);
-        flow.receive(new Reply(key, Phase.ACTIVE, 2, ""), handler, scope, 2);
-        SimpleAssert.that(
-            flow.worldStatus(scope, 2)
-                .contains("2"),
-            "detached construction exposes committed progress");
-        flow.receive(new Reply(key, Phase.COMPLETE, 6, ""), handler, scope, 3);
-        flow.receive(new Reply(key, Phase.COMPLETE, 6, ""), handler, scope, 3);
-        SimpleAssert.that(
-            receipts.size() == 1 && receipts.get(0)
-                .key()
-                .equals(key)
-                && receipts.get(0)
-                    .phase() == Phase.COMPLETE
-                && receipts.get(0)
-                    .placed() == 6,
-            "detached completion delivers one exact receipt for non-UI bookkeeping");
+            3);
+        SimpleAssert.that(flow.pendingHere(context), "another request UUID cannot finish detached work");
+        flow.receive(new Reply(confirmation.key(), Phase.COMPLETE, 1, ""), handler, context, 4);
         SimpleAssert
-            .eq(java.util.Arrays.asList(Command.PROBE, Command.BEGIN_AFTER_PROBE), sent, "close never sends STOP");
-        SimpleAssert.that(
-            !flow.pendingHere(scope) && flow.worldStatus(scope, 3)
-                .contains("6"),
-            "world HUD sees completion");
-        open[0] = true;
-        var second = flowIntent(2);
-        SimpleAssert.that(flow.submit(second, scope, owner, 4), "another user confirmation warms same context");
-        open[0] = false;
-        flow.close(owner.view(), scope);
+            .that(!flow.pendingHere(context) && terminals.size() == 1, "detached task receives its exact result");
         SimpleAssert
-            .that(flow.cancelHere(scope, 5) && !flow.cancelHere(scope, 6), "explicit cancellation sends one STOP");
-        SimpleAssert.eq(Command.STOP, sent.get(sent.size() - 1), "only explicit cancellation stops this submission");
-        flow.receive(
-            new Reply(
-                second.forGeneration(32)
-                    .key(),
-                Phase.STOPPED,
-                0,
-                ""),
-            handler,
-            scope,
-            7);
-    }
-
-    private static void staleProofFlow() {
-        var sent = new ArrayList<Command>();
-        var flow = new HologramClientStockNative.Flow(new HologramClientStockNative.Wire() {
-
-            @Override
-            public boolean probe(Confirmation value) {
-                sent.add(Command.PROBE);
-                return true;
-            }
-
-            @Override
-            public boolean begin(Confirmation value, boolean cold) {
-                sent.add(cold ? Command.BEGIN_AFTER_PROBE : Command.BEGIN);
-                return true;
-            }
-
-            @Override
-            public boolean stop(Key key) {
-                sent.add(Command.STOP);
-                return true;
-            }
-        });
-        var sender = new Object();
-        var scope = new HologramClientStockNative.Context(sender, new Object(), new Object(), 0);
-        var exact = flowIntent(1);
-        var nonce = exact.key();
-        boolean[] current = { true };
-        var owner = new HologramClientStockNative.Owner(
-            new Object(),
-            () -> current[0],
-            () -> true,
-            text -> {},
-            () -> {});
-        SimpleAssert.that(flow.submit(exact, scope, owner, 0), "genuine first local action starts cold proof");
-        current[0] = false;
-        flow.receive(
-            new Reply(
-                exact.forGeneration(42)
-                    .key(),
-                Phase.CAPABLE,
-                0,
-                ""),
-            sender,
-            scope,
-            1);
-        flow.tick(owner.view(), scope, Long.MAX_VALUE);
+            .that(flow.submit(flowIntent(4), context, owner, 5), "new explicit request after terminal is allowed");
+        flow.tick(owner.view(), context, Long.MAX_VALUE);
+        flow.tick(owner.view(), context, Long.MAX_VALUE);
         SimpleAssert.eq(
-            java.util.Collections.singletonList(Command.PROBE),
-            sent,
-            "lost original panel/selection/tool proof never sends BEGIN or STOP, and never auto-retries");
-    }
-
-    private static void lostAndUnsentFlow() {
-        var sent = new ArrayList<Command>();
-        var flow = new HologramClientStockNative.Flow(new HologramClientStockNative.Wire() {
-
-            @Override
-            public boolean probe(Confirmation value) {
-                sent.add(Command.PROBE);
-                return true;
-            }
-
-            @Override
-            public boolean begin(Confirmation value, boolean cold) {
-                sent.add(cold ? Command.BEGIN_AFTER_PROBE : Command.BEGIN);
-                return false; // Proven pre-send transport failure; never arm the current scope.
-            }
-
-            @Override
-            public boolean stop(Key key) {
-                throw new AssertionError("A lost/unsent cold proof never issues STOP");
-            }
-        });
-        var sender = new Object();
-        var scope = new HologramClientStockNative.Context(sender, new Object(), new Object(), 0);
-        var owner = new HologramClientStockNative.Owner(new Object(), () -> true, () -> true, text -> {}, () -> {});
-        var first = flowIntent(1);
-        var second = flowIntent(2);
-        var third = flowIntent(3);
-        SimpleAssert.that(flow.submit(first, scope, owner, 0), "true click submits one cold probe");
-        flow.tick(owner.view(), scope, HologramClientStockNative.FIRST_PROOF_NANOS + 1);
-        SimpleAssert.eq(java.util.Collections.singletonList(Command.PROBE), sent, "lost proof never auto-retries");
-        SimpleAssert.that(
-            flow.submit(second, scope, owner, HologramClientStockNative.FIRST_PROOF_NANOS + 2),
-            "new explicit click is still cold");
-        flow.receive(
-            new Reply(
-                second.forGeneration(42)
-                    .key(),
-                Phase.CAPABLE,
-                0,
-                ""),
-            sender,
-            scope,
-            HologramClientStockNative.FIRST_PROOF_NANOS + 3);
-        SimpleAssert.that(
-            flow.submit(third, scope, owner, HologramClientStockNative.FIRST_PROOF_NANOS + 4),
-            "an unsent cold construction has not warmed this generation");
+            java.util.Arrays.asList(Command.BEGIN, Command.BEGIN, Command.STOP),
+            commands,
+            "lost terminal sends one STOP without retrying construction");
+        var changed = new HologramClientStockNative.Context(new Object(), context.world(), context.player(), 0);
+        SimpleAssert.that(!flow.pendingHere(changed), "connection change retires local ownership");
+        var unsentCommands = new ArrayList<Command>();
+        var unsent = flow(unsentCommands, false);
+        SimpleAssert.that(!unsent.submit(flowIntent(5), context, owner, 0), "proven pre-send failure is not admitted");
+        unsent.tick(owner.view(), context, Long.MAX_VALUE);
         SimpleAssert.eq(
-            java.util.Arrays.asList(Command.PROBE, Command.PROBE, Command.BEGIN_AFTER_PROBE, Command.PROBE),
-            sent,
-            "no placement, retry, stop or warm BEGIN from a lost or locally unsent first action");
+            java.util.Collections.singletonList(Command.BEGIN),
+            unsentCommands,
+            "unsent requests never issue STOP or automatic retries");
     }
 
     private static Confirmation flowIntent(long sequence) {
         return Confirmation.projection(
-            new Key(UUID.randomUUID(), sequence, 0),
+            new Key(UUID.randomUUID(), sequence),
             0,
             UUID.randomUUID(),
             0,
@@ -858,11 +688,8 @@ public final class HologramStockNativeClientRegression {
         }
     }
 
-    private static Key key(NBTTagCompound wire, long generation) {
-        return new Key(
-            UUID.fromString(wire.getString("nativeStockRequest")),
-            wire.getLong("nativeStockIntent"),
-            generation);
+    private static Key key(NBTTagCompound wire) {
+        return new Key(UUID.fromString(wire.getString("nativeStockRequest")), wire.getLong("nativeStockIntent"));
     }
 
     private static Command command(NBTTagCompound wire) {

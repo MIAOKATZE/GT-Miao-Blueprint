@@ -271,12 +271,12 @@ public final class HologramDemolitionInputRegression {
             SimpleAssert.eq(0, destination.getIntValue(), "a new demolition session defaults to inventory");
             ModularPanel cancelled = destinationPanel(local, chosen, destination, submit, cancellations);
             SimpleAssert.eq(
-                4L,
+                5L,
                 cancelled.getChildren()
                     .stream()
                     .filter(ButtonWidget.class::isInstance)
                     .count(),
-                "confirmation offers inventory, AE, cancel and confirm without a feet destination");
+                "confirmation offers inventory, AE, backpack, cancel and confirm without a feet destination");
             press(cancelled, "demolition_destination_ae", 0);
             SimpleAssert.eq(1, destination.getIntValue(), "the actual AE button changes only the local draft");
             SimpleAssert.that(recorder.messages.isEmpty(), "choosing AE cannot submit demolition");
@@ -287,11 +287,15 @@ public final class HologramDemolitionInputRegression {
                 "cancel sends no request and preserves the editable selection");
             SimpleAssert.eq(0, get(local, "demolitionDestination"), "cancel does not commit a destination preference");
 
-            for (int target = 0; target < 2; target++) {
+            for (int target = 0; target < 3; target++) {
                 set(local, "selection", chosen);
                 destination = new IntValue((Integer) get(local, "demolitionDestination"));
                 ModularPanel panel = destinationPanel(local, chosen, destination, submit, cancellations);
-                String choice = target == 0 ? "demolition_destination_inventory" : "demolition_destination_ae";
+                String choice = switch (target) {
+                    case 1 -> "demolition_destination_ae";
+                    case 2 -> "demolition_destination_backpack";
+                    default -> "demolition_destination_inventory";
+                };
                 press(panel, choice, 1);
                 press(panel, choice, 0);
                 press(panel, "cut_confirm", 1);

@@ -17,20 +17,19 @@ import com.github.bsideup.jabel.Desugar;
 /** Authenticated native-projector intent only. The server rebuilds the complete target independently. */
 public final class HologramStockNativeWire {
 
-    public static final int VERSION = 5;
+    public static final int VERSION = 6;
     private static final String VERSION_KEY = "nativeStockVersion", REQUEST = "nativeStockRequest",
-        INTENT = "nativeStockIntent", GENERATION = "nativeStockGeneration", COMMAND = "nativeStockCommand";
+        INTENT = "nativeStockIntent", COMMAND = "nativeStockCommand";
 
     public enum Command {
 
         BEGIN,
         STOP,
         STATUS,
-        PROBE,
-        BEGIN_AFTER_PROBE;
+        PROBE;
 
         boolean begins() {
-            return this == BEGIN || this == BEGIN_AFTER_PROBE;
+            return this == BEGIN;
         }
     }
 
@@ -50,8 +49,8 @@ public final class HologramStockNativeWire {
     }
 
     @Desugar
-    public record ServerObservation(int controller, int x, int y, int z, Stage stage, long observedRevision,
-        long targetRevision, String reason) {}
+    public record ServerObservation(int controller, int x, int y, int z, Stage stage, long targetRevision,
+        String reason) {}
 
     @Desugar
     public record HatchChoice(int dx, int dy, int dz, int id, int facing) {}
@@ -148,27 +147,19 @@ public final class HologramStockNativeWire {
         REFUSED,
         RECOVERY_PENDING,
         UNKNOWN,
-        CAPABLE,
-        NEEDS_PROOF
+        CAPABLE
     }
 
     @Desugar
-    public record Key(UUID request, long sequence, long generation) {
+    public record Key(UUID request, long sequence) {
 
         public boolean valid() {
-            return validNonce() && generation > 0;
-        }
-
-        boolean validNonce() {
             return request != null && (request.getMostSignificantBits() != 0 || request.getLeastSignificantBits() != 0)
                 && sequence > 0;
         }
 
-        HologramConstructionTaskGate.Request gateRequest() {
-            return new HologramConstructionTaskGate.Request(
-                request,
-                sequence,
-                HologramConstructionTaskGate.Kind.INCREMENTAL_NATIVE);
+        boolean validNonce() {
+            return valid();
         }
     }
 
@@ -199,24 +190,6 @@ public final class HologramStockNativeWire {
             return (sources >>> 3) & 3;
         }
 
-        public Confirmation forGeneration(long generation) {
-            return new Confirmation(
-                new Key(key.request(), key.sequence(), generation),
-                dimension,
-                tool,
-                x,
-                y,
-                z,
-                side,
-                slot,
-                facing,
-                main,
-                mainExplicit,
-                noHatches,
-                sources,
-                projection);
-        }
-
         public Confirmation withSources(int selected) {
             return new Confirmation(
                 key,
@@ -237,8 +210,7 @@ public final class HologramStockNativeWire {
 
         HologramStockNativeEntry.Intent intent() {
             return new HologramStockNativeEntry.Intent(
-                key.gateRequest(),
-                key.generation(),
+                key,
                 x,
                 y,
                 z,
@@ -254,11 +226,9 @@ public final class HologramStockNativeWire {
 
         boolean valid(boolean probe) {
             return key != null && key.validNonce()
-                && (probe ? key.generation() == 0 : key.generation() > 0)
                 && tool != null
                 && (tool.getMostSignificantBits() != 0 || tool.getLeastSignificantBits() != 0)
-                && (probe ? forGeneration(1) : this).intent()
-                    .valid()
+                && intent().valid()
                 && (probe || projection.operation() == Operation.DEMOLISH
                     || !projection.nativeTargetDigest()
                         .isEmpty());
@@ -284,10 +254,6 @@ public final class HologramStockNativeWire {
 
     public static NBTTagCompound confirm(Confirmation value) {
         return preparedAction(value, Command.BEGIN);
-    }
-
-    public static NBTTagCompound confirmAfterProbe(Confirmation value) {
-        return preparedAction(value, Command.BEGIN_AFTER_PROBE);
     }
 
     public static NBTTagCompound probe(Confirmation value) {
@@ -373,13 +339,13 @@ public final class HologramStockNativeWire {
         var key = readIdentity(tag, command == Command.PROBE);
         if (key == null) return null;
         if (command == Command.STOP || command == Command.STATUS) return tag.func_150296_c()
-            .size() == 6 ? new Request(command, key, null) : null;
+            .size() == 5 ? new Request(command, key, null) : null;
         return readProjectionRequest(tag, command, key);
     }
 
     private static Request readProjectionRequest(NBTTagCompound tag, Command command, Key key) {
         if (tag.func_150296_c()
-            .size() != 27 || !tag.hasKey("projectionConfiguration", 10)
+            .size() != 26 || !tag.hasKey("projectionConfiguration", 10)
             || !tag.hasKey("tool", 8)
             || !tag.hasKey("nativeTargetDigest", 8)
             || !exactBoolean(tag, "mainExplicit")
@@ -444,7 +410,6 @@ public final class HologramStockNativeWire {
             data.setInteger("y", observed.y);
             data.setInteger("z", observed.z);
             data.setInteger("stage", observed.stage.ordinal());
-            data.setLong("observedRevision", observed.observedRevision);
             data.setLong("targetRevision", observed.targetRevision);
             data.setString("reason", observed.reason);
             tag.setTag("projectionObservation", data);
@@ -454,7 +419,7 @@ public final class HologramStockNativeWire {
 
     static Reply readReply(NBTTagCompound tag) {
         if (tag.func_150296_c()
-            .size() != (tag.hasKey("projectionObservation", 10) ? 9 : 8) || !exactBoolean(tag, "serverRulesOnly")
+            .size() != (tag.hasKey("projectionObservation", 10) ? 8 : 7) || !exactBoolean(tag, "serverRulesOnly")
             || !tag.getBoolean("serverRulesOnly")
             || !tag.hasKey("nativeStockPhase", 1)
             || !tag.hasKey("placed", 3)
@@ -465,8 +430,7 @@ public final class HologramStockNativeWire {
         if (key == null || phase < 0 || phase >= Phase.values().length || reason.length() > 192) return null;
         Phase state = Phase.values()[phase];
         if (state == Phase.UNKNOWN ? placed != -1
-            : placed < 0 || placed > HologramBlueprintLimits.MAX_CELLS
-                || (state == Phase.CAPABLE || state == Phase.NEEDS_PROOF) && placed != 0)
+            : placed < 0 || placed > HologramBlueprintLimits.MAX_CELLS || (state == Phase.CAPABLE) && placed != 0)
             return null;
         ServerObservation observation = null;
         if (tag.hasKey("projectionObservation")) {
@@ -476,10 +440,8 @@ public final class HologramStockNativeWire {
                 if (!data.hasKey(field, 3)) return null;
             int stage = data.getInteger("stage");
             if (data.func_150296_c()
-                .size() != 8 || stage < 0
+                .size() != 7 || stage < 0
                 || stage >= Stage.values().length
-                || !data.hasKey("observedRevision", 4)
-                || data.getLong("observedRevision") <= 0
                 || !data.hasKey("targetRevision", 4)
                 || data.getLong("targetRevision") <= 0
                 || !data.hasKey("reason", 8)
@@ -492,7 +454,6 @@ public final class HologramStockNativeWire {
                 data.getInteger("y"),
                 data.getInteger("z"),
                 Stage.values()[stage],
-                data.getLong("observedRevision"),
                 data.getLong("targetRevision"),
                 data.getString("reason"));
         }
@@ -500,23 +461,20 @@ public final class HologramStockNativeWire {
     }
 
     private static NBTTagCompound identity(Key key, boolean probe) {
-        if (key == null || !key.validNonce() || (probe ? key.generation != 0 : key.generation <= 0))
-            throw new IllegalArgumentException("Invalid stock native request key");
+        if (key == null || !key.valid()) throw new IllegalArgumentException("Invalid stock native request key");
         var tag = new NBTTagCompound();
         tag.setInteger(VERSION_KEY, VERSION);
         tag.setString(REQUEST, key.request.toString());
         tag.setLong(INTENT, key.sequence);
-        tag.setLong(GENERATION, key.generation);
         return tag;
     }
 
     private static Key readIdentity(NBTTagCompound tag, boolean probe) {
         if (!tag.hasKey(VERSION_KEY, 3) || tag.getInteger(VERSION_KEY) != VERSION
             || !tag.hasKey(REQUEST, 8)
-            || !tag.hasKey(INTENT, 4)
-            || !tag.hasKey(GENERATION, 4)) return null;
-        var key = new Key(uuid(tag.getString(REQUEST)), tag.getLong(INTENT), tag.getLong(GENERATION));
-        return key.validNonce() && (probe ? key.generation == 0 : key.generation > 0) ? key : null;
+            || !tag.hasKey(INTENT, 4)) return null;
+        var key = new Key(uuid(tag.getString(REQUEST)), tag.getLong(INTENT));
+        return key.valid() ? key : null;
     }
 
     private static boolean exactBoolean(NBTTagCompound tag, String key) {
@@ -524,6 +482,12 @@ public final class HologramStockNativeWire {
     }
 
     private static UUID uuid(String text) {
-        return HologramNativeCompactStart.canonical(text) ? UUID.fromString(text) : null;
+        try {
+            return UUID.fromString(text)
+                .toString()
+                .equals(text) ? UUID.fromString(text) : null;
+        } catch (IllegalArgumentException invalid) {
+            return null;
+        }
     }
 }

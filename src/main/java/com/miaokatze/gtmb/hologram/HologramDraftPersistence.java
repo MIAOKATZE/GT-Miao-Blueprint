@@ -312,7 +312,7 @@ final class HologramDraftPersistence {
         s.materialSettings.containers = draft.getBoolean("materialContainers");
         s.materialSettings.me = draft.getBoolean("materialMe");
         s.materialSettings.priority = HologramValues.clamp(draft.getInteger("materialPriority"), 0, 2);
-        s.materialSettings.recoveryDestination = HologramValues.clamp(draft.getInteger("recoveryDestination"), 0, 1);
+        s.materialSettings.recoveryDestination = HologramValues.clamp(draft.getInteger("recoveryDestination"), 0, 2);
         NBTTagList edits = draft.getTagList("edits", 10);
         for (int i = 0; i < edits.tagCount(); i++) {
             NBTTagCompound entry = edits.getCompoundTagAt(i);

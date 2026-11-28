@@ -653,8 +653,11 @@ public final class HologramBlueprintResources {
                     && selectedPayload.getByte("GTSWN_NetworkSafetyEnabled") != 1))
             throw unsupported("GTSWN_NetworkSafetyEnabled", "原生 TileEntity 配置必须为布尔 byte");
         boolean craftingHatch = HologramGtCraftingResources.supports(selectedPayload);
-        selectedPayload = HologramGtCraftingResources.paymentPayload(selectedPayload);
+        boolean outputHatch = HologramGtMeShadow.hasOutputResources(selectedPayload);
+        // The native retained payload is checked before building detached, cost-only carrier views.
         HologramFullPreservation.assertUnchanged(original, selectedPayload);
+        selectedPayload = HologramGtCraftingResources.paymentPayload(selectedPayload);
+        selectedPayload = HologramGtMeShadow.paymentPayload(selectedPayload);
         HologramAeNativeResources.validateSelectedFinalPayload(selectedPayload);
         HologramEssentia.validateNonJarContents(selectedPayload);
         HologramNativeHubData.Fluid splitFluid = HologramNativeHubData.fluid(selectedPayload);
@@ -714,6 +717,10 @@ public final class HologramBlueprintResources {
                     0,
                     true,
                     false);
+                continue;
+            }
+            if (outputHatch && key.equals("gtmbMeOutputResourceCosts")) {
+                inspect(selectedPayload.getTag(key), "Inventory", key, key, result, inspection, 0, true, false);
                 continue;
             }
             inspect(selectedPayload.getTag(key), key, key, key, result, inspection, 0, false, false);

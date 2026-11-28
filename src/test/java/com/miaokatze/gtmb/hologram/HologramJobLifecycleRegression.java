@@ -28,9 +28,16 @@ public final class HologramJobLifecycleRegression {
 
     public static void run() {
         try {
-            lifecycle();
+            HologramNativeSavedWorldRegression.withOfflineRegistries(() -> {
+                try {
+                    lifecycle();
+                    closeDuringAdmission();
+                } catch (ReflectiveOperationException failure) {
+                    throw new AssertionError(failure);
+                }
+            });
             diagnosticLimits();
-        } catch (ReflectiveOperationException failure) {
+        } catch (Exception failure) {
             throw new AssertionError("Job lifecycle", failure);
         }
     }
@@ -39,8 +46,7 @@ public final class HologramJobLifecycleRegression {
         Field access = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
         access.setAccessible(true);
         sun.misc.Unsafe unsafe = (sun.misc.Unsafe) access.get(null);
-        HologramServiceEditRegression.ReadOnlyWorld world = (HologramServiceEditRegression.ReadOnlyWorld) unsafe
-            .allocateInstance(HologramServiceEditRegression.ReadOnlyWorld.class);
+        var world = HologramPlacementFixtureWorld.create(unsafe);
         Method factory = HologramLibraryServiceRegression.class.getDeclaredMethod(
             "player",
             sun.misc.Unsafe.class,
@@ -62,61 +68,139 @@ public final class HologramJobLifecycleRegression {
             s.virtualPlacement = s.virtualLocked = true;
             s.materialSettings.containers = s.materialSettings.me = false;
             s.capture = new HologramCapture(null, player.getHeldItem());
-            for (int i = 0; i < 3; i++) {
+            player.posY = 64;
+            player.capabilities.allowEdit = true;
+            player.inventory.mainInventory[1] = new ItemStack(Blocks.stone, 8);
+            for (int i = 0; i < 4; i++) {
                 HologramCapture.Cell cell = new HologramCapture.Cell(null, i, 64, 0);
-                cell.block = Blocks.air;
-                cell.anchor = true;
+                cell.block = Blocks.stone;
+                cell.userPosition = true;
+                cell.blueprintBlock = cell.blueprintItem = "minecraft:stone";
                 s.capture.cells.add(cell);
                 s.work.add(i);
+                s.planTargets.add(new ItemStack(Blocks.stone));
                 s.expectedBlocks.add(Blocks.air);
                 s.expectedMeta.add(0);
                 s.expectedTiles.add(null);
                 s.expectedFacings.add(-1);
             }
-            s.job = 1;
-            s.stopTick = true;
             s.libraryUiActive = true;
             s.planRevision = 11;
             s.uiSequence = 7;
             s.placementReviewNonce = 9;
             HologramWorkspace.activate(player.getUniqueID(), s);
-            Method tick = HologramWorkspaceScheduler.class.getDeclaredMethod("tickSession", HologramSession.class);
-            tick.setAccessible(true);
+            HologramPlacementJobs.begin(s, new NBTTagCompound());
+            var job = HologramConstructionJobs.find(player);
+            SimpleAssert.that(
+                job != null && job.session == s,
+                "actual reviewed source is admitted before changing the hotbar: " + s.status);
+            ItemStack originalTool = player.inventory.mainInventory[0];
+            ItemStack replacementTool = new ItemStack(Blocks.stone);
             player.inventory.currentItem = 1;
             SimpleAssert.that(!HologramSessionPolicy.valid(s), "changed hotbar cannot admit another command");
-            tick.invoke(null, s);
-            SimpleAssert.eq(1, s.cursor, "real scheduler executes admitted work after a hotbar selection change");
-            SimpleAssert.eq(1, s.job, "selected-slot change does not stop background construction");
-            player.posX = 160;
+            Field eventBus = net.minecraftforge.common.MinecraftForge.class.getDeclaredField("EVENT_BUS");
+            Object base = unsafe.staticFieldBase(eventBus);
+            long offset = unsafe.staticFieldOffset(eventBus);
+            var previousBus = net.minecraftforge.common.MinecraftForge.EVENT_BUS;
+            int[] placements = { 0 };
+            unsafe.putObjectVolatile(base, offset, new cpw.mods.fml.common.eventhandler.EventBus() {
+
+                @Override
+                public boolean post(cpw.mods.fml.common.eventhandler.Event event) {
+                    if (event instanceof net.minecraftforge.event.world.BlockEvent.PlaceEvent place
+                        && place.player == player) {
+                        placements[0]++;
+                        if (placements[0] == 2) {
+                            player.posX = 160;
+                            SimpleAssert.that(
+                                !HologramSessionPolicy.previewReach(player, s.x, s.y, s.z)
+                                    && HologramSessionPolicy.jobValid(s),
+                                "admitted saved work survives leaving positioning reach");
+                            SimpleAssert.eq(
+                                s,
+                                HologramProjectorWorkflow.uiSession(player),
+                                "opening UI retains the distant running job");
+                            SimpleAssert.eq(
+                                s.toolId,
+                                HologramSessionPolicy.trigger(s)
+                                    .getTagCompound()
+                                    .getString(HologramSessionKeys.TOOL_ID),
+                                "native permission trigger remains the original tool after switching hands");
+                        }
+                        if (placements[0] == 3) player.inventory.mainInventory[0] = replacementTool;
+                    }
+                    return false;
+                }
+            });
+            try {
+                world.arm();
+                HologramConstructionJobs.tick(Long.MAX_VALUE);
+            } finally {
+                unsafe.putObjectVolatile(base, offset, previousBus);
+            }
             SimpleAssert.that(
-                !HologramSessionPolicy.previewReach(player, s.x, s.y, s.z) && HologramSessionPolicy.jobValid(s),
-                "locked large blueprint job survives leaving the positioning reach");
-            SimpleAssert
-                .eq(s, HologramProjectorWorkflow.uiSession(player), "opening workspace preserves distant running job");
-            s.stopTick = true;
-            tick.invoke(null, s);
-            SimpleAssert.eq(2, s.cursor, "actual scheduler keeps working after player walks around a large blueprint");
-            SimpleAssert.that(s.libraryUiActive, "scheduler keeps the active job's UI capability owner");
-            SimpleAssert.eq(
-                s.toolId,
-                HologramSessionPolicy.trigger(s)
-                    .getTagCompound()
-                    .getString(HologramSessionKeys.TOOL_ID),
-                "permission/native trigger retains the original tool identity");
-            player.inventory.mainInventory[0] = new ItemStack(Blocks.stone);
-            tick.invoke(null, s);
-            SimpleAssert.eq(4, s.job, "replacement of the actual admitted tool stops the job");
-            SimpleAssert.eq(2, s.cursor, "stopping never executes a remaining cell");
+                job.end == HologramConstructionJobs.End.CANCELLED && s.job == 4
+                    && s.cursor == 3
+                    && s.completed == 2
+                    && placements[0] == 3,
+                "real common job keeps its committed prefix and stops on original-tool replacement: end=" + job.end
+                    + ", job="
+                    + s.job
+                    + ", cursor="
+                    + s.cursor
+                    + ", completed="
+                    + s.completed
+                    + ", callbacks="
+                    + placements[0]
+                    + ", blocked="
+                    + job.blocked
+                    + ", status="
+                    + s.status
+                    + ", reason="
+                    + job.reason
+                    + ", stock="
+                    + (player.inventory.mainInventory[1] == null ? 0 : player.inventory.mainInventory[1].stackSize)
+                    + ", world="
+                    + world.getBlock(0, 64, 0)
+                    + "/"
+                    + world.getBlock(1, 64, 0)
+                    + "/"
+                    + world.getBlock(2, 64, 0)
+                    + "/"
+                    + world.getBlock(3, 64, 0)
+                    + ", journal="
+                    + HologramConstructionJournal.pending(player)
+                    + ", scopeReason="
+                    + HologramConstructionJournal.owner(player)
+                        .getCompoundTag(HologramConstructionJournal.KEY)
+                        .getString("scopeUncertainReason")
+                    + ", snapshotFlags="
+                    + world.captureBlockSnapshots
+                    + "/"
+                    + world.restoringBlockSnapshots
+                    + ", writes="
+                    + world.writes());
+            SimpleAssert.that(
+                world.getBlock(0, 64, 0) == Blocks.stone && world.getBlock(1, 64, 0) == Blocks.stone
+                    && world.getBlock(2, 64, 0) == Blocks.air
+                    && world.getBlock(3, 64, 0) == Blocks.air
+                    && player.inventory.mainInventory[1].stackSize == 6,
+                "changing selected slot/walking permits two real writes; invalidating original tool refunds the candidate and never reaches the tail");
+            SimpleAssert.that(
+                !HologramConstructionJournal.pending(player),
+                "known candidate rollback settles its journal without undoing the committed prefix");
+            SimpleAssert.that(
+                player.inventory.mainInventory[0] == replacementTool,
+                "compensation leaves the replacement tool slot untouched");
             SimpleAssert.that(!HologramSnapshotPreparation.pending(s), "invalid context cannot wait on a full DTO");
-            NBTTagCompound envelope = WIRE.get(WIRE.size() - 1);
-            NBTTagCompound terminal = envelope.getCompoundTag("progress");
-            SimpleAssert.that(envelope.getBoolean("progressOnly"), "terminal uses the existing direct transport path");
-            SimpleAssert.eq(4, terminal.getInteger("job"), "stopped outcome reaches the actual transport receiver");
-            SimpleAssert.eq("stopped", terminal.getString("outcome"), "partial cursor is explicitly terminal");
-            SimpleAssert.eq(2L, terminal.getLong("done"), "terminal preserves attempted count");
-            SimpleAssert.eq(3L, terminal.getLong("total"), "terminal preserves original work total");
-            SimpleAssert.eq(7L, terminal.getLong("uiSequence"), "terminal preserves the admitted command sequence");
-            SimpleAssert.eq(11L, terminal.getLong("planRevision"), "terminal preserves its plan revision");
+            NBTTagCompound envelope = WIRE.get(WIRE.size() - 1), terminal = envelope.getCompoundTag("progress");
+            SimpleAssert.that(envelope.getBoolean("progressOnly"), "terminal uses the existing direct transport");
+            SimpleAssert.eq(4, terminal.getInteger("job"), "actual receiver sees the stopped job");
+            SimpleAssert.eq("stopped", terminal.getString("outcome"), "attempted prefix is explicitly terminal");
+            SimpleAssert.eq(3L, terminal.getLong("done"), "terminal preserves actual attempted candidates");
+            SimpleAssert.eq(4L, terminal.getLong("total"), "terminal preserves original work total");
+            SimpleAssert.eq(7L, terminal.getLong("uiSequence"), "terminal preserves admitted command sequence");
+            SimpleAssert.eq(11L, terminal.getLong("planRevision"), "terminal preserves admitted plan revision");
             HologramCommand command = new HologramCommand();
             SimpleAssert.eq(4, command.getRequiredPermissionLevel(), "all administrative subcommands require OP4");
             for (int permission : new int[] { 0, 3 }) {
@@ -165,12 +249,14 @@ public final class HologramJobLifecycleRegression {
             SimpleAssert
                 .eq(1, HologramWorkspace.restartRuntime("fixture runtime restarted"), "runtime reset retires session");
             SimpleAssert.eq(null, HologramWorkspace.find(player.getUniqueID()), "old session nonce cannot be reused");
-            SimpleAssert.that(s.cancelled && s.job == 4 && s.cursor == 2, "restart preserves committed job progress");
+            SimpleAssert.that(s.cancelled && s.job == 4 && s.cursor == 3, "restart preserves committed job progress");
             SimpleAssert.that(WIRE.size() > wireBeforeRestart, "restart publishes a terminal receipt");
             NBTTagCompound cancelled = WIRE.get(WIRE.size() - 1);
             SimpleAssert
                 .that(cancelled.getBoolean("cancelled"), "restart explicitly retires client editing/background work");
             SimpleAssert.eq(s.id, cancelled.getString("session"), "cancellation binds the retired session");
+            player.inventory.mainInventory[0] = originalTool;
+            player.inventory.currentItem = 0;
             HologramSession replacement = new HologramSession(player, 0, 64, 0, false, 2);
             HologramWorkspace.activate(player.getUniqueID(), replacement);
             SimpleAssert
@@ -181,6 +267,82 @@ public final class HologramJobLifecycleRegression {
             player.playerNetServerHandler.netManager.channel()
                 .close();
             WIRE.clear();
+        }
+    }
+
+    private static void closeDuringAdmission() throws ReflectiveOperationException {
+        Field singleton = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+        singleton.setAccessible(true);
+        var unsafe = (sun.misc.Unsafe) singleton.get(null);
+        for (int mode = 0; mode < 4; mode++) {
+            var world = HologramPlacementFixtureWorld.create(unsafe);
+            var player = HologramConstructionJobsRegression.closePlayer(unsafe, world, "CloseLifecycle" + mode);
+            player.inventory.mainInventory[1] = new ItemStack(Blocks.stone, 3);
+            var s = new HologramSession(player, 0, 64, 0, false, 1);
+            s.virtual = s.virtualPlacement = s.virtualLocked = true;
+            s.virtualPreset = new HologramPresets.Preset();
+            s.virtualPreset.schema = 2;
+            s.materialSettings.main = true;
+            s.materialSettings.containers = s.materialSettings.me = false;
+            s.capture = new HologramCapture(null, player.getHeldItem());
+            var cell = new HologramCapture.Cell(null, 1, 64, 0);
+            cell.block = Blocks.stone;
+            cell.userPosition = true;
+            cell.blueprintBlock = cell.blueprintItem = "minecraft:stone";
+            s.capture.cells.add(cell);
+            s.planTargets.add(new ItemStack(Blocks.stone));
+            s.work.add(0);
+            int change = mode;
+            final HologramConstructionJobs.Job[] admitted = { null };
+            player.failClose = mode == 1;
+            player.closeAction = () -> {
+                admitted[0] = HologramConstructionJobs.find(player);
+                SimpleAssert.that(
+                    admitted[0] != null && admitted[0].executing,
+                    "close follows registration and precedes executable work");
+                HologramConstructionJobs.tick(Long.MAX_VALUE);
+                SimpleAssert.that(
+                    world.writes()
+                        .isEmpty() && player.inventory.mainInventory[1].stackSize == 3,
+                    "native close cannot reenter placement or payment before acceptance completes");
+                if (change == 2) HologramConstructionJobs.cancel(player, admitted[0].request);
+                if (change == 3) player.inventory.mainInventory[0] = new ItemStack(Blocks.dirt);
+            };
+            try {
+                world.arm();
+                HologramPlacementJobs.begin(s, new NBTTagCompound());
+                SimpleAssert.eq(1, player.closes, "a connected admitted player receives one native close call");
+                if (mode == 0) {
+                    SimpleAssert.that(
+                        HologramConstructionJobs.find(player) == admitted[0] && s.job == 1,
+                        "a normal close retains the accepted runnable source");
+                    admitted[0].step(Long.MAX_VALUE);
+                    SimpleAssert.that(
+                        admitted[0].end == HologramConstructionJobs.End.COMPLETE
+                            && world.getBlock(1, 64, 0) == Blocks.stone
+                            && player.inventory.mainInventory[1].stackSize == 2,
+                        "world placement and one debit start only after the close boundary returns");
+                } else {
+                    SimpleAssert.that(
+                        admitted[0].terminal && !HologramConstructionJobs.active(player)
+                            && s.job == 4
+                            && admitted[0].end == (mode == 1 ? HologramConstructionJobs.End.FAILED
+                                : HologramConstructionJobs.End.CANCELLED)
+                            && world.writes()
+                                .isEmpty()
+                            && player.inventory.mainInventory[1].stackSize == 3
+                            && !HologramConstructionJournal.pending(player),
+                        "close failure, reentrant cancellation or tool replacement cannot be reset to RUNNING by the reviewed caller: "
+                            + mode
+                            + " / "
+                            + s.status);
+                }
+            } finally {
+                var active = HologramConstructionJobs.find(player);
+                if (active != null) HologramConstructionJobs.cancel(player, active.request);
+                player.playerNetServerHandler.netManager.channel()
+                    .close();
+            }
         }
     }
 

@@ -11,15 +11,7 @@ import net.minecraft.init.Blocks;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
-import com.gtnewhorizon.structurelib.structure.IStructureElementChain;
-import com.gtnewhorizon.structurelib.structure.StructureUtility;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
-
-import gregtech.api.util.GTStructureUtility;
-import gregtech.common.tileentities.machines.multi.MTEIndustrialChemicalBath;
-import gregtech.common.tileentities.machines.multi.MTEIndustrialRockBreaker;
-import gregtech.common.tileentities.machines.multi.MTEOreWashingPlant;
-import gregtech.common.tileentities.machines.multi.steam.MTESteamWasher;
 
 final class HologramNativeSourceWaterRegression {
 
@@ -27,43 +19,27 @@ final class HologramNativeSourceWaterRegression {
 
     static void run() {
         try {
-            nativeDeclaration();
-            placementAndMaterialQuote();
-            editableRoundTrip();
-        } catch (IOException failure) {
+            HologramNativeSavedWorldRegression.withOfflineRegistries(() -> {
+                nativeDeclaration();
+                placementAndMaterialQuote();
+                try {
+                    editableRoundTrip();
+                } catch (IOException failure) {
+                    throw new AssertionError("native generated water fixture", failure);
+                }
+            });
+        } catch (Exception failure) {
             throw new AssertionError("native generated water fixture", failure);
         }
     }
 
     private static void nativeDeclaration() {
+        // Optionality is now proved by native element.check in the detached projector, not factory identity.
         SimpleAssert.that(
-            HologramNativeSourceWater.reviewedController(MTEOreWashingPlant.class)
-                && HologramNativeSourceWater.reviewedController(MTEIndustrialChemicalBath.class),
-            "both exact audited machines have native source water generation");
-        SimpleAssert.that(
-            !HologramNativeSourceWater.reviewedController(MTESteamWasher.class)
-                && !HologramNativeSourceWater.reviewedController(MTEIndustrialRockBreaker.class),
-            "the same authored water/air declaration alone never proves automatic generation");
-        var water = GTStructureUtility.<Object>ofAnyWater(false);
-        var air = StructureUtility.<Object>isAir();
-        SimpleAssert.that(
-            HologramNativeSourceWater.reviewedSlot(StructureUtility.ofChain(water, air)),
-            "the actual StructureLib and GT5U source-only chain is recognized");
-        SimpleAssert.that(
-            !HologramNativeSourceWater
-                .reviewedSlot(StructureUtility.ofChain(GTStructureUtility.<Object>ofAnyWater(true), air)),
-            "allowFlowing does not prove a structural source");
-        SimpleAssert.that(
-            !HologramNativeSourceWater.reviewedSlot(StructureUtility.ofChain(air, water)),
-            "a reversed fallback chain does not prove the same structure");
-        SimpleAssert.that(
-            !HologramNativeSourceWater
-                .reviewedSlot(StructureUtility.ofChain(StructureUtility.<Object>ofBlock(Blocks.water, 0), air)),
-            "matching registry names do not prove origin");
-        IStructureElementChain<Object> unknown = () -> {
-            throw new AssertionError("unreviewed declaration callback must not run");
-        };
-        SimpleAssert.that(!HologramNativeSourceWater.reviewedSlot(unknown), "unknown declaration fails closed");
+            HologramNativeSourceWater.optionalWater(Blocks.water)
+                && HologramNativeSourceWater.optionalWater(Blocks.flowing_water)
+                && !HologramNativeSourceWater.optionalWater(Blocks.stone),
+            "the optional slot only excludes native-recognized water, never occupied casing");
         SimpleAssert.that(
             HologramNativeSourceWater.missingFromDetachedPreview(Blocks.air)
                 && !HologramNativeSourceWater.missingFromDetachedPreview(Blocks.stone)
@@ -109,13 +85,9 @@ final class HologramNativeSourceWaterRegression {
             Blocks.air,
             HologramControllerTarget.TargetKind.MACHINE_SOURCE_WATER);
         var retained = HologramLocalBlueprintStructure.declared(source, snapshot(target.tag(), null));
-        var cell = retained.values()
-            .iterator()
-            .next();
-        SimpleAssert.eq("minecraft:water", cell.block, "native declaration keeps the editable geometry");
         SimpleAssert.that(
-            cell.stack() == null && cell.belongsTo(source.id),
-            "editor geometry owns its native member without minting a water item");
+            retained.isEmpty(),
+            "native optional water is omitted before portable cells lose their typed source proof");
 
         byte[] incoming = ("{\"schema\":2,\"blueprint\":{\"schema\":2,\"id\":\"test\",\"name\":\"Water\",\"cells\":["
             + "{\"x\":2,\"y\":0,\"z\":0,\"block\":\"minecraft:water\",\"metadata\":0,\"nativeSourceWaterPreview\":true},"

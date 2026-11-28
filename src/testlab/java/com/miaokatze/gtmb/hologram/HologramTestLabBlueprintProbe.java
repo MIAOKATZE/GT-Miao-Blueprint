@@ -42,7 +42,7 @@ public final class HologramTestLabBlueprintProbe {
         result.setString(
             "transportScope",
             "Production snapshot outbox may queue DTOs; disconnected FakePlayer delivery is not tested");
-        result.setString("entry", "Projection/ResourcePlanner/reviewedBuild/PlacementJobs.tickJob/WorldTransactions");
+        result.setString("entry", "Projection/ResourcePlanner/reviewedBuild/ConstructionJobs/NativeConstruction");
         result.setString(
             "actor",
             actor.getUniqueID()
@@ -61,9 +61,11 @@ public final class HologramTestLabBlueprintProbe {
             missing.job == 0 && missing.planMissing > 0,
             "Missing materials must not start a job, including replay");
         require(
-            !HologramWorldTransactions.operate(missing, missing.capture.cells.get(0), 0),
+            !HologramTestLabConstructionDriver.write(missing, missing.capture.cells.get(0), 0),
             "The final per-cell transaction must independently reject missing materials");
-        require("missing".equals(missing.capture.cells.get(0).status), "Missing transaction must report missing");
+        require(
+            missing.status.startsWith("所选材料来源不足") && !HologramConstructionJournal.pending(actor),
+            "Native writer must identify missing material without retaining an uncertain payment");
         require(
             original.equals(worldState(world, x, y, z)) && noStock.equals(inventory(actor)),
             "Missing-material plan/request/final transaction changed world or inventory");
@@ -108,7 +110,7 @@ public final class HologramTestLabBlueprintProbe {
         // Two ordinary cells need at most two production slices. No tick, connection, ACK or job result is invented.
         while (paid.job == 1 && slices++ < 2) {
             requireOwned(world, actor, x, y, z);
-            HologramPlacementJobs.tickJob(paid);
+            HologramTestLabConstructionDriver.step(paid);
             require(paid.job != 1 || paid.cursor == 1, "Ordinary fixture deferred unexpectedly: " + paid.status);
         }
         require(

@@ -1285,14 +1285,14 @@ final class HologramUiConfiguration {
 
     int optionIndex(NBTTagCompound cap) {
         NBTTagList options = cap.getTagList("options", 10);
-        for (int i = 0; i < options.tagCount(); i++) {
-            NBTTagCompound option = options.getCompoundTagAt(i);
-            if (option.getBoolean("present") && option.getInteger("value") == cap.getInteger("current")) return i;
-        }
         if (!cap.getBoolean("explicit") && options.tagCount() > 0
             && !options.getCompoundTagAt(0)
                 .getBoolean("present"))
             return 0;
+        for (int i = 0; i < options.tagCount(); i++) {
+            NBTTagCompound option = options.getCompoundTagAt(i);
+            if (option.getBoolean("present") && option.getInteger("value") == cap.getInteger("current")) return i;
+        }
         return -1;
     }
 

@@ -247,9 +247,18 @@ final class HologramConstructionJournal {
         journal.setInteger("meta", meta);
         if (tile != null) journal.setTag("tile", tile.copy());
         if (untouchedSlot >= 0) journal.setInteger("untouchedProjectorSlot", untouchedSlot);
-        journal.setTag("beforeInventory", inventory(inventory, untouchedSlot));
+        if (inventory != null) journal.setTag("beforeInventory", inventory(inventory, untouchedSlot));
         journal.setString("phase", "reserved");
         owner(player).setTag(KEY, journal);
+        return journal;
+    }
+
+    /** Modern actions persist only material slots actually touched by their transaction. */
+    static NBTTagCompound beginAction(EntityPlayer player, int x, int y, int z, Block block, int meta,
+        NBTTagCompound tile, int untouchedSlot) {
+        NBTTagCompound journal = begin(player, x, y, z, block, meta, tile, null, untouchedSlot);
+        journal.setBoolean("sparseLocal", true);
+        journal.setTag("localSlots", new NBTTagList());
         return journal;
     }
 
@@ -406,7 +415,9 @@ final class HologramConstructionJournal {
             || !player.worldObj.blockExists(journal.getInteger("x"), journal.getInteger("y"), journal.getInteger("z")))
             throw new IllegalStateException("请进入凭据原维度并加载原区块");
         int untouchedSlot = untouchedSlot(journal);
-        if (!inventory(player.inventory.mainInventory, untouchedSlot).equals(journal.getTagList("heldInventory", 10)))
+        HologramMaterials.Transaction transaction = HologramMaterials.Transaction.resume(player, journal);
+        if (journal.getBoolean("sparseLocal") ? !transaction.localInventoryCurrent()
+            : !inventory(player.inventory.mainInventory, untouchedSlot).equals(journal.getTagList("heldInventory", 10)))
             throw new IllegalStateException("库存已变化；请恢复暂停时完整库存后再核定，禁止覆盖当前物品");
         Object block = Block.blockRegistry.getObject(journal.getString("block"));
         if (!(block instanceof Block)) throw new IllegalStateException("原方块注册已不存在，保留凭据");
@@ -418,18 +429,23 @@ final class HologramConstructionJournal {
             (Block) block,
             journal.getInteger("meta"),
             journal.hasKey("tile", 10) ? journal.getCompoundTag("tile") : null);
-        HologramMaterials.Transaction transaction = HologramMaterials.Transaction.resume(player, journal);
         journal.setTag(
             "settlementPayment",
             journal.getCompoundTag("payment")
                 .copy());
         journal.setBoolean("settlementStarted", true);
         persist(player, journal);
-        transaction.rollbackExternal();
-        ItemStack[] before = inventory(journal.getTagList("beforeInventory", 10));
-        if (before.length != player.inventory.mainInventory.length) throw new IllegalStateException("库存长度不匹配");
-        for (int i = 0; i < before.length; i++) if (i != untouchedSlot) player.inventory.mainInventory[i] = before[i];
-        transaction.afterInventoryRestore();
+        if (journal.getBoolean("sparseLocal")) {
+            journal.setString("resolution", "rollback-confirmed-world-and-payment");
+            transaction.rollbackAction();
+        } else {
+            transaction.rollbackExternal();
+            ItemStack[] before = inventory(journal.getTagList("beforeInventory", 10));
+            if (before.length != player.inventory.mainInventory.length) throw new IllegalStateException("库存长度不匹配");
+            for (int i = 0; i < before.length; i++)
+                if (i != untouchedSlot) player.inventory.mainInventory[i] = before[i];
+            transaction.afterInventoryRestore();
+        }
         player.inventory.markDirty();
         journal.setString("resolution", "rollback-confirmed-world-and-payment");
         clear(player);

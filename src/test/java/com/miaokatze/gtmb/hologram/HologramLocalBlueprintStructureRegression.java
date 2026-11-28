@@ -122,22 +122,6 @@ final class HologramLocalBlueprintStructureRegression {
         configure.setString("structureId", "native");
         configure.setInteger("main", 2);
         configure.setTag("channels", channels);
-        if (creativeOnly) {
-            byte[] before = document.artifact();
-            try {
-                apply(document, "configure", configure);
-                throw new AssertionError("creative-only footprint cannot authorize a legacy group replacement");
-            } catch (IOException expected) {
-                SimpleAssert.that(
-                    expected.getCause() instanceof IOException cause && cause.getMessage()
-                        .contains("未能核实原蓝图的结构归属"),
-                    "creative-only rejection is an ownership-proof failure, not missing source or settings: "
-                        + expected);
-            }
-            SimpleAssert.eq(0L, document.revision(), "a refused legacy regeneration creates no undo revision");
-            SimpleAssert.that(Arrays.equals(before, document.artifact()), "the original legacy file is unchanged");
-            return;
-        }
         apply(document, "configure", configure);
         NBTTagCompound changed = document.snapshot();
         SimpleAssert.eq(
@@ -146,7 +130,11 @@ final class HologramLocalBlueprintStructureRegression {
                 .getInteger("span"),
             "saved named signal was changed");
         SimpleAssert.eq(2, capability(changed, "span").getInteger("current"), "effective signal was refreshed");
-        SimpleAssert.eq(1L, document.revision(), "native refresh is one undoable edit");
+        SimpleAssert.eq(
+            1L,
+            document.revision(),
+            creativeOnly ? "a fresh complete creative native target refreshes the owned source as one undoable edit"
+                : "native refresh is one undoable edit");
         SimpleAssert
             .eq("minecraft:sandstone", row(changed, 1).getString("wantId"), "default material follows the source");
         SimpleAssert.eq("keep this markup", row(changed, 2).getString("prompt"), "retired position keeps markup");

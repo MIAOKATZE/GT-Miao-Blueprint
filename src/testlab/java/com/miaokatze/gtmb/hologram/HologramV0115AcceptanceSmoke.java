@@ -176,9 +176,9 @@ public final class HologramV0115AcceptanceSmoke {
             boolean vetoHandled;
             MinecraftForge.EVENT_BUS.register(veto);
             try {
-                // operate reports that the cell was handled; a protected rollback may legitimately return true.
-                // Only the native event, final cell/world state and exact refund establish rejection of commit.
-                vetoHandled = HologramWorldTransactions.operate(session, first, 0);
+                // The production native writer returns no commit on veto. Check the real event, world rollback
+                // and exact refund independently instead of the retired editor-cell status convention.
+                vetoHandled = HologramTestLabConstructionDriver.write(session, first, 0);
             } finally {
                 MinecraftForge.EVENT_BUS.unregister(veto);
             }
@@ -201,13 +201,13 @@ public final class HologramV0115AcceptanceSmoke {
                 + session.status;
             System.out.println("[GTMB-V0115-ACCEPTANCE] native PlaceEvent veto" + vetoDiagnostic);
             require(
-                veto.count == 1 && "protected".equals(vetoCellStatus) && vetoWorldEmpty,
-                "real veto event and protected native world rollback" + vetoDiagnostic);
+                veto.count == 1 && !vetoHandled && vetoWorldEmpty,
+                "real veto event and native world rollback" + vetoDiagnostic);
             require(
                 !vetoVoucherConsumed && vetoInventoryEqual,
                 "voucher reservation and all inventory refunded" + vetoDiagnostic);
             require(
-                HologramWorldTransactions.operate(session, first, 0) && "placed".equals(first.status),
+                HologramTestLabConstructionDriver.write(session, first, 0) && "placed".equals(first.status),
                 "native multipart voucher retry " + first.status + " " + session.status);
             require(
                 session.jobVoucherConsumed && HologramDecorationVoucher.available(player) == 1,
@@ -215,14 +215,14 @@ public final class HologramV0115AcceptanceSmoke {
             HologramCapture.Cell second = cell(block, sample, captured, x + 1, y, z);
             append(session, second, sample);
             require(
-                HologramWorldTransactions.operate(session, second, 1) && "placed".equals(second.status),
+                HologramTestLabConstructionDriver.write(session, second, 1) && "placed".equals(second.status),
                 "second native multipart cell covered by same job");
             ItemStack stone = new ItemStack(Blocks.stone);
             HologramCapture.Cell ordinary = cell(Blocks.stone, stone, new NBTTagCompound(), x + 2, y, z);
             ordinary.tileNbt = "";
             append(session, ordinary, stone);
             require(
-                HologramWorldTransactions.operate(session, ordinary, 2) && "placed".equals(ordinary.status),
+                HologramTestLabConstructionDriver.write(session, ordinary, 2) && "placed".equals(ordinary.status),
                 "ordinary non-decoration cost still charged");
             require(
                 HologramDecorationVoucher.available(player) == 1 && player.inventory.mainInventory[2] == null,

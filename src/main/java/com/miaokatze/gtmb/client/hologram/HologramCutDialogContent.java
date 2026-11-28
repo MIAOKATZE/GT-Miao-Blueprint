@@ -73,12 +73,16 @@ final class HologramCutDialogContent {
                     .label(() -> text("confirmDemolitionDrops"), 14, 197, 278, 45, HologramEditorTheme.PAPER_NEXT)
                     .textAlign(Alignment.TopLeft)
                     .name("demolition_destination"));
-        for (int value = 0; value < 2; value++) {
+        for (int value = 0; value < 3; value++) {
             final int target = value;
-            String key = target == 0 ? "confirmDemolitionInventory" : "confirmDemolitionAe";
+            String key = switch (target) {
+                case 1 -> "confirmDemolitionAe";
+                case 2 -> "confirmDemolitionBackpack";
+                default -> "confirmDemolitionInventory";
+            };
             panel.child(
                 HologramMuiTheme
-                    .button(() -> text(key), 12 + target * 150, 167, 132, 22, () -> destination.setIntValue(target))
+                    .button(() -> text(key), 12 + target * 96, 167, 90, 22, () -> destination.setIntValue(target))
                     .background(HologramMuiTheme.row(() -> destination.getIntValue() == target, false))
                     .hoverBackground(HologramMuiTheme.row(() -> destination.getIntValue() == target, true))
                     .overlay(
@@ -87,7 +91,11 @@ final class HologramCutDialogContent {
                                 () -> destination.getIntValue() == target ? HologramMuiTheme.TITLE
                                     : HologramMuiTheme.TEXT)
                             .shadow(false))
-                    .name(target == 0 ? "demolition_destination_inventory" : "demolition_destination_ae"));
+                    .name(switch (target) {
+                    case 1 -> "demolition_destination_ae";
+                    case 2 -> "demolition_destination_backpack";
+                    default -> "demolition_destination_inventory";
+                    }));
         }
         confirmationActions(panel, false, 252, "confirmDemolitionAction", finish);
     }

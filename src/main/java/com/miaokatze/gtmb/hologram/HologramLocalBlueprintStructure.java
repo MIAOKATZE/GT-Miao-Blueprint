@@ -157,6 +157,7 @@ final class HologramLocalBlueprintStructure {
         for (int index = 0; index < rows.tagCount(); index++) {
             NBTTagCompound row = rows.getCompoundTagAt(index);
             String target = row.getString("wantId");
+            if (HologramNativeSourceWater.previewRow(row)) continue;
             if (row.getBoolean("anchor") || row.getBoolean("missingBlock")
                 || row.getBoolean("iconOnly")
                 || target.isEmpty()) continue;

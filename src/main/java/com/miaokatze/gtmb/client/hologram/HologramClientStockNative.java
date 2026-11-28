@@ -30,14 +30,11 @@ import gregtech.api.metatileentity.BaseMetaTileEntity;
 /** One existing local confirmation, one exact client owner. Preview/material browsing never touches this writer. */
 public final class HologramClientStockNative {
 
-    static final long FIRST_PROOF_NANOS = TimeUnit.SECONDS.toNanos(5);
     static final long RESULT_NANOS = TimeUnit.SECONDS.toNanos(35);
 
     interface Wire {
 
-        boolean probe(Confirmation value);
-
-        boolean begin(Confirmation value, boolean afterProbe);
+        boolean begin(Confirmation value);
 
         boolean stop(Key key);
     }
@@ -138,7 +135,7 @@ public final class HologramClientStockNative {
                     .operation());
         }
 
-        boolean beginSent, afterProbe, stopSent, uncertain, detached;
+        boolean beginSent, stopSent, uncertain, detached;
 
         boolean canStart() {
             return (detached ? owner.detachedBeforeStart : owner.exactBeforeStart).getAsBoolean();
@@ -156,8 +153,6 @@ public final class HologramClientStockNative {
 
         private final Wire wire;
         private Attempt active;
-        private Context known;
-        private long generation;
         private String terminalHud = "";
         private Context terminalContext;
         private long terminalAt;
@@ -176,53 +171,25 @@ public final class HologramClientStockNative {
                 owner.notice.accept(projectorOr("stock.request_stale", "当前确认已变化，未发送施工指令。"));
                 return false;
             }
-            var attempt = new Attempt(original, context, owner, now + FIRST_PROOF_NANOS);
+            var attempt = new Attempt(original, context, owner, now + RESULT_NANOS);
             active = attempt;
             terminalHud = "";
             HologramPlacementTiming.clientRequest(
                 "structure",
                 original.key()
                     .request());
-            if (context.same(known) && generation > 0) return begin(attempt, generation, false, now);
-            try {
-                HologramPlacementTiming.clientPhase(
-                    "structure",
-                    original.key()
-                        .request(),
-                    "probe");
-                if (wire.probe(original)) {
-                    HologramStockActionTrace.event("client.sent", original.key(), "PROBE");
-
-                    return true;
-                }
-            } catch (HologramStockNativeWire.InvalidConfirmation invalid) {
-                // PROBE itself never starts a task. Report local contract errors separately from a missing channel.
-                active = null;
-                com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG
-                    .warn("Stock construction probe rejected its input", invalid);
-                owner.notice.accept(projectorOr("stock.invalid_controller", "未提交施工：控制器参数未通过检查，请重新读取现场。"));
-                return false;
-            } catch (RuntimeException | LinkageError failed) {
-                active = null;
-                com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Stock construction probe transport failed", failed);
-                owner.notice.accept(projectorOr("stock.probe_error", "未提交施工：能力查询发送出错，详情见客户端日志。"));
-                return false;
-            }
-            active = null;
-            owner.notice.accept(projectorOr("stock.channel_not_ready", "未提交施工：服务器连接通道未就绪。"));
-            return false;
+            return begin(attempt, now);
         }
 
-        private boolean begin(Attempt attempt, long usableGeneration, boolean afterProbe, long now) {
+        private boolean begin(Attempt attempt, long now) {
             if (active != attempt || attempt.beginSent || !attempt.canStart()) {
                 if (active == attempt) discard(attempt);
                 if (attempt.owner.visible.getAsBoolean())
                     attempt.owner.notice.accept(projectorOr("stock.start_stale", "当前确认已变化，未开始施工。"));
                 return false;
             }
-            Confirmation issued = attempt.original.forGeneration(usableGeneration);
+            Confirmation issued = attempt.original;
             attempt.key = issued.key();
-            attempt.afterProbe = afterProbe;
             attempt.beginSent = true; // A thrown transport may already have handed the frame off; do not retry.
             attempt.deadline = now + RESULT_NANOS;
             try {
@@ -231,7 +198,7 @@ public final class HologramClientStockNative {
                     issued.key()
                         .request(),
                     "begin");
-                if (!wire.begin(issued, afterProbe)) {
+                if (!wire.begin(issued)) {
                     discard(attempt); // Production writer returns false only before any wire send.
                     if (attempt.owner.visible.getAsBoolean())
                         attempt.owner.notice.accept(projectorOr("stock.server_connection", "未提交施工：服务器连接不可用。"));
@@ -241,7 +208,7 @@ public final class HologramClientStockNative {
                 reportUnknown(attempt);
                 return true;
             }
-            HologramStockActionTrace.event("client.sent", issued.key(), afterProbe ? "BEGIN_AFTER_PROBE" : "BEGIN");
+            HologramStockActionTrace.event("client.sent", issued.key(), "BEGIN");
             if (attempt.owner.visible.getAsBoolean()) attempt.owner.notice
                 .accept(projectorOr("stock.submitted", "已提交%1$s请求，等待服务器确认。", attempt.operationLabel()));
             return true;
@@ -267,49 +234,12 @@ public final class HologramClientStockNative {
                 reply.key(),
                 reply.phase()
                     .name());
-            if (!attempt.beginSent) {
-                if (now >= attempt.deadline || !attempt.detached && !attempt.owner.visible.getAsBoolean()) {
-                    discard(attempt);
-                    if (attempt.owner.visible.getAsBoolean())
-                        attempt.owner.notice.accept(projectorOr("stock.probe_timeout", "服务器未及时确认支持此短请求；未发送施工指令。"));
-                    return;
-                }
-                if (reply.phase() == Phase.REFUSED) {
-                    discard(attempt);
-                    rememberTerminal(attempt.context, serverReason(reply.reason()), now);
-                    if (attempt.owner.visible.getAsBoolean()) attempt.owner.notice.accept(serverReason(reply.reason()));
-                    return;
-                }
-                if (reply.phase() != Phase.CAPABLE || reply.key()
-                    .generation() <= 0) return;
-                if (!attempt.canStart()) {
-                    discard(attempt);
-                    if (attempt.owner.visible.getAsBoolean())
-                        attempt.owner.notice.accept(projectorOr("stock.start_stale", "当前确认已变化，未开始施工。"));
-                    return;
-                }
-                // CAPABLE is permission to submit this very confirmation, never cached warm readiness.
-                begin(
-                    attempt,
-                    reply.key()
-                        .generation(),
-                    true,
-                    now);
-                return;
-            }
             if (!attempt.key.equals(reply.key()) || reply.phase() == Phase.CAPABLE
                 || reply.placed() >= 0 && reply.placed() < attempt.placed) return;
             if (reply.phase() == Phase.UNKNOWN) {
                 reportUnknown(attempt);
                 return;
             }
-            if (reply.phase() == Phase.NEEDS_PROOF) forgetWarm(attempt);
-            else if (attempt.afterProbe && (reply.phase() == Phase.ACCEPTED || reply.phase() == Phase.ACTIVE
-                || reply.phase() == Phase.COMPLETE)) {
-                    known = current;
-                    generation = reply.key()
-                        .generation();
-                }
             if (!attempt.started && (reply.phase() == Phase.ACCEPTED || reply.phase() == Phase.ACTIVE
                 || reply.phase() == Phase.COMPLETE)) {
                 attempt.started = true;
@@ -321,6 +251,9 @@ public final class HologramClientStockNative {
                 if (previous < attempt.placed && !attempt.stopSent) attempt.deadline = now + RESULT_NANOS;
                 return;
             }
+            if (reply.phase() == Phase.COMPLETE) HologramLocalControllerGhost.complete(
+                attempt.original.key()
+                    .request());
             discard(attempt);
             if (reply.phase() == Phase.COMPLETE) HologramPlacementTiming.clientPhase(
                 "structure",
@@ -429,25 +362,13 @@ public final class HologramClientStockNative {
             return active != null && active.owner.view == view;
         }
 
-        boolean serverConfirmed(Context context) {
-            return context != null && context.same(known) && generation > 0;
-        }
-
         private void reportUnknown(Attempt attempt) {
             if (attempt.uncertain) return;
             attempt.uncertain = true;
-            forgetWarm(attempt);
             boolean stopped = stopOnce(attempt);
             if (attempt.owner.visible.getAsBoolean()) attempt.owner.notice.accept(
                 (stopped ? projectorOr("stock.unknown_stop", "尚无法确认%1$s结果。已请求停止，未确认停工。", attempt.operationLabel())
                     : projectorOr("stock.unknown_no_retry", "尚无法确认%1$s结果。没有重试；请先核对现场。", attempt.operationLabel())));
-        }
-
-        private void forgetWarm(Attempt attempt) {
-            if (attempt.key != null && attempt.context.same(known) && generation == attempt.key.generation()) {
-                known = null;
-                generation = 0;
-            }
         }
 
         private boolean stopOnce(Attempt attempt) {
@@ -468,10 +389,6 @@ public final class HologramClientStockNative {
         }
 
         private void retireChangedContext(Context current) {
-            if (known != null && !known.same(current)) {
-                known = null;
-                generation = 0;
-            }
             if (active != null && !active.context.same(current)) discard(active);
         }
     }
@@ -479,14 +396,8 @@ public final class HologramClientStockNative {
     static final Flow OWNER = new Flow(new Wire() {
 
         @Override
-        public boolean probe(Confirmation value) {
-            return HologramNetwork.sendStockNativeProbe(value);
-        }
-
-        @Override
-        public boolean begin(Confirmation value, boolean afterProbe) {
-            return afterProbe ? HologramNetwork.sendStockNativeAfterProbe(value)
-                : HologramNetwork.sendStockNativeConfirmation(value);
+        public boolean begin(Confirmation value) {
+            return HologramNetwork.sendStockNativeConfirmation(value);
         }
 
         @Override

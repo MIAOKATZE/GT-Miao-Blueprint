@@ -8,8 +8,12 @@ import java.util.Set;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiIngameMenu;
+import net.minecraft.client.multiplayer.WorldClient;
+import net.minecraft.client.network.NetHandlerPlayClient;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.network.play.server.S21PacketChunkData;
+import net.minecraft.network.play.server.S26PacketMapChunkBulk;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraft.util.MovingObjectPosition;
 import net.minecraft.util.StatCollector;
@@ -25,6 +29,7 @@ import org.lwjgl.input.Keyboard;
 import com.gtnewhorizon.structurelib.StructureLibAPI;
 import com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor;
 import com.gtnewhorizon.structurelib.alignment.constructable.IConstructable;
+import com.gtnewhorizon.structurelib.event.BlockChangeNotifier;
 import com.miaokatze.gtmb.hologram.HologramNetwork;
 import com.miaokatze.gtmb.hologram.HologramRuntimeMetrics;
 import com.miaokatze.gtmb.hologram.HologramService;
@@ -172,9 +177,47 @@ public final class HologramClient {
 
     private HologramClient() {}
 
+    /** Native StructureLib notifications describe actual block/meta changes, never render-only refreshes. */
+    static void nativeBlockChanged(net.minecraft.world.World world, int x, int y, int z) {
+        HologramScreen screen = nativeUpdateScreen(world, null);
+        if (screen != null) screen.nativeBlockChanged(x, y, z);
+    }
+
+    /** Called only after vanilla has applied the S21 data, including its early-return unload form. */
+    public static void nativeChunkReceived(NetHandlerPlayClient connection, WorldClient world,
+        S21PacketChunkData packet) {
+        if (connection == null) return;
+        HologramScreen screen = nativeUpdateScreen(world, connection);
+        if (screen != null) screen.nativeChunkChanged(
+            packet.func_149273_e(),
+            packet.func_149271_f(),
+            packet.func_149274_i() ? 0xffff : packet.func_149276_g());
+    }
+
+    /** S26 has already filled every listed chunk. A single relevant chunk invalidates the one observation. */
+    public static void nativeChunksReceived(NetHandlerPlayClient connection, WorldClient world,
+        S26PacketMapChunkBulk packet) {
+        if (connection == null) return;
+        HologramScreen screen = nativeUpdateScreen(world, connection);
+        if (screen == null) return;
+        for (int i = 0; i < packet.func_149254_d(); i++)
+            if (screen.nativeChunkChanged(packet.func_149255_a(i), packet.func_149253_b(i), 0xffff)) return;
+    }
+
+    private static HologramScreen nativeUpdateScreen(net.minecraft.world.World world, Object connection) {
+        Minecraft client = Minecraft.getMinecraft();
+        if (client == null || world == null
+            || !world.isRemote
+            || client.theWorld != world
+            || connection != null && client.getNetHandler() != connection) return null;
+        return client.currentScreen instanceof HologramScreen screen ? screen : null;
+    }
+
     public static void install() {
         if (installed) return;
         installed = true;
+        BlockChangeNotifier.addListener(
+            (world, chunk, x, y, z, oldBlock, newBlock, oldMeta, newMeta) -> nativeBlockChanged(world, x, y, z));
         // This client-only initialization precedes opening any editor; no file lookup in an action or frame.
         var directory = Minecraft.getMinecraft().mcDataDir;
         privateEditPreset = HologramPrivateEditPerformance.load(directory == null ? null : directory.toPath());
@@ -1096,6 +1139,7 @@ public final class HologramClient {
         HologramLocalPlacement.INSTANCE.tick();
         HologramCutClient.INSTANCE.tick();
         Minecraft mc = Minecraft.getMinecraft();
+        HologramLocalControllerGhost.tickHeld(mc);
         advanceLocalAreaCapture(mc);
         ItemStack tool = mc.thePlayer == null ? null : mc.thePlayer.getHeldItem();
         boolean changed = inputContext.observe(

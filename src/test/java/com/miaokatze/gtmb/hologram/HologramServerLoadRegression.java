@@ -114,7 +114,7 @@ public final class HologramServerLoadRegression {
             new HologramLifecycle().loggedIn(new PlayerEvent.PlayerLoggedInEvent(player));
             var login = HologramWorkspace.captureActionEndpoint(player.playerNetServerHandler);
             SimpleAssert.that(
-                login != null && HologramWorkspace.constructionGate(login) != null,
+                login != null && HologramWorkspace.currentActionEndpoint(login),
                 "the production login event establishes authority without any GTMB action");
 
             // Exercise the real vanilla inventory tick and normal hotbar differential slot producer.
@@ -864,9 +864,6 @@ public final class HologramServerLoadRegression {
         HologramRequestGate queue = new HologramRequestGate(1, 1);
         HologramLifecycle lifecycle = new HologramLifecycle();
         EntityPlayerMP respawned = null;
-        HologramConstructionTaskGate taskGate = null;
-        HologramConstructionTaskGate.Admission oldJob = null;
-        HologramConstructionTaskGate.Permit uncertain = null;
         int[] dispatched = { 0 };
         Runnable dispatch = () -> dispatched[0]++;
         try {
@@ -882,21 +879,6 @@ public final class HologramServerLoadRegression {
             SimpleAssert.that(
                 first == HologramWorkspace.captureActionEndpoint(connection),
                 "a repeated unchanged lifecycle notification cannot reset the generation");
-            taskGate = HologramWorkspace.constructionGate(first);
-            SimpleAssert.that(
-                taskGate != null && first.constructionScope != null,
-                "trusted lifecycle binds the construction scope without any construction packet");
-            HologramConstructionTaskGate.Request oldIntent = new HologramConstructionTaskGate.Request(
-                java.util.UUID.randomUUID(),
-                1,
-                HologramConstructionTaskGate.Kind.INCREMENTAL_NATIVE);
-            oldJob = taskGate.acquire(first.constructionScope, oldIntent, false, false);
-            SimpleAssert.that(
-                oldJob.decision == HologramConstructionTaskGate.Decision.GRANTED,
-                "the exact authenticated endpoint can hold a scope lease");
-            uncertain = taskGate.beginTransaction(oldJob.lease);
-            SimpleAssert.that(taskGate.transactionCurrent(uncertain), "one exact permit owns the next mutation");
-
             HologramRequestGate.Lease oldWorld = queue.acquire(connection);
             player.worldObj = (HologramServiceEditRegression.ReadOnlyWorld) unsafe
                 .allocateInstance(HologramServiceEditRegression.ReadOnlyWorld.class);
@@ -906,13 +888,8 @@ public final class HologramServerLoadRegression {
             HologramWorkspace.ActionEndpoint otherWorld = HologramWorkspace.captureActionEndpoint(connection);
             SimpleAssert.that(otherWorld != null && otherWorld != first, "the destination is immediately usable");
             SimpleAssert.that(
-                HologramWorkspace.constructionGate(first) == null
-                    && HologramWorkspace.constructionGate(otherWorld) == taskGate
-                    && otherWorld.constructionScope != first.constructionScope
-                    && !taskGate.transactionCurrent(uncertain)
-                    && !taskGate.revoke(first.constructionScope)
-                    && taskGate.settle(uncertain, HologramConstructionTaskGate.Settlement.RECOVERY_PENDING),
-                "real lifecycle rotation fences old work but retains its exact unfinished permit");
+                !HologramWorkspace.currentActionEndpoint(first),
+                "dimension rotation invalidates the exact old endpoint");
             player.worldObj = world;
             player.dimension = originalDimension;
             lifecycle.changedDimension(
@@ -934,23 +911,8 @@ public final class HologramServerLoadRegression {
                 new PlayerEvent.PlayerChangedDimensionEvent(player, originalDimension + 1, originalDimension));
             HologramWorkspace.ActionEndpoint nestedReturn = HologramWorkspace.captureActionEndpoint(connection);
             SimpleAssert.that(
-                nestedReturn != null && nestedReturn != returned
-                    && nestedReturn.constructionScope.generation > returned.constructionScope.generation,
+                nestedReturn != null && nestedReturn != returned && !HologramWorkspace.currentActionEndpoint(returned),
                 "nested return retires both prior endpoint and construction scope without seeing the departure");
-            HologramConstructionTaskGate.Request denied = new HologramConstructionTaskGate.Request(
-                java.util.UUID.randomUUID(),
-                1,
-                HologramConstructionTaskGate.Kind.PROJECTED_LAYER);
-            SimpleAssert.that(
-                taskGate.acquire(nestedReturn.constructionScope, denied, false, false).decision
-                    == HologramConstructionTaskGate.Decision.RECOVERY_PENDING && taskGate.busy(player.getUniqueID()),
-                "a later lifecycle cannot bypass uncertainty even without a positive journal hint");
-            SimpleAssert.that(
-                taskGate.settle(uncertain, HologramConstructionTaskGate.Settlement.ROLLED_BACK)
-                    && !taskGate.busy(player.getUniqueID())
-                    && taskGate.acquire(nestedReturn.constructionScope, denied, false, false).decision
-                        == HologramConstructionTaskGate.Decision.RETIRED_UNKNOWN,
-                "only exact authoritative settlement releases the old hold; a refused request is never revived");
             lifecycle.changedDimension(
                 new PlayerEvent.PlayerChangedDimensionEvent(player, originalDimension, originalDimension + 1));
             lifecycle.changedDimension(
@@ -1006,8 +968,7 @@ public final class HologramServerLoadRegression {
             HologramWorkspace.revokeActionEndpoint(player);
             SimpleAssert.that(
                 successor == HologramWorkspace.captureActionEndpoint(connection)
-                    && HologramWorkspace.constructionGate(successor) == taskGate
-                    && !taskGate.revoke(replaced.constructionScope),
+                    && HologramWorkspace.currentActionEndpoint(successor),
                 "late retirement for the old entity cannot remove the successor's endpoint or construction scope");
             HologramNetwork.runQueuedAction(replaced, beforeRespawn, dispatch);
             SimpleAssert.eq(1, dispatched[0], "the old entity cannot act after authenticated respawn");
@@ -1016,16 +977,9 @@ public final class HologramServerLoadRegression {
             HologramWorkspace.revokeActionEndpoint(respawned);
             SimpleAssert.that(
                 HologramWorkspace.captureActionEndpoint(connection) == null
-                    && HologramWorkspace.constructionGate(successor) == null
-                    && !taskGate.scopeCurrent(successor.constructionScope),
+                    && !HologramWorkspace.currentActionEndpoint(successor),
                 "logout revokes the exact scope and delayed packets never create a new authenticated generation");
         } finally {
-            // Pure test permits have no game or journal side effects, even after an earlier assertion.
-            if (taskGate != null) {
-                if (uncertain != null) taskGate.settle(uncertain, HologramConstructionTaskGate.Settlement.ROLLED_BACK);
-                if (oldJob != null && oldJob.lease != null)
-                    taskGate.finish(oldJob.lease, HologramConstructionTaskGate.End.FAILED);
-            }
             if (respawned != null) HologramWorkspace.revokeActionEndpoint(respawned);
             HologramWorkspace.revokeActionEndpoint(player);
             player.worldObj = world;

@@ -20,7 +20,7 @@ import gregtech.api.enums.ItemList;
 import gregtech.api.interfaces.metatileentity.IMetaTileEntity;
 import gregtech.api.util.GTUtility;
 
-/** GT .205 ME hatches retain configuration and empty components, never network mirrors or pending cargo. */
+/** Native ME input simulation mirrors are distinct from output hatches' real buffered resources. */
 public final class HologramGtMeShadow {
 
     private static final String FLUID = "gregtech.common.tileentities.machines.MTEHatchInputME";
@@ -168,15 +168,93 @@ public final class HologramGtMeShadow {
                     validateStack(row.getCompoundTag(stackKey), fluid, key + "/" + i + "/" + stackKey);
                 }
             }
-            data.removeTag(key);
         }
         if (!fluid && data.hasKey("cachedStack")) {
             if (!data.hasKey("cachedStack", 10)) throw unsupported("cachedStack", "旧输出缓存记录必须是NBT对象");
             validateStack(data.getCompoundTag("cachedStack"), false, "cachedStack");
-            data.removeTag("cachedStack");
         }
-        omitTank(data);
+        if (data.hasKey("mFluid")) {
+            if (!data.hasKey("mFluid", 10)) throw unsupported("mFluid", "仓室流体必须是原生栈对象");
+            if (!data.getCompoundTag("mFluid")
+                .hasNoTags()) validateStack(data.getCompoundTag("mFluid"), true, "mFluid");
+        }
+        // A proxy is the source grid's runtime/security identity, never a portable output cache or ownership grant.
+        if (data.hasKey("proxy") && !data.hasKey("proxy", 10)) throw unsupported("proxy", "原生网络代理必须为对象");
+        data.removeTag("proxy");
+        for (String key : new String[] { "additionalConnection", "cacheMode", "checkMode" })
+            if (data.hasKey(key) && (!data.hasKey(key, 1) || data.getByte(key) < 0 || data.getByte(key) > 1))
+                throw unsupported(key, "原生开关必须为布尔 byte");
+        for (String key : new String[] { "myPriority", "refreshTime" })
+            if (data.hasKey(key) && !data.hasKey(key, 3)) throw unsupported(key, "原生设置必须为 int");
         return data;
+    }
+
+    /** Only fields whose native ME load/resource contract has been checked may supplement GT's common roots. */
+    static boolean retainedField(NBTTagCompound data, String key) throws IOException {
+        String kind = owner(data);
+        if (kind == null) return false;
+        project(data); // Validate the exact owner, version and every physical cache row before granting this path.
+        if (kind.equals(OUTPUT_ITEM) || kind.equals(OUTPUT_FLUID)) return java.util.Arrays
+            .asList(
+                "cache",
+                "cachedItems",
+                "cachedFluids",
+                "cachedStack",
+                "mFluid",
+                "additionalConnection",
+                "cacheMode",
+                "checkMode",
+                "myPriority",
+                "refreshTime")
+            .contains(key);
+        return key.equals("version") || key.equals("slots");
+    }
+
+    /** Cost-only expansion of GT's native long-sized cache carrier; installation keeps the original native records. */
+    static NBTTagCompound paymentPayload(NBTTagCompound source) throws IOException {
+        String kind = source == null ? null : owner(source);
+        if (!OUTPUT_ITEM.equals(kind) && !OUTPUT_FLUID.equals(kind)) return source;
+        if (source.hasKey("gtmbMeOutputResourceCosts")) throw unsupported("gtmbMeOutputResourceCosts", "字段与内部计价投影冲突");
+        boolean fluid = OUTPUT_FLUID.equals(kind);
+        NBTTagCompound result = (NBTTagCompound) source.copy();
+        NBTTagList costs = new NBTTagList();
+        for (String key : fluid ? new String[] { "cache", "cachedFluids" } : new String[] { "cache", "cachedItems" }) {
+            NBTTagList rows = source.getTagList(key, 10);
+            for (int i = 0; i < rows.tagCount(); i++) {
+                NBTTagCompound row = rows.getCompoundTagAt(i);
+                String stackKey = fluid ? "fluidStack" : "itemStack";
+                NBTTagCompound stack;
+                long amount;
+                if (!fluid && key.equals("cachedItems") && !row.hasKey(stackKey)) {
+                    stack = HologramBlueprintNbt.nativePayload(row);
+                    amount = row.getLong("Count");
+                } else {
+                    stack = HologramBlueprintNbt.nativePayload(row.getCompoundTag(stackKey));
+                    amount = row.getLong("size");
+                }
+                if (fluid) stack.setLong("Amount", amount);
+                else {
+                    // The existing per-device item bill is int-bounded; refuse rather than truncate a native long.
+                    if (amount > Integer.MAX_VALUE) throw unsupported(key, "单项物品数量超出现有设备账单上限");
+                    stack.setInteger("Count", (int) amount);
+                }
+                costs.appendTag(stack);
+            }
+            result.removeTag(key);
+        }
+        if (!fluid && source.hasKey("cachedStack")) {
+            costs.appendTag(HologramBlueprintNbt.nativePayload(source.getCompoundTag("cachedStack")));
+            result.removeTag("cachedStack");
+        }
+        NBTTagCompound wrapper = new NBTTagCompound();
+        wrapper.setTag(fluid ? "fluids" : "inventory", costs);
+        result.setTag("gtmbMeOutputResourceCosts", wrapper);
+        return result;
+    }
+
+    static boolean hasOutputResources(NBTTagCompound source) {
+        String kind = source == null ? null : owner(source);
+        return OUTPUT_ITEM.equals(kind) || OUTPUT_FLUID.equals(kind);
     }
 
     private static NBTTagList inventory(NBTTagCompound data) throws IOException {

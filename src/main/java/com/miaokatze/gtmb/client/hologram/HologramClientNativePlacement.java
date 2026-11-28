@@ -38,7 +38,7 @@ final class HologramClientNativePlacement {
             .beginOwnedPlacement(attempt.id, HologramNativeUiText.reason("原生蓝图施工"), attempt::stop);
         if (ticket == null) return false;
         HologramPlacementTiming.clientRequest("blueprint", attempt.id);
-        var job = new Active(attempt, ticket, client.theWorld, connection);
+        var job = new Active(attempt, ticket, client.theWorld, connection, source);
         job.pin = source.source()
             .pinNative();
         active = job;
@@ -103,7 +103,7 @@ final class HologramClientNativePlacement {
         if (!job.started && (result.phase == HologramNativeLocalConstruction.Phase.EXECUTING
             || result.phase == HologramNativeLocalConstruction.Phase.COMPLETE)) {
             job.started = true;
-            client.thePlayer.closeScreen();
+            if (job.source.current()) client.thePlayer.closeScreen();
         }
         switch (result.phase) {
             case PREPARING -> HologramBackgroundTasks.observeOwnedPlacement(
@@ -131,9 +131,9 @@ final class HologramClientNativePlacement {
                         result.satisfied,
                         result.total),
                     HologramNativeUiText.reason(result.placed == 0 ? "没有需要放置的方块" : result.detail));
-                if (accepted) HologramLocalPlacement.INSTANCE.clear();
-                else HologramLocalPlacement.INSTANCE.retry();
+                if (accepted) HologramLocalPlacement.INSTANCE.finish(job.source, true);
                 job.unpin();
+                job.retired = true;
                 active = null;
             }
             case CANCELLED, FAILED -> job.finish(
@@ -151,6 +151,7 @@ final class HologramClientNativePlacement {
 
         final Attempt attempt;
         final Ticket ticket;
+        final HologramLocalPlacement.Submission source;
         final Object world, connection;
         volatile boolean retired;
         com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintDefinition.Lease pin;
@@ -165,11 +166,13 @@ final class HologramClientNativePlacement {
         long seen;
         boolean started;
 
-        Active(Attempt attempt, Ticket ticket, Object world, Object connection) {
+        Active(Attempt attempt, Ticket ticket, Object world, Object connection,
+            HologramLocalPlacement.Submission source) {
             this.attempt = attempt;
             this.ticket = ticket;
             this.world = world;
             this.connection = connection;
+            this.source = source;
         }
 
         void fail(String detail) {
@@ -179,7 +182,7 @@ final class HologramClientNativePlacement {
 
         void finish(Outcome outcome, long serial, int placed, int satisfied, int total, String detail) {
             if (active != this) return;
-            HologramBackgroundTasks.finishOwnedPlacement(
+            boolean accepted = HologramBackgroundTasks.finishOwnedPlacement(
                 ticket,
                 serial,
                 outcome,
@@ -187,7 +190,7 @@ final class HologramClientNativePlacement {
                 satisfied,
                 total,
                 HologramNativeUiText.reason(detail));
-            HologramLocalPlacement.INSTANCE.retry();
+            if (accepted) HologramLocalPlacement.INSTANCE.finish(source, outcome == Outcome.CANCELLED);
             unpin();
             active = null;
             retired = true;

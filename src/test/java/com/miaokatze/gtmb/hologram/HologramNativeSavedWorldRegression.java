@@ -334,10 +334,15 @@ public final class HologramNativeSavedWorldRegression {
             "enqueue acquires the world lease but performs no descriptor admission, writes or debits");
         HologramNativeLocalConstruction.tick(System.nanoTime() - 1);
         require(
-            attempt.result() == preparing && !attempt.admitted()
+            attempt.result().phase == HologramNativeLocalConstruction.Phase.PREPARING
+                && attempt.result().total == preparing.total
+                && attempt.result().placed == 0
+                && attempt.result().satisfied == 0
+                && !attempt.admitted()
                 && f.stock() == 5
                 && f.world.writes()
-                    .isEmpty(),
+                    .isEmpty()
+                && !HologramConstructionJournal.pending(f.player),
             "expired world deadline keeps saved descriptor preparation pending without effects");
         if ("changedWhilePreparing".equals(mode) || "cancelPreparing".equals(mode)) {
             boolean stale = "changedWhilePreparing".equals(mode);

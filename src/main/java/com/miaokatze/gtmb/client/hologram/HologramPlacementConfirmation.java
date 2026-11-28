@@ -25,7 +25,7 @@ final class HologramPlacementConfirmation {
         NBTTagCompound data = state.data;
         if (!data.getBoolean("localStandardController")) return "";
         if (data.hasKey("nativeTargetRevision", 4)) {
-            if (data.getInteger("nativeAction") == 3 && data.getLong("nativeObservationToken") > 0) return "";
+            if (nativeDemolitionReview(data)) return "";
             if (data.getBoolean("localStructureUnavailable")) return projectorOr(
                 "native.ui.complete_target_generation_failed_adjust_the_configuration",
                 "当前完整目标生成失败，请调整配置或重新读取结构。");
@@ -42,6 +42,12 @@ final class HologramPlacementConfirmation {
             return projectorOr("stock.reading_structure", "结构未就绪");
         if (state.cells.isEmpty()) return projectorOr("stock.no_structure_cells", "当前控制器没有可用于施工的结构格。");
         return "";
+    }
+
+    static boolean nativeDemolitionReview(NBTTagCompound data) {
+        return data.getInteger("nativeAction")
+            == com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.DEMOLISH.ordinal()
+            && ("UNFORMED".equals(data.getString("nativeStage")) || "FORMED".equals(data.getString("nativeStage")));
     }
 
     static boolean finishedWholeNativePlacement(HologramState state, NBTTagCompound settings, boolean localEdits) {
