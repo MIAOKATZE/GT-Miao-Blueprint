@@ -283,6 +283,10 @@ final class HologramState {
             "nativeStage",
             "nativeTargetRevision",
             "nativeTargetReady",
+            "nativeTargetDigest",
+            "nativeExecutionSupported",
+            "localStructureUnavailable",
+            "supported",
             "nativeObservationReason",
             "nativeTargetReason",
             "scope",
@@ -802,6 +806,10 @@ final class HologramState {
             // The packet session identifies the immutable geometry source. A local placement
             // has a separate presentation session; an in-place patch must not change that owner.
             if (decoration || !"session".equals(key)) data.setTag(key, updates.getTag(key));
+        }
+        if (updates.hasKey("nativeTargetReady", 1) && !updates.getBoolean("nativeTargetReady")) {
+            data.removeTag("nativeTargetDigest");
+            data.setBoolean("nativeExecutionSupported", false);
         }
         if (patch.hasKey("processingPatch", 10) || patch.hasKey("processingConfirmedStages", 9)) {
             NBTTagCompound processing = shallow(data.getCompoundTag("processing"));
