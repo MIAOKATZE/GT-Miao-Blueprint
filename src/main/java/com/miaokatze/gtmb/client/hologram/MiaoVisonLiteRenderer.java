@@ -183,11 +183,8 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     private static final MiaoVisonLiteSession<Coordinate, WorldGroup> WORLD_SESSION = new MiaoVisonLiteSession<>();
     private static final Map<Coordinate, WorldGroup> worldGroups = WORLD_SESSION.regions();
     private static final MiaoVisonLiteSpatialIndex<WorldGroup> worldSpatialIndex = new MiaoVisonLiteSpatialIndex<>(16);
-    private static MiaoVisonLiteDisplayList placementColorList;
-    private static int placementColor;
     private static final Set<Coordinate> worldGhosts = new HashSet<>();
     private static final Set<Coordinate> worldOccluders = new HashSet<>();
-    private static final Set<Coordinate> worldOutlineCells = new HashSet<>();
     private static int worldIndex;
     private static boolean localWorldRegions;
     private static java.util.Iterator<Map.Entry<HologramRegionCache.Key, List<HologramState.Cell>>> pendingRegions;
@@ -352,7 +349,6 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
                     }
                     worldGhosts.remove(position);
                     worldOccluders.remove(position);
-                    worldOutlineCells.remove(position);
                 }
                 for (int index : next.changedIndices) indexWorldCell(next, next.cells.get(index));
                 worldIndex = next.cells.size();
@@ -791,7 +787,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
                     Face outline = new Face(c, projected, 0, currentView);
                     boolean renderedCurrent = currentView || c.anchor
                         || c.status.equals("protected") && c.actualStack != null;
-                    outline.fadeDefault = role.isEmpty() && !c.sourceMissing
+                    outline.fadeDefault = !c.sourceMissing
                         && (outline.nativeModel ? !HologramBlockRender.missingTexture(c, renderedCurrent)
                             : completePreviewMaterial(outline.material));
                     outlines.add(outline);
@@ -989,69 +985,42 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
                     -1,
                     previewPreparation.projection.published);
             }
-            float outlineDensity = cleanCapture || cachedOutlines.isEmpty() ? 1 : previewOutlineDensity();
+            float outlineDensity = 1;
             int lineVertices = 0, lineLimit = 0;
             int outlinedCells = 0;
             double[] cornerDepths = new double[8];
             boolean outlineDrawn = false;
             boolean streamedLines = false;
             ScreenLineStream previewLineStream = null;
-            if (!cleanCapture && !browseViewport) {
-                previewLineStream = session.lines();
-                streamedLines = previewLineStream.begin(t);
-            }
-            MiaoVisonLiteOutline residentOutline = !streamedLines && !cleanCapture && !cachedOutlines.isEmpty()
-                ? session.outline()
-                : null;
-            int firstOutline = 0;
-            if (residentOutline != null) {
-                firstOutline = residentOutline.drawPrefix(
-                    t,
-                    state.identity,
-                    projectedFrame,
-                    cachedOutlines,
-                    cachedOutlines.size(),
-                    selection,
-                    selection == null ? 0 : selection.version(),
-                    selected,
-                    outlineDensity,
-                    depthScale,
-                    allowCapture);
-                int replayed = residentOutline.replayedVertices();
-                if (replayed != 0) {
-                    outlinedCells = replayed / 24;
-                    outlineDrawn = true;
-                    lineLimit = previewLineBatchLimit(t);
-                }
-            }
+            // The voxel bounds below also serve native projection and picking. Only selected/problem bounds
+            // become lines; no all-cell resident outline or line stream is allocated for an ordinary preview.
             try {
-                if (!streamedLines) t.startDrawing(GL11.GL_LINES);
-                if (selection != null) selection.related(state);
-                if (!cleanCapture) for (int at = firstOutline; at < cachedOutlines.size(); at++) {
+                if (!cleanCapture) for (int at = 0; at < cachedOutlines.size(); at++) {
                     Face face = cachedOutlines.get(at);
                     boolean chosen = face.cell.index == selected
                         || selection != null && selection.contains(face.cell.index);
-                    boolean relatedCasing = !chosen && selection != null
-                        && selection.relatedContains(state, face.cell.index);
-                    float alpha = previewOutlineAlpha(
-                        chosen,
-                        relatedCasing,
-                        face.empty,
-                        face.fadeDefault,
-                        outlineDensity);
-                    if (alpha == 0) continue;
+                    boolean problem = problemOutline(state, face.cell) || !face.empty && !face.fadeDefault;
+                    if (previewOutlineVertices(chosen, problem) == 0) continue;
+                    float alpha = previewOutlineAlpha(chosen, problem);
+                    if (!outlineDrawn) {
+                        if (!browseViewport) {
+                            previewLineStream = session.lines();
+                            streamedLines = previewLineStream.begin(t);
+                        }
+                        if (!streamedLines) t.startDrawing(GL11.GL_LINES);
+                    }
                     outlineDrawn = true;
                     if (lineLimit > 0 && lineVertices + 24 > lineLimit) {
                         if (streamedLines) previewLineStream.flush();
                         else {
-                            if (residentOutline == null || !residentOutline.record(t, lineVertices, at)) t.draw();
+                            t.draw();
                             t.startDrawing(GL11.GL_LINES);
                         }
                         lineVertices = 0;
                     }
-                    float red = chosen ? 1 : relatedCasing ? .78f : .2f,
-                        green = chosen ? .92f : relatedCasing ? .61f : .7f,
-                        blue = chosen ? .5f : relatedCasing ? 1 : .8f;
+                    int color = chosen ? 0xffeb80 : HologramJobVisuals.color(state, face.cell);
+                    float red = ((color >> 16) & 255) / 255f, green = ((color >> 8) & 255) / 255f,
+                        blue = (color & 255) / 255f;
                     if (streamedLines) previewLineStream.color(red, green, blue, alpha);
                     else t.setColorRGBA_F(red, green, blue, alpha);
                     for (int corner = 0; corner < cornerDepths.length; corner++)
@@ -1075,10 +1044,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
                     lineVertices += 24;
                     if (PREVIEW_TIMINGS != null) outlinedCells++;
                 }
-                if (!streamedLines && (residentOutline == null || lineLimit == 0
-                    || lineVertices != lineLimit
-                    || !residentOutline.record(t, lineVertices, cachedOutlines.size()))) t.draw();
-                if (residentOutline != null && lineVertices == 0) residentOutline.restoreEmptyTail(t);
+                if (outlineDrawn && !streamedLines) t.draw();
             } finally {
                 if (streamedLines) previewLineStream.end();
             }
@@ -1090,7 +1056,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
                     outlinedCells * 24,
                     streamedLines,
                     boundaryVertices,
-                    residentOutline);
+                    null);
             }
             if (budgeted && outlineDrawn && !previewPreparation.outlineObserved) {
                 previewPreparation.outlineObserved = true;
@@ -1540,7 +1506,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         projectedFrame.projectVoxel(cell.dx, cell.dy, cell.dz, outline.points, 0);
         outline.updateDepth();
         boolean renderedCurrent = current || cell.anchor || cell.status.equals("protected") && cell.actualStack != null;
-        outline.fadeDefault = input.role.isEmpty() && !cell.sourceMissing
+        outline.fadeDefault = !cell.sourceMissing
             && (outline.nativeModel ? !HologramBlockRender.missingTexture(cell, renderedCurrent)
                 : input.completeMaterial());
     }
@@ -2060,11 +2026,9 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
                 || (browseViewport && "blueprint-artifact".equals(state.session));
             regions = state.regions.regions.entrySet()
                 .iterator();
-            // Structure hints already enter the progressive mesh directly. A second all-cell occupancy/edge pass
-            // would gate their first material on a separate preview that the mesh replaces immediately afterwards.
-            boundary = outline && !state.data.getBoolean("structureProjection")
-                ? new PreviewBoundary(state, showEmptyCells)
-                : null;
+            // Bounds are projected with the material/pick inputs. Ordinary structure and blueprint cells
+            // have no interim wireframe, so neither needs a second occupancy/edge preparation pass.
+            boundary = null;
         }
 
         void advance(int layer, int view, boolean current, String key, long budget) {
@@ -2784,7 +2748,6 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         double offsetX = anchor == null ? 0 : anchor[0] - state.data.getInteger("x");
         double offsetY = anchor == null ? 0 : anchor[1] - state.data.getInteger("y");
         double offsetZ = anchor == null ? 0 : anchor[2] - state.data.getInteger("z");
-        syncPlacementColor(state);
         Frustrum frustum = new Frustrum();
         frustum.setPosition(px, py, pz);
         double range = Math.max(16, mc.gameSettings.renderDistanceChunks * 16);
@@ -2906,33 +2869,13 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         lastWorldGeometry = lastWorldGTGeometry = lastWorldFallback = lastWorldMatched = lastWorldGhosts = 0;
         lastWorldPlacementOutlineColor = 0;
         for (WorldGroup group : worldGroups.values()) group.releaseBatches();
-        if (placementColorList != null) placementColorList.close();
-        placementColorList = null;
-        placementColor = 0;
         WORLD_SESSION.close();
         worldSpatialIndex.clear();
         worldGhosts.clear();
         worldOccluders.clear();
-        worldOutlineCells.clear();
         worldIndex = 0;
         localWorldRegions = false;
         pendingRegions = null;
-    }
-
-    /** Cached geometry calls this tiny list, so a local lock changes color without rebuilding the blueprint. */
-    private static void syncPlacementColor(HologramState state) {
-        if (!state.data.getBoolean("virtualPlacement") || state.data.getInteger("mode") == 2) return;
-        int color = placementOutlineColor(state);
-        lastWorldPlacementOutlineColor = color;
-        if (placementColorList == null) placementColorList = MiaoVisonLiteDisplayList.allocate();
-        if (placementColorList == null || placementColor == color) return;
-        placementColorList.begin();
-        try {
-            GL11.glColor4f(((color >> 16) & 255) / 255f, ((color >> 8) & 255) / 255f, (color & 255) / 255f, .65f);
-        } finally {
-            placementColorList.finish();
-        }
-        placementColor = color;
     }
 
     static int placementOutlineColor(HologramState state) {
@@ -2959,7 +2902,6 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
                 Coordinate position = coordinate(cell.x, cell.y, cell.z);
                 worldGhosts.remove(position);
                 worldOccluders.remove(position);
-                worldOutlineCells.remove(position);
             }
         }
         for (Coordinate key : touched) {
@@ -3059,11 +3001,11 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     private static boolean readyForWorldGeometry(HologramState state, WorldGroup visible, long deadline) {
         if (!localWorldRegions) return worldIndex == state.cells.size();
         if (visible.localHaloReady) return true;
-        // Outline edges read at most two adjacent axes; material faces read one. For retained native
-        // geometry, HologramBlockRender still has the full authoritative snapshot as its access.
+        // Material faces read only the six adjacent regions. Problem boxes use their own twelve edges;
+        // retained native geometry still has the full authoritative snapshot through HologramBlockRender.
         int gx = visible.x >> 4, gy = visible.y >> 4, gz = visible.z >> 4;
         for (int dx = -1; dx <= 1; dx++) for (int dy = -1; dy <= 1; dy++) for (int dz = -1; dz <= 1; dz++) {
-            if (dx != 0 && dy != 0 && dz != 0) continue;
+            if (Math.abs(dx) + Math.abs(dy) + Math.abs(dz) > 1) continue;
             WorldGroup region = worldGroups.get(coordinate(gx + dx, gy + dy, gz + dz));
             if (region == null && pendingRegions != null) {
                 var k = new HologramRegionCache.Key(gx + dx, gy + dy, gz + dz);
@@ -3096,7 +3038,6 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         boolean removal = state.data.getInteger("mode") == 2;
         boolean virtual = state.data.getBoolean("virtual");
         group.cells.add(c);
-        worldOutlineCells.add(coordinate(c.x, c.y, c.z));
         if ((!c.anchor || virtual) && !removal
             && (virtual || !c.status.equals("satisfied") && !worldMatched(c))
             && !c.wantId.equals("minecraft:air")) {
@@ -3252,35 +3193,19 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
             GL11.glPopMatrix();
         }
         GL11.glDisable(GL11.GL_TEXTURE_2D);
-        boolean dynamicPlacementColor = worldState != null && worldState.data.getBoolean("virtualPlacement")
-            && !removal
-            && placementColorList != null;
-        if (dynamicPlacementColor) placementColorList.draw();
-        t.startDrawing(GL11.GL_LINES);
-        if (dynamicPlacementColor) t.disableColor();
+        boolean lines = false;
         for (HologramState.Cell c : cells) {
-            int color = c.anchor ? 0xffffbd : HologramJobVisuals.color(worldState, c);
-            if (worldState != null && worldState.data.getBoolean("virtualPlacement") && !removal) {
-                color = placementOutlineColor(worldState);
-                lastWorldPlacementOutlineColor = color;
+            if (!worldProblemOutline(worldState, c, removal)) continue;
+            if (!lines) {
+                t.startDrawing(GL11.GL_LINES);
+                lines = true;
             }
-            if (removal && HologramJobVisuals.status(worldState, c)
-                .equals("pending")) color = 0xf08b83;
-            if (!dynamicPlacementColor) t.setColorRGBA_F(
-                ((color >> 16) & 255) / 255f,
-                ((color >> 8) & 255) / 255f,
-                (color & 255) / 255f,
-                c.anchor ? .95f : .65f);
-            int outline = BoundaryNeighborhood
-                .worldEdges(c.x, c.y, c.z, (x, y, z) -> worldOutlineCells.contains(coordinate(x, y, z)));
-            for (int edge = 0; edge < EDGES.length; edge++) {
-                if ((outline & 1 << edge) == 0) continue;
-                for (int v : EDGES[edge])
-                    t.addVertex(c.x + .5 + VERTICES[v][0], c.y + .5 + VERTICES[v][1], c.z + .5 + VERTICES[v][2]);
-            }
+            int color = HologramJobVisuals.color(worldState, c);
+            t.setColorRGBA_F(((color >> 16) & 255) / 255f, ((color >> 8) & 255) / 255f, (color & 255) / 255f, .65f);
+            emitWorldOutline(t, c);
             lastWorldGeometry++;
         }
-        t.draw();
+        if (lines) t.draw();
     }
 
     private static final class WorldGroup {
@@ -3417,12 +3342,43 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         return spacing == Double.POSITIVE_INFINITY ? 0 : (float) Math.max(0, Math.min(1, (spacing - 2) / 4));
     }
 
-    static float previewOutlineAlpha(boolean chosen, boolean related, boolean empty, boolean fadeDefault,
-        float density) {
-        return chosen || related ? 1 : empty ? .18f : .45f * (fadeDefault ? density : 1);
+    static float previewOutlineAlpha(boolean chosen, boolean problem) {
+        return chosen ? 1 : problem ? .45f : 0;
     }
 
-    /** Only already-resolved, complete material samples permit hiding a default wireframe. */
+    static int previewOutlineVertices(boolean chosen, boolean problem) {
+        return chosen || problem ? 24 : 0;
+    }
+
+    /** A missing site block is an ordinary unbuilt target; source/resource failures are separate evidence. */
+    static boolean problemOutline(HologramState state, HologramState.Cell cell) {
+        if (cell.sourceMissing || cell.missingBlock) return true;
+        String status = HologramJobVisuals.status(state, cell);
+        return switch (status) {
+            case "occupied", "blocked", "unsupported", "unknown", "failed", "invalid", "conflict" -> true;
+            case "protected" -> !cell.anchor;
+            case "missing" -> HologramJobVisuals.failed(state, cell) || !"missing".equals(cell.status);
+            default -> false;
+        };
+    }
+
+    private static boolean worldProblemOutline(HologramState state, HologramState.Cell cell, boolean current) {
+        if (problemOutline(state, cell)) return true;
+        if ((current ? cell.id : cell.wantId).equals("minecraft:air")) return false;
+        boolean renderedCurrent = current || cell.anchor || cell.status.equals("protected") && cell.actualStack != null;
+        return HologramBlockRender.ready(cell, current) ? HologramBlockRender.missingTexture(cell, renderedCurrent)
+            : !completePreviewMaterial(HologramTextures.material(cell, current));
+    }
+
+    static int emitWorldOutline(Tessellator tess, HologramState.Cell cell) {
+        for (int[] edge : EDGES) for (int vertex : edge) tess.addVertex(
+            cell.x + .5 + VERTICES[vertex][0],
+            cell.y + .5 + VERTICES[vertex][1],
+            cell.z + .5 + VERTICES[vertex][2]);
+        return 24;
+    }
+
+    /** Already-resolved material evidence distinguishes unavailable models from ordinary targets. */
     static boolean completePreviewMaterial(HologramTextures.Material material) {
         if (material == null || material.fallback || material.geometry.isEmpty()) return false;
         for (HologramGeometry.Surface surface : material.geometry) {

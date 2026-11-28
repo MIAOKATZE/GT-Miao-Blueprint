@@ -48,6 +48,7 @@ final class HologramProjectorSimulation implements AutoCloseable {
 
     private enum Stage {
         BUILD,
+        REQUIRED,
         PROBE,
         APPLY,
         COLLECT,
@@ -76,6 +77,11 @@ final class HologramProjectorSimulation implements AutoCloseable {
     private World baseWorld;
     private Stage stage = Stage.BUILD;
     private ItemStack pieceSignal;
+    private ItemStack piecePublishedSignal;
+    private Actor actor;
+    private ISurvivalBuildEnvironment environment;
+    private int stableRounds, replayRounds, replayStableRounds;
+    private HologramNativePreviewItems replaySource, previousItems;
     private boolean creative, started, instrumented, limitExceeded;
     private NBTTagCompound config = new NBTTagCompound();
     private final Thread owner = Thread.currentThread();
@@ -102,8 +108,8 @@ final class HologramProjectorSimulation implements AutoCloseable {
         config = (NBTTagCompound) settings.copy();
     }
 
-    NBTTagCompound configuration() {
-        return (NBTTagCompound) config.copy();
+    boolean option(String name) {
+        return config.getBoolean(name);
     }
 
     private void setup(TileEntity tile, Object target, IConstructable nativeConstructable) {
@@ -113,12 +119,21 @@ final class HologramProjectorSimulation implements AutoCloseable {
         baseWorld = tile.getWorldObj();
         world = HologramNativePreviewWorld.open(tile);
         items.bind(world);
+        actor = null;
+        environment = null;
         pieceSignal = trigger.copy();
+        piecePublishedSignal = publishedSignal(pieceSignal);
         tile.setWorldObj(baseWorld);
     }
 
     Actor actor() {
-        return new Actor(world);
+        if (actor == null) actor = new Actor(world);
+        return actor;
+    }
+
+    private ISurvivalBuildEnvironment environment() {
+        if (environment == null) environment = ISurvivalBuildEnvironment.create(items, actor());
+        return environment;
     }
 
     ItemStack probeSignal(ItemStack original) {
@@ -131,6 +146,7 @@ final class HologramProjectorSimulation implements AutoCloseable {
     boolean step(long deadline) throws IOException {
         if (owner != Thread.currentThread() || stage == Stage.DONE)
             throw new IllegalStateException("LOCAL_NATIVE_PREVIEW_SCOPE");
+        if (System.nanoTime() >= deadline) return false;
         boolean updates = RunnableMachineUpdate.isCurrentThreadEnabled(),
             instrument = !StructureLibAPI.isInstrumentEnabled();
         HologramProjectorSimulation previous = ACTIVE.get();
@@ -146,13 +162,17 @@ final class HologramProjectorSimulation implements AutoCloseable {
                     case BUILD -> {
                         if (buildRound()) stage = Stage.PROBE;
                     }
+                    case REQUIRED -> {
+                        if (probe.fillRequiredSpots(deadline)) {
+                            if (probe.requiredFilled()) stableRounds = 0;
+                            stage = Stage.BUILD;
+                        }
+                    }
                     case PROBE -> {
-                        probe.discover();
-                        stage = Stage.APPLY;
+                        if (probe.discover(deadline)) stage = Stage.APPLY;
                     }
                     case APPLY -> {
-                        probe.apply(config);
-                        stage = Stage.COLLECT;
+                        if (probe.apply(config, deadline)) stage = Stage.COLLECT;
                     }
                     case COLLECT -> {
                         collect();
@@ -161,7 +181,7 @@ final class HologramProjectorSimulation implements AutoCloseable {
                     default -> {}
                 }
                 if (limitExceeded) throw new IOException("LOCAL_NATIVE_PREVIEW_CELL_LIMIT");
-            } while (stage != Stage.DONE && (stage != Stage.BUILD || System.nanoTime() < deadline));
+            } while (stage != Stage.DONE && System.nanoTime() < deadline);
             return stage == Stage.DONE;
         } finally {
             HologramChannelTrace.Report report = HologramChannelTrace.end(trace);
@@ -184,13 +204,11 @@ final class HologramProjectorSimulation implements AutoCloseable {
                 && context instanceof INEIPreviewModifier modifier) modifier.onPreviewConstruct(trigger.copy());
         }
         if (!creative && constructable instanceof ISurvivalConstructable survival) {
+            long before = world.contentSignature();
             world.takeChanged();
-            nativeResult = survival.survivalConstruct(
-                probeSignal(trigger),
-                Integer.MAX_VALUE,
-                ISurvivalBuildEnvironment.create(items, actor()));
+            nativeResult = survival.survivalConstruct(probeSignal(trigger), 4096, environment());
             boolean changed = world.takeChanged();
-            if (construction && nativeResult == 0 && !changed) probe.fillRequiredSpots();
+            if (construction && nativeResult == 0 && !changed) stage = Stage.REQUIRED;
             if (!construction && controller instanceof IGregTechTileEntity
                 && context instanceof INEIPreviewModifier
                 && !changed) {
@@ -216,6 +234,10 @@ final class HologramProjectorSimulation implements AutoCloseable {
                 return true;
             }
             if (nativeResult < -2) throw new IOException("LOCAL_NATIVE_PREVIEW_RESULT:" + nativeResult);
+            // Some custom constructors advance an internal cursor across a few empty rounds. Allow
+            // those, but never spin 2000 times on an impossible element or a self-removing block.
+            stableRounds = world.contentSignature() != before ? 0 : stableRounds + 1;
+            if (stableRounds >= 16) throw new IOException("LOCAL_NATIVE_PREVIEW_NO_PROGRESS");
             return false;
         }
         constructable.construct(trigger.copy(), false);
@@ -224,81 +246,52 @@ final class HologramProjectorSimulation implements AutoCloseable {
         return true;
     }
 
-    void replay(HologramNativePreviewItems source) throws IOException {
-        HologramNativePreviewItems previous = items;
+    void beginReplay(HologramNativePreviewItems source) {
+        if (replaySource != null) throw new IllegalStateException("LOCAL_NATIVE_PREVIEW_REPLAY_ACTIVE");
+        previousItems = items;
+        replaySource = source;
         items = source;
         items.bind(world);
+        environment = null;
+        replayRounds = replayStableRounds = 0;
         if (context instanceof MTEMultiBlockBase machine) {
             machine.clearHatches();
             machine.mMachine = false;
         }
+    }
+
+    boolean replayStep() throws IOException {
+        boolean done = false;
         try {
+            if (++replayRounds > 2000) throw new IOException("LOCAL_NATIVE_PREVIEW_UNSTABLE");
             if (constructable instanceof ISurvivalConstructable survival && !creative) {
-                for (int round = 0; round < 2000; round++) {
-                    int result = survival.survivalConstruct(
-                        trigger.copy(),
-                        Integer.MAX_VALUE,
-                        ISurvivalBuildEnvironment.create(items, actor()));
-                    if (result == -1) return;
-                    if (result == -2) {
-                        constructable.construct(trigger.copy(), false);
-                        return;
-                    }
-                    if (result < -2) throw new IOException("LOCAL_NATIVE_PREVIEW_RESULT:" + result);
+                long before = world.contentSignature();
+                world.takeChanged();
+                int result = survival.survivalConstruct(trigger.copy(), 4096, environment());
+                world.takeChanged();
+                if (result == -1) return done = true;
+                if (result == -2) {
+                    constructable.construct(trigger.copy(), false);
+                    return done = true;
                 }
-                throw new IOException("LOCAL_NATIVE_PREVIEW_UNSTABLE");
+                if (result < -2) throw new IOException("LOCAL_NATIVE_PREVIEW_RESULT:" + result);
+                replayStableRounds = world.contentSignature() != before ? 0 : replayStableRounds + 1;
+                if (replayStableRounds >= 16) throw new IOException("LOCAL_NATIVE_PREVIEW_NO_PROGRESS");
+                return false;
             }
             constructable.construct(trigger.copy(), false);
+            return done = true;
         } finally {
-            items = previous;
+            if (done) endReplay();
         }
     }
 
-    HologramProjectorSimulation fork() throws IOException {
-        if (factory == null || facing == null) throw new IOException("LOCAL_NATIVE_PREVIEW_COMPLETION_SCOPE");
-        TileEntity fresh = factory.create();
-        Object freshContext = HologramStructureDiscovery.context(fresh);
-        IConstructable freshConstructable = HologramStructureDiscovery.localConstructable(fresh, freshContext, facing);
-        if (fresh == controller || freshContext == context || freshConstructable == null)
-            throw new IOException("LOCAL_NATIVE_PREVIEW_COMPLETION_SCOPE");
-        HologramProjectorSimulation copy = new HologramProjectorSimulation(
-            fresh,
-            freshContext,
-            freshConstructable,
-            trigger,
-            factory,
-            facing,
-            true);
-        copy.creative = creative;
-        for (var it = world.currentPlacements(); it.hasNext();) {
-            var cell = it.next();
-            ItemStack paid = world.materialAt(cell.x(), cell.y(), cell.z());
-            if (paid != null) copy.world.materialSelected(paid, true);
-            copy.world.setBlock(cell.x(), cell.y(), cell.z(), cell.block(), cell.meta(), 2);
-            if (cell.tile() != null) {
-                NBTTagCompound data = new NBTTagCompound();
-                cell.tile()
-                    .writeToNBT(data);
-                TileEntity tile = copy.world.getTileEntity(cell.x(), cell.y(), cell.z());
-                if (tile != null) tile.readFromNBT(data);
-            }
-            if (paid != null) copy.world.materialSelected(paid, false);
-        }
-        return copy;
-    }
-
-    void replayIsolated(HologramNativePreviewItems source) throws IOException {
-        HologramProjectorSimulation previous = ACTIVE.get();
-        World old = controller.getWorldObj();
-        try {
-            ACTIVE.set(this);
-            controller.setWorldObj(world);
-            replay(source);
-        } finally {
-            if (previous == null) ACTIVE.remove();
-            else ACTIVE.set(previous);
-            controller.setWorldObj(old);
-        }
+    private void endReplay() {
+        if (replaySource == null) return;
+        items = previousItems;
+        previousItems = null;
+        replaySource = null;
+        environment = null;
     }
 
     private void collect() throws IOException {
@@ -353,7 +346,10 @@ final class HologramProjectorSimulation implements AutoCloseable {
         HologramProjectorSimulation simulation = ACTIVE.get();
         if (simulation != null && simulation.context == target && (world == null || simulation.world == world)) {
             if (definition != null) simulation.definition = definition;
-            if (signal != null) simulation.pieceSignal = signal.copy();
+            if (signal != null) {
+                simulation.pieceSignal = signal.copy();
+                simulation.piecePublishedSignal = simulation.publishedSignal(signal);
+            }
         }
     }
 
@@ -373,17 +369,24 @@ final class HologramProjectorSimulation implements AutoCloseable {
             return;
         }
         active.elements.put(p, event.getElement());
-        active.signals.put(p, active.publishedSignal(active.pieceSignal));
+        // Signals are owned immutable declarations; readers receive copies via signalAt. A large
+        // repeated native walk must not allocate one compound/NBT tree per visit and round.
+        active.signals.put(p, active.piecePublishedSignal);
         active.items.position(
             HologramNativeTargetPlan.position(
                 p.x() - active.controller.xCoord,
                 p.y() - active.controller.yCoord,
-                p.z() - active.controller.zCoord));
+                p.z() - active.controller.zCoord),
+            active.probe.casingAt(p),
+            active.probe.hatchSlot(p));
     }
 
     @Override
     public void close() {
+        endReplay();
         controller.setWorldObj(baseWorld);
+        actor = null;
+        environment = null;
     }
 
     static final class Actor extends EntityPlayer {

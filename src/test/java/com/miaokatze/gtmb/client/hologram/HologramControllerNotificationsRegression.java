@@ -183,6 +183,7 @@ public final class HologramControllerNotificationsRegression {
                     .withMetadata(blueprint));
             HologramClient.nativeChunkReceived(connection, world, single(x, z, false, section, 0));
             SimpleAssert.that(!needed(screen), "saved blueprints do not acquire controller Stage observation");
+            cancelObservation(client, screen, connection, other, first, sent);
         } finally {
             listeners.remove(listener); // Fixture-only cleanup; production registers once and retains no screen
                                         // reference.
@@ -191,6 +192,42 @@ public final class HologramControllerNotificationsRegression {
             textures.snapshot = oldTextureSnapshot;
             if (oldMaterial == null) textures.cells.remove(row);
             else textures.cells.put(row, oldMaterial);
+        }
+    }
+
+    private static void cancelObservation(Minecraft client, HologramScreen screen, NetHandlerPlayClient connection,
+        NetHandlerPlayClient other, HologramStockNativeWire.Confirmation request, List<NBTTagCompound> sent)
+        throws ReflectiveOperationException {
+        Field pending = field(HologramScreen.class, "nativeObservationRequest");
+        var retire = HologramScreen.class.getDeclaredMethod("retireLocalController");
+        retire.setAccessible(true);
+        field(EntityClientPlayerMP.class, "sendQueue").set(client.thePlayer, connection);
+        pending.set(screen, request);
+        int before = sent.size();
+        retire.invoke(screen);
+        SimpleAssert.eq(before + 1, sent.size(), "retiring a local controller cancels its in-flight native PROBE once");
+        NBTTagCompound stop = sent.get(before);
+        SimpleAssert.that(
+            stop.getByte("nativeStockCommand") == HologramStockNativeWire.Command.STOP.ordinal() && request.key()
+                .request()
+                .toString()
+                .equals(stop.getString("nativeStockRequest"))
+                && request.key()
+                    .sequence() == stop.getLong("nativeStockIntent"),
+            "native observation STOP carries the pending PROBE request and intent key");
+        SimpleAssert.eq(null, pending.get(screen), "retire clears the pending observation before any later close");
+        retire.invoke(screen);
+        SimpleAssert.eq(before + 1, sent.size(), "repeated retirement never sends a duplicate observation STOP");
+
+        pending.set(screen, request);
+        field(EntityClientPlayerMP.class, "sendQueue").set(client.thePlayer, other);
+        try {
+            retire.invoke(screen);
+            SimpleAssert.eq(null, pending.get(screen), "connection change still clears the abandoned observation");
+            SimpleAssert
+                .eq(before + 1, sent.size(), "an old observation STOP is never sent to a new server connection");
+        } finally {
+            field(EntityClientPlayerMP.class, "sendQueue").set(client.thePlayer, connection);
         }
     }
 

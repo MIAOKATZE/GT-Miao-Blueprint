@@ -1673,11 +1673,6 @@ final class HologramUiConfiguration {
                 return true;
             case 99:
             case 102:
-                if (ui.session.state().data.getBoolean("localStandardController")) {
-                    ui.session
-                        .notice(projectorOr("native.ui.native_hatch_facing_is_generated_by_the", "原生仓室朝向由控制器的建造流程生成。"));
-                    return true;
-                }
                 if (!ui.session.selectedNativeEditable()) return true;
                 int[] facings = ui.session.hatchFacings();
                 int nextFacing = -1;

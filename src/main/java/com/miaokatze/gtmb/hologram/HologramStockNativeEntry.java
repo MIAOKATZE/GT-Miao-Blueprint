@@ -136,17 +136,9 @@ final class HologramStockNativeEntry {
             .getString(HologramSessionKeys.TOOL_ID) : "";
     }
 
-    static HologramStockNativeWire.ServerObservation observe(Submission submission) throws IOException {
+    static HologramNativeProjectionJob.Observation beginObservation(Submission submission) throws IOException {
         if (submission == null || !submission.current()) throw new IOException("原生观察请求已变化。");
-        var intent = submission.intent;
-        return HologramNativeProjectionJob.observe(
-            submission.endpoint,
-            intent.projection(),
-            intent.main(),
-            intent.facing(),
-            intent.x(),
-            intent.y(),
-            intent.z());
+        return new HologramNativeProjectionJob.Observation(submission);
     }
 
     static HologramStockNativeEntry begin(Submission submission) throws IOException {

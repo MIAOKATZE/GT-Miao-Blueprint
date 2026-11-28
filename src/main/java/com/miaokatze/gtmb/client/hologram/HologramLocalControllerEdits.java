@@ -118,6 +118,42 @@ final class HologramLocalControllerEdits {
         return "pin".equals(operation) || "hatchFacing".equals(operation);
     }
 
+    /** The existing native choice protocol owns both model and optional facing. */
+    static NBTTagCompound nativeChoice(HologramState.Cell cell) throws IOException {
+        ItemStack stack = cell.targetStack;
+        if (stack == null || !(stack.getItem() instanceof ItemMachines) || stack.hasTagCompound())
+            throw new IOException(
+                projectorOr("native.ui.choose_this_target_through_structure_channels_it", "此目标请通过结构信道选择，不能作为仓室型号提交。"));
+        NBTTagCompound choice = new NBTTagCompound();
+        choice.setInteger("x", cell.dx);
+        choice.setInteger("y", cell.dy);
+        choice.setInteger("z", cell.dz);
+        choice.setInteger("id", stack.getItemDamage());
+        choice.setInteger("facing", cell.hatchFacing);
+        return choice;
+    }
+
+    /** Reattach intent only for this exact replayed model; target display/NBT remain the native result. */
+    static NBTTagCompound nativeFacingRow(HologramState.Cell cell, NBTTagList choices) {
+        NBTTagCompound row = cell.tag();
+        row.setInteger("hatchFacing", -1);
+        row.setBoolean("hasFacingPin", false);
+        if (cell.targetStack == null || !(cell.targetStack.getItem() instanceof ItemMachines)) return row;
+        for (int i = 0; i < choices.tagCount(); i++) {
+            NBTTagCompound choice = choices.getCompoundTagAt(i);
+            if (choice.getInteger("x") != cell.dx || choice.getInteger("y") != cell.dy
+                || choice.getInteger("z") != cell.dz
+                || choice.getInteger("id") != cell.targetStack.getItemDamage()) continue;
+            int facing = choice.hasKey("facing", 3) ? choice.getInteger("facing") : -1;
+            if (facing >= 0 && facing < 6) {
+                row.setInteger("hatchFacing", facing);
+                row.setBoolean("hasFacingPin", true);
+            }
+            break;
+        }
+        return row;
+    }
+
     /** One already validated local candidate row; never accepts a file/inventory sample or broad scope. */
     static NBTTagCompound selectedRow(HologramState.Cell current, HologramState.Cell initial, String operation,
         NBTTagCompound request) throws IOException {

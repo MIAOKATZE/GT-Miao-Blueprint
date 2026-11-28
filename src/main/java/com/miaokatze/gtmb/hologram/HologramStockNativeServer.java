@@ -16,7 +16,7 @@ import com.miaokatze.gtmb.hologram.HologramStockNativeWire.Reply;
 import com.miaokatze.gtmb.hologram.HologramStockNativeWire.Request;
 import com.miaokatze.gtmb.hologram.HologramWorkspace.ActionEndpoint;
 
-/** Bounded transport inbox and replies. All source preparation and world work belong to ConstructionJobs. */
+/** Bounded transport inbox, sliced observations and replies. World-changing work belongs to ConstructionJobs. */
 final class HologramStockNativeServer {
 
     @FunctionalInterface
@@ -25,8 +25,30 @@ final class HologramStockNativeServer {
         void send(ActionEndpoint endpoint, Reply reply);
     }
 
-    @com.github.bsideup.jabel.Desugar
-    private record Waiting(ActionEndpoint endpoint, Request request, HologramRequestGate.Lease slot) {}
+    private static final class Waiting implements AutoCloseable {
+
+        final ActionEndpoint endpoint;
+        final Request request;
+        final HologramRequestGate.Lease slot;
+        HologramNativeProjectionJob.Observation observation;
+
+        Waiting(ActionEndpoint endpoint, Request request, HologramRequestGate.Lease slot) {
+            this.endpoint = endpoint;
+            this.request = request;
+            this.slot = slot;
+        }
+
+        public void close() {
+            try {
+                if (observation != null) {
+                    observation.close();
+                    observation = null;
+                }
+            } finally {
+                slot.close();
+            }
+        }
+    }
 
     @com.github.bsideup.jabel.Desugar
     private record Identity(UUID actor, Key request) {}
@@ -71,11 +93,17 @@ final class HologramStockNativeServer {
                     waiting = !stops.isEmpty() ? stops.pollFirst() : inbox.pollFirst();
                 }
                 if (waiting == null) break;
+                boolean complete = true;
                 try {
                     if (waiting.slot.active() && HologramWorkspace.currentActionEndpoint(waiting.endpoint))
-                        dispatch(waiting);
+                        complete = dispatch(waiting, deadline);
                 } finally {
-                    waiting.slot.close();
+                    if (complete) waiting.close();
+                    else if (waiting.slot.active() && HologramWorkspace.currentActionEndpoint(waiting.endpoint)) {
+                        synchronized (inbox) {
+                            inbox.addLast(waiting);
+                        }
+                    } else waiting.close();
                 }
             }
             for (Owned owned : new ArrayList<>(reporting.values())) {
@@ -94,14 +122,15 @@ final class HologramStockNativeServer {
         }
     }
 
-    private void dispatch(Waiting waiting) {
+    private boolean dispatch(Waiting waiting, long deadline) {
+        if (waiting.observation != null) return advanceObservation(waiting, deadline);
         var endpoint = waiting.endpoint;
         var request = waiting.request;
         var key = request.key();
         var known = results.get(new Identity(endpoint.actor, key));
         if (known != null) {
             emit(endpoint, known);
-            return;
+            return true;
         }
         var owned = reporting.get(endpoint.actor);
         boolean exact = owned != null && owned.endpoint == endpoint && owned.key.equals(key);
@@ -110,52 +139,54 @@ final class HologramStockNativeServer {
                 endpoint,
                 exact ? new Reply(key, Phase.ACTIVE, owned.entry.placed(), owned.entry.reason())
                     : new Reply(key, Phase.UNKNOWN, -1, "没有当前可核实的施工结果。"));
-            return;
+            return true;
         }
         if (request.command() == Command.STOP) {
             if (exact) owned.entry.stop(endpoint, key);
             else {
-                // A cancel may overtake only its exact buffered BEGIN.
+                // A cancel may overtake only its exact buffered construction or observation.
                 synchronized (inbox) {
                     for (var iterator = inbox.iterator(); iterator.hasNext();) {
                         var queued = iterator.next();
-                        if (queued.endpoint == endpoint && queued.request.command() == Command.BEGIN
+                        if (queued.endpoint == endpoint
+                            && (queued.request.command() == Command.BEGIN || queued.request.command() == Command.PROBE)
                             && queued.request.key()
                                 .equals(key)) {
                             iterator.remove();
-                            queued.slot.close();
-                            HologramConstructionJobs.retire(endpoint.connection, key.sequence());
-                            remember(endpoint, new Reply(key, Phase.STOPPED, 0, "施工已取消，未开始执行。"));
-                            return;
+                            queued.close();
+                            if (queued.request.command() == Command.BEGIN) {
+                                HologramConstructionJobs.retire(endpoint.connection, key.sequence());
+                                remember(endpoint, new Reply(key, Phase.STOPPED, 0, "施工已取消，未开始执行。"));
+                            } else emit(endpoint, new Reply(key, Phase.STOPPED, 0, "原生观察已取消。"));
+                            return true;
                         }
                     }
                 }
                 emit(endpoint, new Reply(key, Phase.UNKNOWN, -1, "没有当前可核实的施工结果。"));
             }
-            return;
+            return true;
         }
         if (request.command() == Command.BEGIN && exact) {
             emit(endpoint, new Reply(key, Phase.ACTIVE, owned.entry.placed(), owned.entry.reason()));
-            return;
+            return true;
         }
         var ingress = HologramStockNativeEntry.inspect(endpoint, request.confirmation());
         if (ingress.submission() == null) {
             emit(endpoint, new Reply(key, Phase.REFUSED, 0, ingress.refusal()));
-            return;
+            return true;
         }
         if (request.command() == Command.PROBE) {
             try {
-                emit(
-                    endpoint,
-                    new Reply(key, Phase.CAPABLE, 0, "", HologramStockNativeEntry.observe(ingress.submission())));
+                waiting.observation = HologramStockNativeEntry.beginObservation(ingress.submission());
+                return advanceObservation(waiting, deadline);
             } catch (IOException | RuntimeException | LinkageError failure) {
                 emit(endpoint, new Reply(key, Phase.REFUSED, 0, detail(failure)));
+                return true;
             }
-            return;
         }
         if (!HologramConstructionJobs.retire(endpoint.connection, key.sequence())) {
             emit(endpoint, new Reply(key, Phase.UNKNOWN, -1, "施工请求已处理，未重复执行。"));
-            return;
+            return true;
         }
         try {
             var entry = HologramStockNativeEntry.begin(ingress.submission());
@@ -164,6 +195,20 @@ final class HologramStockNativeServer {
         } catch (IOException | RuntimeException | LinkageError failure) {
             remember(endpoint, new Reply(key, Phase.REFUSED, 0, detail(failure)));
         }
+        return true;
+    }
+
+    private boolean advanceObservation(Waiting waiting, long deadline) {
+        try {
+            if (!waiting.observation.advance(deadline)) return false;
+            if (!waiting.slot.active()) return true;
+            emit(
+                waiting.endpoint,
+                new Reply(waiting.request.key(), Phase.CAPABLE, 0, "", waiting.observation.result()));
+        } catch (IOException | RuntimeException | LinkageError failure) {
+            emit(waiting.endpoint, new Reply(waiting.request.key(), Phase.REFUSED, 0, detail(failure)));
+        }
+        return true;
     }
 
     private static String detail(Throwable failure) {
@@ -199,10 +244,12 @@ final class HologramStockNativeServer {
         reporting.clear();
         results.clear();
         synchronized (inbox) {
-            for (var waiting : inbox) waiting.slot.close();
-            for (var waiting : stops) waiting.slot.close();
+            for (var waiting : inbox) waiting.close();
+            for (var waiting : stops) waiting.close();
             inbox.clear();
             stops.clear();
         }
+        requests.clear();
+        controls.clear();
     }
 }

@@ -130,10 +130,11 @@ final class HologramStructureDiscoveryRegression {
             fixture,
             false,
             trigger)) {
-            SimpleAssert.that(!preview.advance(System.nanoTime() - 1), "a write requires another native survival pass");
+            SimpleAssert.that(!preview.advance(System.nanoTime() - 1), "an expired deadline does no native work");
             SimpleAssert.eq(source, tile.getWorldObj(), "tile is detached from the simulation between passes");
             SimpleAssert.that(!StructureLibAPI.isInstrumentEnabled(), "the StructureLib instrument is scoped");
-            SimpleAssert.that(preview.advance(System.nanoTime() - 1), "the native terminal pass completes the preview");
+            SimpleAssert.eq(0, fixture.rounds, "expired deadlines do not invoke a callback");
+            SimpleAssert.that(preview.advance(Long.MAX_VALUE), "native passes complete with an available budget");
             SimpleAssert.eq(2, fixture.rounds, "survival call count follows writes");
             SimpleAssert.eq(0, fixture.constructs, "completed native survival does not request construct");
             SimpleAssert.eq(
@@ -172,7 +173,7 @@ final class HologramStructureDiscoveryRegression {
             true,
             trigger)) {
             try {
-                preview.advance(System.nanoTime() - 1);
+                preview.advance(Long.MAX_VALUE);
                 throw new AssertionError("stable unsupported survival cannot publish an unproven footprint");
             } catch (IOException expected) {
                 SimpleAssert.eq("LOCAL_NATIVE_PREVIEW_INCOMPLETE", expected.getMessage(), "missing declaration proof");
@@ -245,9 +246,10 @@ final class HologramStructureDiscoveryRegression {
             fixture,
             false,
             new ItemStack(Items.stick))) {
-            for (int n = 0; n < 4; n++)
-                SimpleAssert.that(!preview.advance(System.nanoTime() - 1), "zero-write cursor pass remains pending");
-            SimpleAssert.that(preview.advance(System.nanoTime() - 1), "-1 completes despite a final write");
+            SimpleAssert.that(!preview.advance(0), "expired deadline leaves the zero-write cursor untouched");
+            SimpleAssert.eq(0, passes[0], "no cursor work is hidden outside the frame budget");
+            SimpleAssert
+                .that(preview.advance(Long.MAX_VALUE), "four zero-write cursor rounds still reach the final -1");
             SimpleAssert.eq(5, passes[0], "no redundant stability call after -1");
             SimpleAssert.eq(
                 Blocks.stone,
@@ -273,11 +275,9 @@ final class HologramStructureDiscoveryRegression {
             fixture,
             false,
             trigger)) {
-            SimpleAssert.that(!preview.advance(System.nanoTime() - 1), "NEI world changes continue on another step");
-            SimpleAssert.eq(1, fixture.previewsStarted, "NEI pre-hook runs once before its first native pass");
-            SimpleAssert.eq(0, fixture.previewsCompleted, "NEI completion waits for a no-change display pass");
-            SimpleAssert
-                .that(preview.advance(System.nanoTime() - 1), "NEI no-change pass completes the display lifecycle");
+            SimpleAssert.that(!preview.advance(0), "expired NEI work leaves the lifecycle pending");
+            SimpleAssert.eq(0, fixture.previewsStarted, "expired budget never enters a NEI hook");
+            SimpleAssert.that(preview.advance(Long.MAX_VALUE), "NEI no-change pass completes the display lifecycle");
             SimpleAssert.eq(2, fixture.rounds, "NEI display follows native world changes across steps");
             SimpleAssert.eq(0, fixture.constructs, "survival-capable NEI follows its native browser branch");
             SimpleAssert.eq(1, fixture.previewsStarted, "resuming NEI never repeats its start hook");
@@ -350,7 +350,8 @@ final class HologramStructureDiscoveryRegression {
             rounds++;
             SimpleAssert.eq(2, trigger.stackSize, "main signal reaches the native callback");
             SimpleAssert.eq(world, environment.getActor().worldObj, "preview actor belongs to the isolated world");
-            SimpleAssert.eq(Integer.MAX_VALUE, budget, "each native pass receives the browser's full placement budget");
+            SimpleAssert
+                .that(budget > 0 && budget < Integer.MAX_VALUE, "each native pass has a finite placement budget");
             if (gregTech) {
                 SimpleAssert.eq(1, previewsStarted, "GT pre-hook runs before survival");
                 SimpleAssert

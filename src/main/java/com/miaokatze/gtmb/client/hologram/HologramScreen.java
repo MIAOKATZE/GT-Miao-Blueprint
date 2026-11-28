@@ -437,11 +437,6 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             HologramState current = ui.session.state();
             if (localControllerStandard() && !current.data.getBoolean("nativeTargetReady")) return true;
             if (localControllerStandard() && HologramLocalControllerEdits.handles(operation)) {
-                if ("hatchFacing".equals(operation)) {
-                    ui.session
-                        .notice(projectorOr("native.ui.native_hatch_facing_is_generated_by_the", "原生仓室朝向由控制器的建造流程生成。"));
-                    return true;
-                }
                 if ("customPin".equals(operation)) {
                     int slot = request.getInteger("inventorySlot");
                     ItemStack[] inventory = minecraft().thePlayer.inventory.mainInventory;
@@ -479,20 +474,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
                         selected.remove(position);
                         continue;
                     }
-                    var stack = cell.targetStack;
-                    if (stack == null || !(stack.getItem() instanceof gregtech.common.blocks.ItemMachines)
-                        || stack.hasTagCompound())
-                        throw new java.io.IOException(
-                            projectorOr(
-                                "native.ui.choose_this_target_through_structure_channels_it",
-                                "此目标请通过结构信道选择，不能作为仓室型号提交。"));
-                    NBTTagCompound choice = new NBTTagCompound();
-                    choice.setInteger("x", cell.dx);
-                    choice.setInteger("y", cell.dy);
-                    choice.setInteger("z", cell.dz);
-                    choice.setInteger("id", stack.getItemDamage());
-                    choice.setInteger("facing", -1);
-                    selected.put(position, choice);
+                    selected.put(position, HologramLocalControllerEdits.nativeChoice(cell));
                 }
                 if (selected.size() > 128) throw new java.io.IOException(
                     projectorOr("native.ui.at_most_128_explicit_hatch_positions_may_253", "最多配置128个显式仓室位置。"));
@@ -763,7 +745,6 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         HologramState fallback = localController == null || localControllerTarget != null ? previous
             : localControllerPrevious;
         nativeControllerState().targetChanged();
-        nativeObservationRequest = null;
         nativeObservationNeeded = false;
         retireLocalController();
         localController = new HologramLocalControllerCapture(
@@ -1033,7 +1014,13 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         if (localController == null || localControllerTarget == null || cell.anchor || !cell.candidates.isEmpty())
             return cell;
         var offers = localController.selectedOffers(cell.index);
-        return offers == null ? cell : new HologramState.Cell(cell, offers);
+        if (offers == null) return cell;
+        // Geometry carries the replayed facing; the sparse choice keeps the explicit override for Restore Facing.
+        NBTTagCompound row = HologramLocalControllerEdits.nativeFacingRow(
+            cell,
+            ui.config.configuration()
+                .getTagList("nativeHatchChoices", 10));
+        return new HologramState.Cell(new HologramState.Cell(cell.index, row), offers);
     }
 
     private void publishLocalController(HologramState state, HologramRuntimeMetrics.LoadStage stage) {
@@ -1076,6 +1063,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     }
 
     private void retireLocalController() {
+        cancelNativeObservation();
         nativeObservationNeeded = true;
         if (localController != null) localController.close();
         localController = null;
@@ -1086,6 +1074,15 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         localControllerPrevious = null;
         pendingNativeTargetSettings = null;
         pendingControllerToolSettings = null;
+    }
+
+    private void cancelNativeObservation() {
+        var pending = nativeObservationRequest;
+        nativeObservationRequest = null;
+        if (pending != null && minecraft().getNetHandler() == openingConnection)
+            com.miaokatze.gtmb.hologram.HologramNetwork.sendStockNativeControl(
+                pending.key(),
+                com.miaokatze.gtmb.hologram.HologramStockNativeWire.Command.STOP);
     }
 
     static HologramState controllerWaitingState(int dimension, int x, int y, int z) {

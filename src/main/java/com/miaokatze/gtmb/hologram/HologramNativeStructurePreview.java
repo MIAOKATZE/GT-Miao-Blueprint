@@ -45,22 +45,13 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
     HologramNativeStructurePreview(TileEntity controller, Object context, IConstructable constructable,
         boolean structureCompat, ItemStack trigger, ControllerFactory factory,
         com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing facing) throws IOException {
-        this(
-            controller,
-            context,
-            constructable,
-            structureCompat,
-            trigger,
-            factory,
-            facing,
-            new HologramNativePreviewItems(),
-            false);
+        this(controller, context, constructable, structureCompat, trigger, factory, facing, false);
     }
 
     HologramNativeStructurePreview(TileEntity controller, Object context, IConstructable constructable,
         boolean structureCompat, ItemStack trigger, ControllerFactory factory,
-        com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing facing, HologramNativePreviewItems source,
-        boolean construction) throws IOException {
+        com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing facing, boolean construction)
+        throws IOException {
         simulation = new HologramProjectorSimulation(
             controller,
             context,
@@ -137,6 +128,26 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
         return result;
     }
 
+    Iterator<HologramProjectorSimulation.Position> visitedPositions() {
+        return simulation.elements.keySet()
+            .iterator();
+    }
+
+    int facingMask(int x, int y, int z, ItemStack sample) {
+        World previous = simulation.controller.getWorldObj();
+        boolean recording = simulation.world.edit(true);
+        simulation.controller.setWorldObj(simulation.world);
+        boolean updates = gregtech.api.threads.RunnableMachineUpdate.isCurrentThreadEnabled();
+        try {
+            if (updates) gregtech.api.threads.RunnableMachineUpdate.setCurrentThreadEnabled(false);
+            return simulation.probe.facingMask(new HologramProjectorSimulation.Position(x, y, z), sample);
+        } finally {
+            simulation.world.edit(recording);
+            simulation.controller.setWorldObj(previous);
+            if (updates) gregtech.api.threads.RunnableMachineUpdate.setCurrentThreadEnabled(true);
+        }
+    }
+
     IStructureElement<?> elementAt(int x, int y, int z) {
         return simulation.elements.get(new HologramProjectorSimulation.Position(x, y, z));
     }
@@ -194,10 +205,15 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
 
     List<ItemStack> nativeOffers(IStructureElement<?> element, int x, int y, int z, ItemStack signal) {
         World previous = simulation.controller.getWorldObj();
+        boolean recording = simulation.world.edit(true);
+        boolean updates = gregtech.api.threads.RunnableMachineUpdate.isCurrentThreadEnabled();
         simulation.controller.setWorldObj(simulation.world);
         try {
+            if (updates) gregtech.api.threads.RunnableMachineUpdate.setCurrentThreadEnabled(false);
             return simulation.probe.offers(element, new HologramProjectorSimulation.Position(x, y, z), signal);
         } finally {
+            simulation.world.edit(recording);
+            if (updates) gregtech.api.threads.RunnableMachineUpdate.setCurrentThreadEnabled(true);
             simulation.controller.setWorldObj(previous);
         }
     }

@@ -464,12 +464,63 @@ public final class HologramControllerDetailsRegression {
                         .tag()
                         .getBoolean("hasFacingPin"),
                 "restore default restores the original target and clears the hatch override");
+            nativeFacingChoices(machines, turnedRow);
             localSamplesAndFullTargetReview(machines);
         } catch (IOException failure) {
             throw new AssertionError("local controller hatch facing edits", failure);
         } finally {
             GregTechAPI.sBlockMachines = priorMachines;
         }
+    }
+
+    private static void nativeFacingChoices(Block machines, NBTTagCompound template) throws IOException {
+        NBTTagCompound row = (NBTTagCompound) template.copy();
+        row.setTag("targetStack", new ItemStack(machines, 1, 101).writeToNBT(new NBTTagCompound()));
+        row.setIntArray("hatchFacings", new int[] { 2, 5 });
+        NBTTagCompound display = row.getCompoundTag("targetDisplay");
+        display.setInteger("casingTexture", 73);
+        display.setString("channelPayload", "retained");
+        row.setTag("targetDisplay", display);
+        HologramState.Cell turned = new HologramState.Cell(0, row);
+        NBTTagCompound choice = HologramLocalControllerEdits.nativeChoice(turned);
+        SimpleAssert.that(
+            choice.getInteger("id") == 101 && choice.getInteger("facing") == 5,
+            "the existing native choice carries the selected model and explicit legal facing");
+
+        NBTTagCompound replayed = (NBTTagCompound) row.copy();
+        replayed.removeTag("hatchFacing");
+        replayed.removeTag("hasFacingPin");
+        NBTTagCompound intent = HologramLocalControllerEdits
+            .nativeFacingRow(new HologramState.Cell(0, replayed), list(choice));
+        SimpleAssert.that(
+            intent.getInteger("hatchFacing") == 5 && intent.getBoolean("hasFacingPin")
+                && intent.getCompoundTag("targetDisplay")
+                    .equals(display),
+            "replayed native geometry retains restore intent without replacing casing or display NBT");
+        NBTTagCompound request = new NBTTagCompound();
+        request.setInteger("selected", 0);
+        request.setInteger("facing", -1);
+        HologramState.Cell selected = new HologramState.Cell(0, intent);
+        NBTTagCompound restored = HologramLocalControllerEdits.selectedRow(selected, selected, "hatchFacing", request);
+        NBTTagCompound restoredChoice = HologramLocalControllerEdits.nativeChoice(new HologramState.Cell(0, restored));
+        SimpleAssert.that(
+            restoredChoice.getInteger("id") == 101 && restoredChoice.getInteger("facing") == -1
+                && !restored.getBoolean("hasFacingPin"),
+            "restore submits the same native model with no direction override");
+
+        NBTTagCompound changedModel = (NBTTagCompound) replayed.copy();
+        changedModel.setTag("targetStack", new ItemStack(machines, 1, 102).writeToNBT(new NBTTagCompound()));
+        NBTTagCompound changedIntent = HologramLocalControllerEdits
+            .nativeFacingRow(new HologramState.Cell(0, changedModel), list(choice));
+        SimpleAssert.that(
+            changedIntent.getInteger("hatchFacing") == -1 && !changedIntent.getBoolean("hasFacingPin"),
+            "changing the native model cannot inherit the previous model's facing pin");
+        NBTTagCompound wrongPosition = (NBTTagCompound) choice.copy();
+        wrongPosition.setInteger("x", choice.getInteger("x") + 1);
+        SimpleAssert.that(
+            !HologramLocalControllerEdits.nativeFacingRow(turned, list(wrongPosition))
+                .getBoolean("hasFacingPin"),
+            "direction intent is attached only to its selected native coordinate");
     }
 
     /** Local documents retain exact samples; native confirmation reviews the complete revisioned target. */

@@ -234,6 +234,12 @@ final class HologramJobVisuals {
         return outcome.status;
     }
 
+    /** Only a receipt owned by this snapshot proves a failed attempt; site absence alone does not. */
+    static boolean failed(HologramState state, HologramState.Cell cell) {
+        Outcome outcome = state == basis ? outcomes.get(cell.index) : null;
+        return outcome != null && !outcome.success;
+    }
+
     static boolean completed(HologramState state, HologramState.Cell cell) {
         String status = status(state, cell);
         return "placed".equals(status) || "replaced".equals(status) || "removed".equals(status);

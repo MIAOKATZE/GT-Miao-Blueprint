@@ -523,8 +523,8 @@ public final class HologramLiveControllerSiteRegression {
                         throw new AssertionError("stalled machine did not report failure");
                     } catch (java.io.IOException expected) {
                         SimpleAssert.that(
-                            "LOCAL_NATIVE_PREVIEW_UNSTABLE".equals(expected.getMessage()),
-                            "a permanent zero-result cursor cannot publish its incomplete survival prefix");
+                            "LOCAL_NATIVE_PREVIEW_NO_PROGRESS".equals(expected.getMessage()),
+                            "a permanent zero-result cursor stops early without publishing its survival prefix");
                     }
                     continue;
                 }

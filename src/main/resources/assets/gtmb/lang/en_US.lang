@@ -2013,3 +2013,6 @@ gtmb.hologram.projector.native.reason.material.conditions_changed=Material sourc
 gtmb.hologram.projector.native.reason.material.refund_pending=The native material refund is still pending.
 gtmb.hologram.projector.native.reason.construction.pose_rejected=The native block rejected the saved orientation.
 gtmb.hologram.projector.native.reason.job.close_failed=Could not close the construction interface; construction did not start.
+gtmb.hologram.projector.native.reason.preview.no_progress=Native construction made no effective progress for several rounds. Preparation stopped.
+gtmb.hologram.projector.native.reason.preview.hatch_not_retained=Native construction did not retain the selected hatch.
+gtmb.hologram.projector.native.reason.preview.hatch_direction_rejected=The native structure rejected the selected hatch direction.

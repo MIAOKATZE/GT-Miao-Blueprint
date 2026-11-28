@@ -78,7 +78,7 @@ final class HologramNativeTargetPlanRegression {
                     .size(),
                 "unvisited real writes form the complete target");
             Controller built = (Controller) target.context();
-            SimpleAssert.eq(7, built.passes, "four empty cursor slices reach -1 before the final configured replay");
+            SimpleAssert.eq(6, built.passes, "four empty cursor slices reach -1 without a redundant default replay");
             SimpleAssert.eq(0, built.started + built.completed, "ordinary targets never run NEI hooks");
             for (var cell : target.cells()) {
                 SimpleAssert.eq(null, cell.element(), "custom targets retain optional element absence");
@@ -111,12 +111,17 @@ final class HologramNativeTargetPlanRegression {
                 "fresh creative result is selected");
             SimpleAssert.eq(0, ((Controller) creative.context()).passes, "creative fallback owns a new controller");
 
-            for (int mode : new int[] { 2, 3, 4 }) {
+            for (int mode : new int[] { 2, 3, 4, 10 }) {
                 prototype(ID, new Controller(mode));
+                Controller.nativeCalls = 0;
                 try {
                     compile(false);
                     throw new AssertionError("accepted incomplete/invalid native mode " + mode);
                 } catch (IOException expected) {
+                    if (mode == 2 || mode == 10) SimpleAssert.eq(
+                        16,
+                        Controller.nativeCalls,
+                        "zero-progress and same-round self-removal stop well before the 2000-round safety cap");
                     SimpleAssert.that(
                         !com.gtnewhorizon.structurelib.StructureLibAPI.isInstrumentEnabled(),
                         "failed generation restores the instrument scope");
@@ -328,11 +333,52 @@ final class HologramNativeTargetPlanRegression {
                         cell -> cell.dx() == 1 && cell.material()
                             .getItemDamage() == PORT_ID),
                 "raw native replay retains the positively tested selected hatch");
+            choice.setInteger("facing", ForgeDirection.EAST.ordinal());
+            var rotatedRaw = HologramNativeTargetPlan.compile(RAW_ID, ExtendedFacing.DEFAULT, signal, config);
+            SimpleAssert.that(
+                rotatedRaw.cells()
+                    .stream()
+                    .anyMatch(cell -> cell.dx() == 1 && cell.facing() == ForgeDirection.EAST.ordinal()),
+                "raw native replay retains an explicit hatch rotation");
+            prototype(RAW_ID, new Controller(9));
+            try {
+                HologramNativeTargetPlan.compile(RAW_ID, ExtendedFacing.DEFAULT, signal, config);
+                throw new AssertionError("raw in-place model replacement kept stale paid material authority");
+            } catch (IOException expected) {}
+            prototype(RAW_ID, new Controller(6));
+            choice.setInteger("facing", -1);
             choice.setInteger("id", REJECT_ID);
             try {
                 HologramNativeTargetPlan.compile(RAW_ID, ExtendedFacing.DEFAULT, signal, config);
                 throw new AssertionError("raw illegal hatch survived replay");
             } catch (IOException expected) {}
+            prototype(RAW_ID, new Controller(11));
+            choice.setInteger("id", PORT_ID);
+            choice.setInteger("facing", ForgeDirection.SOUTH.ordinal());
+            try (var directional = HologramNativeTargetPlan.compile(RAW_ID, ExtendedFacing.DEFAULT, signal, config)) {
+                SimpleAssert.eq(
+                    (1 << ForgeDirection.NORTH.ordinal()) | (1 << ForgeDirection.SOUTH.ordinal()),
+                    directional.facingMask(1, 0, 0, new ItemStack(block, 1, PORT_ID)),
+                    "selected position proves native legal directions without a declaration adapter");
+                SimpleAssert.that(
+                    directional.cells()
+                        .stream()
+                        .anyMatch(cell -> cell.dx() == 1 && cell.facing() == ForgeDirection.SOUTH.ordinal()),
+                    "explicit direction is applied after the native constructor resets its default");
+            }
+            choice.setInteger("facing", ForgeDirection.UP.ordinal());
+            try {
+                HologramNativeTargetPlan.compile(RAW_ID, ExtendedFacing.DEFAULT, signal, config);
+                throw new AssertionError("native coordinate rejected UP but the selected hatch rotated anyway");
+            } catch (IOException expected) {}
+            choice.setInteger("facing", -1);
+            try (var restored = HologramNativeTargetPlan.compile(RAW_ID, ExtendedFacing.DEFAULT, signal, config)) {
+                SimpleAssert.that(
+                    restored.cells()
+                        .stream()
+                        .anyMatch(cell -> cell.dx() == 1 && cell.facing() == ForgeDirection.NORTH.ordinal()),
+                    "restoring direction uses the native default");
+            }
             prototype(RAW_ID, new Controller(8));
             var required = HologramNativeTargetPlan
                 .compile(RAW_ID, ExtendedFacing.DEFAULT, signal, new NBTTagCompound());
@@ -376,6 +422,7 @@ final class HologramNativeTargetPlanRegression {
     private static final class Controller extends MTEEnhancedMultiBlockBase<Controller>
         implements ISurvivalConstructable, INEIPreviewModifier {
 
+        static int nativeCalls;
         final int mode;
         int passes, started, completed;
         private IStructureDefinition<Controller> mufflerDefinition;
@@ -399,6 +446,7 @@ final class HologramNativeTargetPlanRegression {
         @Override
         public int survivalConstruct(ItemStack signal, int budget, ISurvivalBuildEnvironment env) {
             passes++;
+            nativeCalls++;
             if (started > 0) return 0;
             World world = getBaseMetaTileEntity().getWorld();
             if (mode == 8) {
@@ -433,10 +481,43 @@ final class HologramNativeTargetPlanRegression {
                 visited(world, 2, water);
                 return -1;
             }
-            if (mode == 6) {
+            if (mode == 11) {
+                world.setBlock(1, 128, 0, GregTechAPI.sBlockMachines, 0, 2);
+                var port = (IGregTechTileEntity) world.getTileEntity(1, 128, 0);
+                port.setInitialValuesAsNBT(null, (short) PORT_ID);
+                port.setFrontFacing(ForgeDirection.NORTH);
+                visited(
+                    world,
+                    1,
+                    new com.gtnewhorizon.structurelib.structure.IStructureElementNoPlacement<Controller>() {
+
+                        @Override
+                        public boolean check(Controller context, World owned, int x, int y, int z) {
+                            return owned.getTileEntity(x, y, z) instanceof IGregTechTileEntity hatch
+                                && hatch.getMetaTileID() == PORT_ID
+                                && (hatch.getFrontFacing() == ForgeDirection.NORTH
+                                    || hatch.getFrontFacing() == ForgeDirection.SOUTH);
+                        }
+
+                        @Override
+                        public boolean spawnHint(Controller context, World owned, int x, int y, int z,
+                            ItemStack trigger) {
+                            return false;
+                        }
+                    });
+                return -1;
+            }
+            if (mode == 10) {
+                world.setBlock(1, 128, 0, Blocks.stone, 0, 2);
+                world.setBlockToAir(1, 128, 0);
+                return 1;
+            }
+            if (mode == 6 || mode == 9) {
                 var tile = world.getTileEntity(1, 128, 0);
                 if (!(tile instanceof IGregTechTileEntity gt) || gt.getMetaTileID() != PORT_ID)
                     world.setBlock(1, 128, 0, Blocks.stone, 0, 2);
+                if (mode == 9 && tile instanceof IGregTechTileEntity gt && gt.getMetaTileID() == PORT_ID)
+                    gt.setInitialValuesAsNBT(null, (short) REJECT_ID);
                 int sectors = com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor
                     .getChannelData(signal, "ore_center_sectors");
                 world.setBlock(sectors + 2, 128, 0, Blocks.stone, 0, 2);
@@ -478,7 +559,7 @@ final class HologramNativeTargetPlanRegression {
 
         @Override
         public void construct(ItemStack signal, boolean hints) {
-            if (mode == 6 || mode == 7 || mode == 8) return;
+            if (mode == 6 || mode == 7 || mode == 8 || mode == 9) return;
             getBaseMetaTileEntity().getWorld()
                 .setBlock(hints ? 7 : 3, 128, 0, hints ? Blocks.glass : Blocks.gold_block, 0, 3);
         }
@@ -491,7 +572,7 @@ final class HologramNativeTargetPlanRegression {
         @Override
         public void onPreviewStructureComplete(ItemStack signal) {
             completed++;
-            if (mode == 6) {
+            if (mode == 6 || mode == 9) {
                 World world = getBaseMetaTileEntity().getWorld();
                 world.setBlock(1, 128, 0, GregTechAPI.sBlockMachines, 0, 2);
                 BaseMetaTileEntity port = (BaseMetaTileEntity) world.getTileEntity(1, 128, 0);
