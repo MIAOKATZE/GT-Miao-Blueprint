@@ -28,6 +28,10 @@ final class HologramNativePreviewWorld extends HologramResourceWorld {
     private static final int CHUNK_LIMIT = 30_000_000 >> 4;
     private final Thread owner = Thread.currentThread();
     private final Long2ObjectLinkedOpenHashMap<Placement> placements = new Long2ObjectLinkedOpenHashMap<>();
+    private final Long2ObjectLinkedOpenHashMap<TileEntity> tiles = new Long2ObjectLinkedOpenHashMap<>();
+    private final java.util.Map<Integer, Integer> hatchCounts = new java.util.LinkedHashMap<>();
+    private long writeVersion, countedVersion = -1;
+    private long contentHash;
     private final java.util.Map<Long, ItemStack> materials = new java.util.LinkedHashMap<>();
     private final java.util.Set<Long> selectedWrites = new java.util.LinkedHashSet<>();
     private ItemStack selected;
@@ -74,6 +78,13 @@ final class HologramNativePreviewWorld extends HologramResourceWorld {
         selectedWrites.clear();
     }
 
+    boolean edit(boolean value) {
+        if (Thread.currentThread() != owner) throw new IllegalStateException("LOCAL_NATIVE_PREVIEW_SCOPE");
+        boolean previous = recording;
+        recording = value;
+        return previous;
+    }
+
     /** Read-only iteration during generation; unlike the finished iterator, it does not freeze writes. */
     Iterator<Placement> currentPlacements() {
         return placements.values()
@@ -96,7 +107,21 @@ final class HologramNativePreviewWorld extends HologramResourceWorld {
                 for (long position : selectedWrites) materials.put(position, copy.copy());
             selected = null;
             selectedWrites.clear();
+            writeVersion++;
         }
+    }
+
+    java.util.Map<Integer, Integer> installedHatches() {
+        if (countedVersion != writeVersion) {
+            hatchCounts.clear();
+            // Only native tile positions participate, never the potentially 160k ordinary casing cells.
+            for (TileEntity tile : tiles.values())
+                if (tile instanceof gregtech.api.interfaces.tileentity.IGregTechTileEntity gt
+                    && gt.getMetaTileEntity() instanceof gregtech.api.metatileentity.implementations.MTEHatch)
+                    hatchCounts.merge(gt.getMetaTileID(), 1, Integer::sum);
+            countedVersion = writeVersion;
+        }
+        return hatchCounts;
     }
 
     ItemStack materialAt(int x, int y, int z) {
@@ -125,6 +150,18 @@ final class HologramNativePreviewWorld extends HologramResourceWorld {
         boolean result = changed;
         changed = false;
         return result;
+    }
+
+    long contentSignature() {
+        return contentHash ^ (0x9e3779b97f4a7c15L * placements.size());
+    }
+
+    private static long signature(long position, Block block, int meta) {
+        long value = position ^ (0x9e3779b97f4a7c15L * (1L + Block.getIdFromBlock(block)))
+            ^ (0x632be59bd9b4e019L * meta);
+        value ^= value >>> 30;
+        value *= 0xbf58476d1ce4e5b9L;
+        return value ^ value >>> 27;
     }
 
     @Override
@@ -188,6 +225,9 @@ final class HologramNativePreviewWorld extends HologramResourceWorld {
         if (block == Blocks.air) {
             if (previous == null) return false;
             placements.remove(position);
+            contentHash ^= signature(position, previous.block, previous.meta);
+            tiles.remove(position);
+            writeVersion++;
             materials.remove(position);
             selectedWrites.remove(position);
             changed = true;
@@ -251,7 +291,12 @@ final class HologramNativePreviewWorld extends HologramResourceWorld {
             next.zCoord = z;
             next.blockMetadata = metadata;
         }
-        placements.put(position, new Placement(x, y, z, block, metadata, next));
+        Placement previous = placements.put(position, new Placement(x, y, z, block, metadata, next));
+        if (previous != null) contentHash ^= signature(position, previous.block, previous.meta);
+        contentHash ^= signature(position, block, metadata);
+        if (next == null) tiles.remove(position);
+        else tiles.put(position, next);
+        writeVersion++;
         // Preserve identity only for the matching ItemBlock. Side-effect blocks have their own material.
         if (selected != null && Block.getBlockFromItem(selected.getItem()) == block) selectedWrites.add(position);
         else if (!materials.containsKey(position)) selectedWrites.remove(position);

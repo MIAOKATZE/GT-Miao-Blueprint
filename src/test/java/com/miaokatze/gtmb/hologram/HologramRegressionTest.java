@@ -69,6 +69,12 @@ public final class HologramRegressionTest {
             return;
         }
         Map<String, Runnable> cases = new LinkedHashMap<>();
+        cases.put(
+            "native_preparation_reuses_actor_and_avoids_unrelated_catalog_work",
+            HologramPreparationPerformanceRegression::run);
+        cases.put(
+            "actual_gt_industrial_washer_preparation_omits_optional_water",
+            HologramWasherPreparationRegression::run);
         cases.put("machine_update_seeds_coalesce_without_losing_components", () -> {
             try {
                 HologramMachineUpdateBatchRegression.run();

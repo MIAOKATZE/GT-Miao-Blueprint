@@ -2014,3 +2014,6 @@ gtmb.hologram.projector.native.reason.material.conditions_changed=材料来源�
 gtmb.hologram.projector.native.reason.material.refund_pending=原生材料退款未完成。
 gtmb.hologram.projector.native.reason.construction.pose_rejected=原生方块拒绝已保存的方向状态。
 gtmb.hologram.projector.native.reason.job.close_failed=关闭施工界面失败，未开始施工。
+gtmb.hologram.projector.native.reason.preview.no_progress=原生构造连续多轮没有有效进展，已停止准备。
+gtmb.hologram.projector.native.reason.preview.hatch_not_retained=所选仓室未被原生建造流程保留。
+gtmb.hologram.projector.native.reason.preview.hatch_direction_rejected=所选仓室方向不被原生位置接受。

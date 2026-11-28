@@ -37,6 +37,7 @@ public final class HologramRenderingRegression {
 
     public static void run() {
         previewOutlineDensity();
+        problemOutlines();
         completePreviewMaterial();
         occupancyBoundary();
         detachedTopologyRuns();
@@ -103,28 +104,136 @@ public final class HologramRenderingRegression {
             .that(small > 0 && enlarged > small, "zoom or framebuffer scaling restores the same cached grid gradually");
         SimpleAssert.eq(
             0f,
-            MiaoVisonLiteRenderer.previewOutlineAlpha(false, false, false, true, 0),
-            "dense ordinary material wireframes are skipped");
+            MiaoVisonLiteRenderer.previewOutlineAlpha(false, false),
+            "ordinary material wireframes are skipped");
         SimpleAssert.eq(
-            .45f,
-            MiaoVisonLiteRenderer.previewOutlineAlpha(false, false, false, true, 1),
-            "close-view ordinary opacity is unchanged");
+            0f,
+            MiaoVisonLiteRenderer.previewOutlineAlpha(false, false),
+            "ordinary cells stay without a wireframe even at close zoom");
         SimpleAssert.eq(
             1f,
-            MiaoVisonLiteRenderer.previewOutlineAlpha(true, false, false, true, 0),
+            MiaoVisonLiteRenderer.previewOutlineAlpha(true, false),
             "chosen cells keep their full highlight at every zoom");
         SimpleAssert.eq(
-            1f,
-            MiaoVisonLiteRenderer.previewOutlineAlpha(false, true, false, true, 0),
-            "related cells keep their full highlight at every zoom");
+            0f,
+            MiaoVisonLiteRenderer.previewOutlineAlpha(false, false),
+            "related but unselected cells are ordinary cells");
         SimpleAssert.eq(
-            .18f,
-            MiaoVisonLiteRenderer.previewOutlineAlpha(false, false, true, true, 0),
-            "explicit air retains its original opacity");
+            0f,
+            MiaoVisonLiteRenderer.previewOutlineAlpha(false, false),
+            "ordinary explicit air has no automatic wireframe");
         SimpleAssert.eq(
             .45f,
-            MiaoVisonLiteRenderer.previewOutlineAlpha(false, false, false, false, 0),
-            "unknown or diagnostic models retain their original wireframe");
+            MiaoVisonLiteRenderer.previewOutlineAlpha(false, true),
+            "diagnostic models retain a visible wireframe");
+    }
+
+    private static void problemOutlines() {
+        for (String status : new String[] { "", "pending", "missing", "satisfied", "placed", "replaced", "removed" }) {
+            NBTTagCompound row = boundaryCell(0, 0, 0, "minecraft:stone");
+            row.setString("status", status);
+            HologramState.Cell cell = new HologramState.Cell(0, row);
+            boolean problem = MiaoVisonLiteRenderer.problemOutline(null, cell);
+            SimpleAssert.that(!problem, "ordinary site state does not become a problem: " + status);
+            SimpleAssert.eq(
+                0,
+                MiaoVisonLiteRenderer.previewOutlineVertices(false, problem),
+                "ordinary UI bounds submit no line vertices: " + status);
+            SimpleAssert.eq(
+                24,
+                MiaoVisonLiteRenderer.previewOutlineVertices(true, problem),
+                "selecting an ordinary cell retains all twelve edges: " + status);
+        }
+        for (String status : new String[] { "occupied", "blocked", "unsupported", "unknown", "failed", "invalid",
+            "conflict", "protected" }) {
+            NBTTagCompound row = boundaryCell(0, 0, 0, "minecraft:stone");
+            row.setString("status", status);
+            SimpleAssert.that(
+                MiaoVisonLiteRenderer.problemOutline(null, new HologramState.Cell(0, row)),
+                "real site/job problems retain their outline: " + status);
+        }
+        NBTTagCompound anchor = boundaryCell(0, 0, 0, "minecraft:stone");
+        anchor.setBoolean("anchor", true);
+        anchor.setString("status", "protected");
+        SimpleAssert.that(
+            !MiaoVisonLiteRenderer.problemOutline(null, new HologramState.Cell(0, anchor)),
+            "the ordinary protected controller is not a conflicting target");
+        for (String flag : new String[] { "sourceMissing", "missingBlock" }) {
+            NBTTagCompound missing = boundaryCell(0, 0, 0, "minecraft:stone");
+            missing.setString("status", "pending");
+            missing.setBoolean(flag, true);
+            SimpleAssert.that(
+                MiaoVisonLiteRenderer.problemOutline(null, new HologramState.Cell(0, missing)),
+                "unavailable sources remain problems even while pending: " + flag);
+        }
+        NBTTagCompound source = boundarySource("problem-outlines");
+        NBTTagList rows = new NBTTagList();
+        rows.appendTag(boundaryCell(17, -2, 31, "minecraft:stone"));
+        NBTTagCompound unbuilt = boundaryCell(18, -2, 31, "minecraft:stone");
+        unbuilt.setString("status", "missing");
+        rows.appendTag(unbuilt);
+        source.setTag("cells", rows);
+        HologramState state = new HologramState(source);
+        HologramJobVisuals.bind(state);
+        try {
+            SimpleAssert.that(
+                !MiaoVisonLiteRenderer.problemOutline(state, state.cells.get(1)),
+                "an absent site block has no problem outline before a failed receipt");
+            NBTTagCompound receipt = new NBTTagCompound();
+            receipt.setBoolean("jobDelta", true);
+            receipt.setString("session", state.session);
+            receipt.setLong("planRevision", state.data.getLong("planRevision"));
+            receipt.setLong("batchSeq", 1);
+            receipt.setLong("sequence", 1);
+            receipt.setIntArray("ackIndices", new int[] { 0 });
+            receipt.setIntArray("ackSuccesses", new int[] { 0 });
+            NBTTagList statuses = new NBTTagList();
+            statuses.appendTag(new net.minecraft.nbt.NBTTagString("placed"));
+            receipt.setTag("ackStatuses", statuses);
+            HologramJobVisuals.accept(state, receipt);
+            SimpleAssert.that(
+                MiaoVisonLiteRenderer.problemOutline(state, state.cells.get(0)),
+                "failed placement receipts update the outline without changing material geometry");
+            receipt.setLong("sequence", 2);
+            receipt.setIntArray("ackIndices", new int[] { 1 });
+            NBTTagList missingStatuses = new NBTTagList();
+            missingStatuses.appendTag(new net.minecraft.nbt.NBTTagString("missing"));
+            receipt.setTag("ackStatuses", missingStatuses);
+            HologramJobVisuals.accept(state, receipt);
+            SimpleAssert.that(
+                HologramJobVisuals.failed(state, state.cells.get(1))
+                    && MiaoVisonLiteRenderer.problemOutline(state, state.cells.get(1)),
+                "a failed missing-material receipt marks an originally missing site block as a problem");
+            SimpleAssert.that(
+                !HologramJobVisuals.failed(null, state.cells.get(1))
+                    && !MiaoVisonLiteRenderer.problemOutline(null, state.cells.get(1)),
+                "failed receipt evidence cannot escape its owning snapshot");
+            LineTessellator tess = new LineTessellator();
+            SimpleAssert.eq(
+                24,
+                MiaoVisonLiteRenderer.emitWorldOutline(tess, state.cells.get(0)),
+                "a problem submits exactly twelve world-space edges");
+            SimpleAssert.eq(24, tess.vertices.size(), "the real line emitter submits every edge endpoint");
+            for (double[] point : tess.vertices) SimpleAssert.that(
+                point[0] >= 17 && point[0] <= 18
+                    && point[1] >= -2
+                    && point[1] <= -1
+                    && point[2] >= 31
+                    && point[2] <= 32,
+                "problem lines retain exact world-space voxel bounds");
+        } finally {
+            HologramJobVisuals.bind(null);
+        }
+    }
+
+    private static final class LineTessellator extends Tessellator {
+
+        final java.util.List<double[]> vertices = new java.util.ArrayList<>();
+
+        @Override
+        public void addVertex(double x, double y, double z) {
+            vertices.add(new double[] { x, y, z });
+        }
     }
 
     private static void occupancyBoundary() {
@@ -385,10 +494,10 @@ public final class HologramRenderingRegression {
         Class<?> renderer = MiaoVisonLiteRenderer.class;
         try {
             Field owner = renderer.getDeclaredField("worldState"), cursor = renderer.getDeclaredField("worldIndex"),
-                occupancy = renderer.getDeclaredField("worldOutlineCells");
+                groups = renderer.getDeclaredField("worldGroups");
             Method one = renderer.getDeclaredMethod("indexWorldCell", HologramState.class, HologramState.Cell.class),
                 finish = renderer.getDeclaredMethod("indexWorld", HologramState.class, long.class);
-            for (AccessibleObject field : new AccessibleObject[] { owner, cursor, occupancy, one, finish })
+            for (AccessibleObject field : new AccessibleObject[] { owner, cursor, groups, one, finish })
                 field.setAccessible(true);
             int[][] trials = { { 100, -1 }, { 0, -1 }, { 1000, -1 }, { 100, 3 }, { 100, 900 }, { 1000, 3 } };
             for (int[] trial : trials) {
@@ -420,8 +529,10 @@ public final class HologramRenderingRegression {
                 HologramRenderer.snapshotChanged(before, after);
                 int saved = cursor.getInt(null);
                 finish.invoke(null, after, Long.MAX_VALUE);
-                int total = ((java.util.Set<?>) occupancy.get(null)).size();
-                SimpleAssert.eq(changed < 0 ? 1000 : 999, total, "all unfiltered cells must reach world occupancy");
+                int total = 0;
+                for (Object group : ((java.util.Map<?, ?>) groups.get(null)).values())
+                    total += ((java.util.List<?>) field(group.getClass(), "cells").get(group)).size();
+                SimpleAssert.eq(changed < 0 ? 1000 : 999, total, "all unfiltered cells reach the material groups");
                 SimpleAssert.eq(
                     changed < 0 || prefix == 1000 ? prefix : 0,
                     saved,
@@ -448,7 +559,7 @@ public final class HologramRenderingRegression {
         NBTTagList rows = new NBTTagList();
         rows.appendTag(haloRow(-1, 15, 15, "minecraft:stone")); // visible center at a negative region edge
         rows.appendTag(haloRow(0, 15, 15, "minecraft:stone")); // material face occlusion across +X
-        rows.appendTag(haloRow(0, 16, 15, "minecraft:stone")); // outline ownership across +X/+Y
+        rows.appendTag(haloRow(0, 16, 15, "minecraft:stone")); // a diagonal no longer needed for ordinary outlines
         rows.appendTag(haloRow(0, 16, 16, "minecraft:stone")); // three-axis corner is never consulted
         rows.appendTag(haloRow(-1, 14, 15, "minecraft:glass")); // not a full opaque material occluder
         rows.appendTag(haloRow(0, 15, 15, "minecraft:glass")); // union of eligibility, even for duplicate coordinates
@@ -470,8 +581,7 @@ public final class HologramRenderingRegression {
         try {
             Field owner = renderer.getDeclaredField("worldState"), layer = renderer.getDeclaredField("worldLayer"),
                 cursor = renderer.getDeclaredField("worldIndex"), mode = renderer.getDeclaredField("localWorldRegions"),
-                groups = renderer.getDeclaredField("worldGroups"),
-                outline = renderer.getDeclaredField("worldOutlineCells"),
+                groups = renderer.getDeclaredField("worldGroups"), outline = renderer.getDeclaredField("worldGhosts"),
                 opaque = renderer.getDeclaredField("worldOccluders");
             Method position = renderer.getDeclaredMethod("coordinate", int.class, int.class, int.class),
                 index = renderer.getDeclaredMethod("indexWorld", HologramState.class, long.class),
@@ -495,7 +605,6 @@ public final class HologramRenderingRegression {
             Object corner = position.invoke(null, 0, 16, 16);
             Object glass = position.invoke(null, -1, 14, 15);
             Object filtered = position.invoke(null, 1, 15, 15);
-            java.util.Set<?> oldOutline = new java.util.HashSet<>((java.util.Set<?>) outline.get(null));
             java.util.Set<?> oldOpaque = new java.util.HashSet<>((java.util.Set<?>) opaque.get(null));
             SimpleAssert.that(
                 oldOpaque.contains(side) && !oldOpaque.contains(glass),
@@ -512,8 +621,6 @@ public final class HologramRenderingRegression {
             Object oldGlassFace = face.invoke(null, state.cells.get(0), cube, new int[] { 0, -1, 0 });
             SimpleAssert.eq(Boolean.FALSE, oldStoneFace, "the full cross-region neighbor hides its material face");
             SimpleAssert.eq(Boolean.TRUE, oldGlassFace, "transparent geometry preserves the adjacent material face");
-            int oldEdges = MiaoVisonLiteRenderer.BoundaryNeighborhood
-                .worldEdges(-1, 15, 15, (x, y, z) -> oldOutline.contains(invokePosition(position, x, y, z)));
 
             MiaoVisonLiteRenderer.releaseWorld();
             owner.set(null, state);
@@ -549,17 +656,14 @@ public final class HologramRenderingRegression {
             java.util.Set<?> localOutline = (java.util.Set<?>) outline.get(null);
             java.util.Set<?> localOpaque = (java.util.Set<?>) opaque.get(null);
             SimpleAssert.eq(0, cursor.getInt(null), "first visible region cannot depend on reading the global cursor");
-            SimpleAssert.eq(4, localOutline.size(), "no distant or triple-axis corner rows before the first group");
+            SimpleAssert.eq(3, localOutline.size(), "only the material-face halo is indexed before the first group");
             SimpleAssert.that(
-                localOutline.contains(side) && localOutline.contains(edge)
+                localOutline.contains(side) && !localOutline.contains(edge)
                     && !localOutline.contains(corner)
                     && !localOutline.contains(filtered)
                     && localOpaque.contains(side)
                     && !localOpaque.contains(glass),
-                "exact cross-region occupancy and opaque decisions, including duplicate/filter/partial cases");
-            int localEdges = MiaoVisonLiteRenderer.BoundaryNeighborhood
-                .worldEdges(-1, 15, 15, (x, y, z) -> localOutline.contains(invokePosition(position, x, y, z)));
-            SimpleAssert.eq(oldEdges, localEdges, "cross-region outline edge ownership is identical");
+                "material occlusion retains side neighbors, omitting unused outline diagonals and filtered rows");
             SimpleAssert.eq(
                 oldStoneFace,
                 face.invoke(null, state.cells.get(0), cube, new int[] { 1, 0, 0 }),
@@ -1403,8 +1507,9 @@ public final class HologramRenderingRegression {
             .getDeclaredMethod("advance", int.class, int.class, boolean.class, String.class, long.class);
         advance.setAccessible(true);
         advance.invoke(preparation, Integer.MAX_VALUE, 0, false, "tutorial-owner-pose", 2_000_000L);
-        // Headless fixture supplies only the boundary-drawn signal; cell preparation/projection/publication is real.
-        ((MiaoVisonLiteRenderer.PreviewBoundary) field(type, "boundary").get(preparation)).presented = true;
+        SimpleAssert.that(
+            field(type, "boundary").get(preparation) == null,
+            "material preparation no longer waits for an ordinary-cell boundary draw");
     }
 
     @SuppressWarnings("unchecked")
@@ -1658,8 +1763,8 @@ public final class HologramRenderingRegression {
             }
             Object blueprintPreparation = preparationConstructor.newInstance(HologramRenderer.editor(), state, true);
             SimpleAssert.that(
-                field(preparationType, "boundary").get(blueprintPreparation) != null,
-                "ordinary Blueprint keeps its independent early occupancy outline");
+                field(preparationType, "boundary").get(blueprintPreparation) == null,
+                "ordinary Blueprint does not allocate an all-cell occupancy outline");
             List<double[]> expected = new java.util.ArrayList<>();
             for (Object face : (List<?>) field(MiaoVisonLiteRenderer.class, "cachedFaces")
                 .get(HologramRenderer.editor())) expected.add(faceSnapshot(face));

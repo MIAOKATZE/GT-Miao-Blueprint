@@ -103,6 +103,13 @@ final class HologramNativeUiText {
                 + " "
                 + raw.substring(16);
         return switch (raw) {
+            case "LOCAL_NATIVE_PREVIEW_NO_PROGRESS" -> projectorOr(
+                "native.reason.preview.no_progress",
+                "原生构造连续多轮没有有效进展，已停止准备。");
+            case "所选仓室未被原生建造流程保留。" -> projectorOr("native.reason.preview.hatch_not_retained", raw);
+            case "所选仓室方向不被原生位置接受。", "所选仓室方向未被原生建造流程保留。" -> projectorOr(
+                "native.reason.preview.hatch_direction_rejected",
+                raw);
             case "施工请求已处理，未重复执行。" -> projectorOr("native.reason.job.replayed", raw);
             case "已有施工任务，请先取消或等待结束。" -> projectorOr("native.reason.job.busy", raw);
             case "存在待核定或待交付施工记录。" -> projectorOr("native.reason.job.recovery", raw);

@@ -26,6 +26,8 @@ final class HologramNativePreviewItems implements IItemSource {
 
     private final List<ItemStack> preferred = new ArrayList<>();
     private List<ItemStack> catalog;
+    private List<ItemStack> hatchCatalog;
+    private boolean neiCatalog;
     private final NBTTagCompound nativeConfig;
     private final java.util.Set<String> mandatory;
     private final java.util.function.Supplier<Map<Integer, Integer>> installed;
@@ -34,7 +36,11 @@ final class HologramNativePreviewItems implements IItemSource {
     private final Map<String, Integer> pinnedFacings = new java.util.LinkedHashMap<>();
     private final Map<Integer, Integer> profile = new java.util.LinkedHashMap<>();
     private final Map<String, Integer> mandatoryModels = new java.util.LinkedHashMap<>();
+    private final Map<String, Integer> configuredActual = new java.util.LinkedHashMap<>();
+    private final Map<Integer, Integer> configuredCounts = new java.util.LinkedHashMap<>();
     private String position = "";
+    private ItemStack nativeCasing;
+    private boolean nativeHatchSlot;
     private HologramNativePreviewWorld world;
 
     HologramNativePreviewItems() {
@@ -85,37 +91,86 @@ final class HologramNativePreviewItems implements IItemSource {
 
     void position(String value) {
         position = value;
+        nativeCasing = null;
+        nativeHatchSlot = false;
+    }
+
+    void position(String value, ItemStack casing, boolean hatchSlot) {
+        position = value;
+        nativeCasing = casing;
+        nativeHatchSlot = hatchSlot;
     }
 
     @Override
     public Map<ItemStack, Integer> take(Predicate<ItemStack> predicate, boolean simulate, int count) {
         if (count <= 0) return Collections.emptyMap();
-        if (nativeConfig != null) {
-            for (ItemStack stack : catalog()) {
-                ItemStack sample = match(predicate, stack);
-                if (sample != null && nativeAllows(sample)) {
-                    selected(sample, simulate);
-                    approved = simulate ? sample.copy() : null;
-                    return Collections.singletonMap(sample, count);
-                }
-            }
-            return Collections.emptyMap();
-        }
         for (ItemStack stack : preferred) {
             ItemStack sample = match(predicate, stack);
-            if (sample != null) {
-                selected(sample, simulate);
-                return Collections.singletonMap(sample, Integer.MAX_VALUE);
-            }
+            if (sample != null && allows(sample)) return take(sample, simulate, count);
+        }
+        // Native hatch predicates need only the machine registry, never every creative-tab item.
+        for (ItemStack stack : hatches()) {
+            if (!allows(stack)) continue;
+            ItemStack sample = match(predicate, stack);
+            if (sample != null) return remember(sample, simulate, count);
+        }
+        // This position was already generated and queried by the same native declaration. If the
+        // selected hatch quota/model is unavailable, let its native chain fall back to this casing;
+        // do not search every creative item again for each of 160k eligible casing coordinates.
+        if (nativeConfig != null && nativeHatchSlot) {
+            ItemStack sample = nativeCasing == null ? null : match(predicate, nativeCasing);
+            return sample != null && allows(sample) ? remember(sample, simulate, count) : Collections.emptyMap();
         }
         for (ItemStack stack : catalog()) {
             ItemStack sample = match(predicate, stack);
-            if (sample == null) continue;
-            preferred.add(stack);
-            selected(sample, simulate);
-            return Collections.singletonMap(sample, Integer.MAX_VALUE);
+            if (sample != null && allows(sample)) return remember(sample, simulate, count);
+        }
+        // Dedicated servers have no NEI catalog. Enumerate an item's variants only on an unresolved
+        // native predicate, stopping at the first match; high metadata is not truncated to 0..15.
+        if (!neiCatalog) for (Object entry : Item.itemRegistry) {
+            if (!(entry instanceof ItemBlock item) || item instanceof ItemMachines) continue;
+            List<ItemStack> variants = new ArrayList<>();
+            try {
+                item.getSubItems(item, item.getCreativeTab(), variants);
+            } catch (RuntimeException | LinkageError unavailable) {
+                continue;
+            }
+            for (ItemStack stack : variants) {
+                if (stack == null || stack.getItem() == null) continue;
+                ItemStack sample = match(predicate, stack);
+                if (sample != null && allows(sample)) return remember(sample, simulate, count);
+            }
         }
         return Collections.emptyMap();
+    }
+
+    private boolean allows(ItemStack stack) {
+        return nativeConfig == null || nativeAllows(stack);
+    }
+
+    private Map<ItemStack, Integer> remember(ItemStack sample, boolean simulate, int count) {
+        preferred.add(sample.copy());
+        return take(sample, simulate, count);
+    }
+
+    private Map<ItemStack, Integer> take(ItemStack sample, boolean simulate, int count) {
+        selected(sample, simulate);
+        approved = nativeConfig != null && simulate ? sample.copy() : null;
+        return Collections.singletonMap(sample, count);
+    }
+
+    List<ItemStack> hatches() {
+        if (hatchCatalog != null) return hatchCatalog;
+        hatchCatalog = new ArrayList<>();
+        for (int id = 0; id < GregTechAPI.METATILEENTITIES.length; id++)
+            if (GregTechAPI.METATILEENTITIES[id] instanceof gregtech.api.metatileentity.implementations.MTEHatch)
+                hatchCatalog.add(new ItemStack(GregTechAPI.sBlockMachines, 1, id));
+        hatchCatalog.sort(java.util.Comparator.comparingInt((ItemStack stack) -> {
+            int tier = HologramCellPolicy.hatchTier(stack);
+            return nativeConfig != null && nativeConfig.getBoolean("presetActive") ? -tier : tier;
+        })
+            .thenComparingInt(ItemStack::getItemDamage));
+        return hatchCatalog;
     }
 
     @Override
@@ -137,10 +192,11 @@ final class HologramNativePreviewItems implements IItemSource {
         if (catalog != null) return catalog;
         long started = HologramRuntimeMetrics.start();
         try {
-            catalog = nativeConfig == null ? readNeiCatalog() : null;
+            catalog = readNeiCatalog();
+            neiCatalog = catalog != null;
             if (catalog == null) {
                 catalog = new ArrayList<>();
-                readRegistry(catalog, nativeConfig != null);
+                readRegistry(catalog);
             }
             if (nativeConfig != null) {
                 catalog.sort(java.util.Comparator.comparingInt((ItemStack stack) -> {
@@ -162,9 +218,9 @@ final class HologramNativePreviewItems implements IItemSource {
         int id = stack.getItemDamage();
         Integer fixed = pinned.get(position);
         if (fixed != null) return fixed == id;
-        Map<Integer, Integer> placed = installed.get();
         if (!nativeConfig.getBoolean("presetActive")) return pinned.isEmpty() || mandatory.contains(position);
-        if (!profile.isEmpty()) return profile.containsKey(id) ? placed.getOrDefault(id, 0) < profile.get(id)
+        if (!profile.isEmpty()) return profile.containsKey(id) ? installed.get()
+            .getOrDefault(id, 0) < profile.get(id)
             : Integer.valueOf(id)
                 .equals(mandatoryModels.get(position));
         int wanted = nativeConfig.getInteger("hatchTier");
@@ -172,39 +228,36 @@ final class HologramNativePreviewItems implements IItemSource {
     }
 
     void requireConfiguredChoices(List<HologramNativeTargetPlan.Cell> cells) throws java.io.IOException {
-        Map<String, Integer> actual = new java.util.LinkedHashMap<>();
-        Map<Integer, Integer> counts = new java.util.LinkedHashMap<>();
-        for (var cell : cells) if (HologramCellPolicy.hatchTier(cell.material()) != Integer.MAX_VALUE) {
+        if (pinned.isEmpty() && profile.isEmpty()) return;
+        for (var cell : cells) recordConfiguredChoice(cell);
+        for (var entry : pinned.entrySet()) if (!entry.getValue()
+            .equals(configuredActual.get(entry.getKey()))) throw new java.io.IOException("所选仓室未被该位置的原生建造流程接受。");
+        for (var entry : profile.entrySet()) if (!entry.getValue()
+            .equals(configuredCounts.getOrDefault(entry.getKey(), 0)))
+            throw new java.io.IOException("所选仓室搭配未被完整放入原生目标。");
+    }
+
+    void recordConfiguredChoice(HologramNativeTargetPlan.Cell cell) throws java.io.IOException {
+        if (pinned.isEmpty() && profile.isEmpty()) return;
+        if (HologramCellPolicy.hatchTier(cell.material()) != Integer.MAX_VALUE) {
             int id = cell.material()
                 .getItemDamage();
-            actual.put(HologramNativeTargetPlan.position(cell.dx(), cell.dy(), cell.dz()), id);
-            counts.merge(id, 1, Integer::sum);
+            configuredActual.put(HologramNativeTargetPlan.position(cell.dx(), cell.dy(), cell.dz()), id);
+            configuredCounts.merge(id, 1, Integer::sum);
             int wanted = pinnedFacings
                 .getOrDefault(HologramNativeTargetPlan.position(cell.dx(), cell.dy(), cell.dz()), -1);
             if (wanted >= 0 && wanted != cell.facing()) throw new java.io.IOException("所选仓室方向与原生放置结果不同。");
         }
-        for (var entry : pinned.entrySet()) if (!entry.getValue()
-            .equals(actual.get(entry.getKey()))) throw new java.io.IOException("所选仓室未被该位置的原生建造流程接受。");
-        for (var entry : profile.entrySet()) if (!entry.getValue()
-            .equals(counts.getOrDefault(entry.getKey(), 0))) throw new java.io.IOException("所选仓室搭配未被完整放入原生目标。");
     }
 
-    private static void readRegistry(List<ItemStack> result, boolean nativeMode) {
+    private static void readRegistry(List<ItemStack> result) {
         for (int id = 0; id < GregTechAPI.METATILEENTITIES.length; id++) {
             IMetaTileEntity machine = GregTechAPI.METATILEENTITIES[id];
-            if (machine != null)
-                add(result, nativeMode ? new ItemStack(GregTechAPI.sBlockMachines, 1, id) : machine.getStackForm(1));
+            if (machine != null) add(result, machine.getStackForm(1));
         }
         for (Object entry : Item.itemRegistry) {
             if (!(entry instanceof ItemBlock item) || item instanceof ItemMachines) continue;
-            List<ItemStack> items = new ArrayList<>();
-            try {
-                item.getSubItems(item, item.getCreativeTab(), items);
-            } catch (RuntimeException | LinkageError unavailable) {
-                // One unenumerable item must not discard the rest of the local catalog.
-            }
-            if (items.isEmpty()) items.add(new ItemStack(item, 1, 0));
-            for (ItemStack stack : items) add(result, stack);
+            add(result, new ItemStack(item, 1, 0));
         }
     }
 

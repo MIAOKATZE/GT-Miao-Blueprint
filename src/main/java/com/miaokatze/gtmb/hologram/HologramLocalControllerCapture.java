@@ -476,7 +476,10 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
             cell.candidates = material == null ? java.util.Collections.emptyList() : nativeTarget.offers(material);
             cell.candidateComplete = false;
             cell.candidateBoundary = "原生自动建造候选；配置后将重新生成完整目标";
-            return nativeOffers(cell, target.targetStack());
+            return nativeOffers(
+                cell,
+                target.targetStack(),
+                nativeTarget.facingMask(target.dx(), target.dy(), target.dz(), target.targetStack()));
         }
         HologramCapture.Cell cell = capture != null ? capture.cells.get(index)
             : nativePreview.candidateCell(
@@ -625,7 +628,7 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
             }
             if (facingMask != 0) {
                 row.setIntArray("hatchFacings", hatchFacings());
-                row.setInteger("hatchFacing", -1);
+                if (!row.hasKey("hatchFacing", 3)) row.setInteger("hatchFacing", -1);
             }
             row.setString("role", role);
             row.setInteger("chosenChoice", chosen);
@@ -698,6 +701,7 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
         nativePlacements = null;
         if (nativePreview != null) nativePreview.close();
         nativePreview = null;
+        if (nativeTarget != null) nativeTarget.close();
         nativeTarget = null;
         nativeTargetCells = null;
         if (sourceCandidates != null) sourceCandidates.clear();
@@ -721,29 +725,42 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
 
     private boolean prepareGeometry(long deadline) throws IOException {
         if (nativeWorkflow) {
-            nativeTarget = HologramNativeTargetPlan.compile(controllerId, facing, trigger, settings);
+            if (nativeTarget == null)
+                nativeTarget = HologramNativeTargetPlan.begin(controllerId, facing, trigger, settings);
+            if (!nativeTarget.advance(deadline)) return false;
             detachedTile = nativeTarget.controller();
             detachedContext = nativeTarget.context();
             report = nativeTarget.channels();
-            nativeTargetCells = new ArrayList<>();
-            for (HologramNativeTargetPlan.Cell value : nativeTarget.cells()) {
-                HologramCapture.Cell cell = new HologramCapture.Cell(
-                    value.element(),
-                    detachedTile.xCoord + value.dx(),
-                    detachedTile.yCoord + value.dy(),
-                    detachedTile.zCoord + value.dz(),
-                    value.trigger(),
-                    true);
-                cell.block = value.block();
-                cell.meta = value.metadata();
-                cell.previewStack = value.material();
-                cell.previewFacing = value.facing();
-                cell.targetDisplay = value.display();
-                cell.role = HologramCellPolicy.hatchTier(value.material()) == Integer.MAX_VALUE ? "block" : "hatch";
-                cell.renderKind = value.material() != null && value.material()
-                    .getItem() instanceof ItemMachines ? "item" : "block";
-                nativeTargetCells.add(cell);
-            }
+            nativeTargetCells = new java.util.AbstractList<>() {
+
+                @Override
+                public HologramCapture.Cell get(int index) {
+                    var value = nativeTarget.cells()
+                        .get(index);
+                    HologramCapture.Cell cell = new HologramCapture.Cell(
+                        value.element(),
+                        detachedTile.xCoord + value.dx(),
+                        detachedTile.yCoord + value.dy(),
+                        detachedTile.zCoord + value.dz(),
+                        value.trigger(),
+                        true);
+                    cell.block = value.block();
+                    cell.meta = value.metadata();
+                    cell.previewStack = value.material();
+                    cell.previewFacing = value.facing();
+                    cell.targetDisplay = value.display();
+                    cell.role = HologramCellPolicy.hatchTier(value.material()) == Integer.MAX_VALUE ? "block" : "hatch";
+                    cell.renderKind = value.material() != null && value.material()
+                        .getItem() instanceof ItemMachines ? "item" : "block";
+                    return cell;
+                }
+
+                @Override
+                public int size() {
+                    return nativeTarget.cells()
+                        .size();
+                }
+            };
             declared = nativeTargetCells.iterator();
             return true;
         }
@@ -778,7 +795,6 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
                 previewTrigger(null, settings),
                 this::createNativeController,
                 facing,
-                new HologramNativePreviewItems(),
                 true);
         }
         if (!nativePreview.advance(deadline)) return false;
@@ -1118,7 +1134,14 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
     }
 
     private NativeOffers nativeOffers(HologramCapture.Cell cell, ItemStack material) {
+        return nativeOffers(cell, material, -1);
+    }
+
+    /** Six-face proof is requested only by selectedOffers, for its current model at this position. */
+    private NativeOffers nativeOffers(HologramCapture.Cell cell, ItemStack material, int selectedFacingMask) {
         List<ItemStack> candidates = cell.candidates == null ? java.util.Collections.emptyList() : cell.candidates;
+        int nativeFacingMask = nativeTarget == null ? -1
+            : selectedFacingMask >= 0 ? selectedFacingMask : facingMask(cell, material);
         NativeClassOffers options;
         {
             List<String> roles = new ArrayList<>(candidates.size());
@@ -1129,15 +1152,16 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
                 roles.add(HologramCellPolicy.candidateRole(cell, candidate));
                 int tier = HologramCellPolicy.hatchTier(candidate);
                 tiers[index] = tier == Integer.MAX_VALUE ? -1 : tier;
-                if (tier != Integer.MAX_VALUE) masks[index] = (byte) facingMask(cell, candidate);
+                if (tier != Integer.MAX_VALUE) masks[index] = (byte) (nativeFacingMask >= 0
+                    ? (HologramValues.sameMaterial(material, candidate) ? nativeFacingMask : 0)
+                    : facingMask(cell, candidate));
             }
             options = new NativeClassOffers(candidates, roles, tiers, masks);
         }
         int chosen = material == null ? -1
             : options.selectedByMaterial.getOrDefault(HologramBlueprintResources.ExactKey.borrowed(material), -1);
-        int mask = chosen < 0
-            ? (HologramCellPolicy.hatchTier(material) == Integer.MAX_VALUE ? 0 : facingMask(cell, material))
-            : options.facingMasks[chosen];
+        int mask = chosen < 0 ? (HologramCellPolicy.hatchTier(material) == Integer.MAX_VALUE ? 0
+            : nativeFacingMask >= 0 ? nativeFacingMask : facingMask(cell, material)) : options.facingMasks[chosen];
         return new NativeOffers(
             options,
             cell.role,

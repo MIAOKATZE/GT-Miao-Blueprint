@@ -83,8 +83,93 @@ final class HologramNativeControllerAccessRegression {
                 !HologramNativeProjectionJob.controllerAccessAllowed(player, tile, machine),
                 "revoking native access also stops a previously accessible public controller");
             SimpleAssert.that(machine.accessReads >= 7, "every attempt consults the actual native access callback");
+            pendingObservationOwnership(unsafe);
+            baselineIdentity(tile, machine);
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("native controller business access fixture", failure);
+        }
+    }
+
+    /** Exercise the existing inbox's ownership boundaries without constructing or checking a live world. */
+    @SuppressWarnings("unchecked")
+    private static void pendingObservationOwnership(sun.misc.Unsafe unsafe) throws ReflectiveOperationException {
+        var server = new HologramStockNativeServer(
+            (endpoint, reply) -> {
+                throw new AssertionError("an invalid endpoint must not receive an observation reply");
+            });
+        var gateField = HologramStockNativeServer.class.getDeclaredField("requests");
+        gateField.setAccessible(true);
+        var gate = (HologramRequestGate) gateField.get(server);
+        var inboxField = HologramStockNativeServer.class.getDeclaredField("inbox");
+        inboxField.setAccessible(true);
+        var inbox = (java.util.ArrayDeque<Object>) inboxField.get(server);
+        var waitingType = Class.forName("com.miaokatze.gtmb.hologram.HologramStockNativeServer$Waiting");
+        var create = waitingType.getDeclaredConstructor(
+            HologramWorkspace.ActionEndpoint.class,
+            HologramStockNativeWire.Request.class,
+            HologramRequestGate.Lease.class);
+        create.setAccessible(true);
+        var ownedObservation = waitingType.getDeclaredField("observation");
+        ownedObservation.setAccessible(true);
+        var offsets = HologramNativeProjectionJob.Observation.class.getDeclaredField("offsets");
+        offsets.setAccessible(true);
+        for (boolean reset : new boolean[] { false, true }) {
+            var lease = gate.acquire(new Object());
+            var waiting = create.newInstance(null, null, lease);
+            var pending = (HologramNativeProjectionJob.Observation) unsafe
+                .allocateInstance(HologramNativeProjectionJob.Observation.class);
+            var coordinates = new java.util.ArrayList<HologramNativeTargetPlan.Offset>();
+            coordinates.add(new HologramNativeTargetPlan.Offset(1, 2, 3));
+            offsets.set(pending, coordinates);
+            ownedObservation.set(waiting, pending);
+            inbox.addLast(waiting);
+            SimpleAssert.eq(1, gate.size(), "a sliced observation retains its ingress capacity until it terminates");
+            if (reset) server.reset();
+            else server.tick(Long.MAX_VALUE);
+            SimpleAssert.that(
+                inbox.isEmpty() && gate.size() == 0 && !lease.active(),
+                "disconnect and reset both release pending observation ingress ownership");
+            SimpleAssert.that(coordinates.isEmpty(), "unpublished footprint coordinates are released at termination");
+            try {
+                pending.advance(Long.MAX_VALUE);
+                throw new AssertionError("retired observation resumed");
+            } catch (java.io.IOException expected) {}
+            pending.close();
+            lease.close();
+            SimpleAssert.eq(0, gate.size(), "repeated terminal cleanup does not release another request's capacity");
+        }
+        server.tick(Long.MAX_VALUE);
+        server.reset();
+    }
+
+    private static void baselineIdentity(PrivateController tile, AccessMachine machine)
+        throws ReflectiveOperationException {
+        var facing = MTEEnhancedMultiBlockBase.class.getDeclaredField("mExtendedFacing");
+        facing.setAccessible(true);
+        facing.set(machine, com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing.DEFAULT);
+        var save = HologramNativeProjectionJob.class
+            .getDeclaredMethod("baseline", BaseMetaTileEntity.class, java.util.List.class);
+        save.setAccessible(true);
+        var read = HologramNativeProjectionJob.class.getDeclaredMethod("cachedBaseline", BaseMetaTileEntity.class);
+        read.setAccessible(true);
+        HologramNativeProjectionJob.clearBaselines();
+        try {
+            var coordinates = java.util.Arrays
+                .asList(new HologramNativeTargetPlan.Offset(1, 0, 0), new HologramNativeTargetPlan.Offset(8, 0, 0));
+            var saved = save.invoke(null, tile, coordinates);
+            SimpleAssert.that(
+                read.invoke(null, tile) == saved,
+                "a compact footprint remains available for a later replacement or whole-structure demolition");
+            var cells = saved.getClass()
+                .getDeclaredField("offsets");
+            cells.setAccessible(true);
+            SimpleAssert
+                .eq(coordinates, cells.get(saved), "both old and newly authorized positions survive in the footprint");
+            tile.xCoord++;
+            SimpleAssert
+                .eq(null, read.invoke(null, tile), "moving the controller invalidates its historical footprint");
+        } finally {
+            HologramNativeProjectionJob.clearBaselines();
         }
     }
 

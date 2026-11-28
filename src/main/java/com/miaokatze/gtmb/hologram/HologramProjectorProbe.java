@@ -35,6 +35,19 @@ final class HologramProjectorProbe {
 
     private final HologramProjectorSimulation simulation;
     private boolean discovered;
+    private java.util.Iterator<HologramProjectorSimulation.Position> discovery;
+    private final Set<HologramProjectorSimulation.Position> validated = new LinkedHashSet<>();
+    private final Map<IStructureElement<?>, Map<String, ItemStack>> casingProposals = new IdentityHashMap<>();
+    private int applyStage, pinCursor;
+    private java.util.Iterator<Map.Entry<HologramProjectorSimulation.Position, ItemStack>> casingCursor;
+    private java.util.Iterator<HologramProjectorSimulation.Position> slotCursor, rawCursor;
+    private java.util.Iterator<HologramNativePreviewWorld.Placement> mandatoryCursor;
+    private final Set<String> mandatory = new LinkedHashSet<>();
+    private final Set<HologramProjectorSimulation.Position> pinnedPositions = new LinkedHashSet<>();
+    private HologramNativePreviewItems selectedSource;
+    private java.util.Iterator<HologramProjectorSimulation.Position> requiredCursor;
+    private boolean requiredFilled;
+    private long requiredBefore;
     private final Map<HologramProjectorSimulation.Position, ItemStack> casings = new LinkedHashMap<>();
     private final Map<HologramProjectorSimulation.Position, List<ItemStack>> slots = new LinkedHashMap<>();
     private final Map<HologramProjectorSimulation.Position, ItemStack> rawSeeds = new LinkedHashMap<>();
@@ -61,20 +74,41 @@ final class HologramProjectorProbe {
             simulation.world.getBlockMetadata(p.x(), p.y(), p.z()));
     }
 
-    boolean fillRequiredSpots() {
-        boolean filled = false;
-        for (var entry : new ArrayList<>(simulation.elements.entrySet())) {
-            var p = entry.getKey();
-            if (!simulation.world.isAirBlock(p.x(), p.y(), p.z()) || acceptsAir(entry.getValue(), p)) continue;
-            List<ItemStack> candidates = offers(entry.getValue(), p, simulation.signalAt(p));
-            if (!candidates.isEmpty() && place(candidates.get(0), p)) filled = true;
+    boolean fillRequiredSpots(long deadline) {
+        if (requiredCursor == null) {
+            requiredCursor = new ArrayList<>(simulation.elements.keySet()).iterator();
+            requiredFilled = false;
+            requiredBefore = simulation.world.contentSignature();
         }
-        return filled;
+        while (requiredCursor.hasNext() && System.nanoTime() < deadline) {
+            var p = requiredCursor.next();
+            var element = simulation.elements.get(p);
+            if (!simulation.world.isAirBlock(p.x(), p.y(), p.z()) || acceptsAir(element, p)) continue;
+            List<ItemStack> candidates = offers(element, p, simulation.signalAt(p));
+            if (!candidates.isEmpty() && place(candidates.get(0), p)) requiredFilled = true;
+        }
+        if (requiredCursor.hasNext()) return false;
+        requiredFilled = simulation.world.contentSignature() != requiredBefore;
+        requiredCursor = null;
+        return true;
     }
 
-    void discover() throws IOException {
-        List<HologramProjectorSimulation.Position> positions = new ArrayList<>(simulation.elements.keySet());
-        for (var p : positions) {
+    boolean requiredFilled() {
+        return requiredFilled;
+    }
+
+    ItemStack casingAt(HologramProjectorSimulation.Position p) {
+        return casings.get(p);
+    }
+
+    boolean hatchSlot(HologramProjectorSimulation.Position p) {
+        return slots.containsKey(p);
+    }
+
+    boolean discover(long deadline) throws IOException {
+        if (discovery == null) discovery = new ArrayList<>(simulation.elements.keySet()).iterator();
+        while (discovery.hasNext() && System.nanoTime() < deadline) {
+            var p = discovery.next();
             IStructureElement<?> element = simulation.elements.get(p);
             Block block = simulation.world.getBlock(p.x(), p.y(), p.z());
             if (block.getMaterial() == net.minecraft.block.material.Material.water
@@ -84,25 +118,86 @@ final class HologramProjectorProbe {
                 simulation.world.setBlockToAir(p.x(), p.y(), p.z());
                 continue;
             }
+            if (simulation.option("footprintOnly")) continue;
             ItemStack actual = material(p);
-            IStructureElement.BlocksToPlace offered = query(element, p, simulation.signalAt(p));
-            ItemStack casing = null;
-            if (offered != null && offered.getStacks() != null) for (ItemStack stack : offered.getStacks()) {
-                if (stack != null && stack.getItem() != null && !hatch(stack) && stack.getItem() instanceof ItemBlock) {
-                    casing = stack.copy();
-                    break;
+            ItemStack signal = simulation.signalAt(p);
+            String signature = signature(signal);
+            Map<String, List<ItemStack>> bySignal = proposals.computeIfAbsent(element, key -> new LinkedHashMap<>());
+            List<ItemStack> candidates = bySignal.get(signature);
+            if (candidates == null) {
+                var offered = query(element, p, signal);
+                ItemStack casing = null;
+                if (offered != null && offered.getStacks() != null) for (ItemStack stack : offered.getStacks()) {
+                    if (stack != null && stack.getItem() != null
+                        && !hatch(stack)
+                        && stack.getItem() instanceof ItemBlock) {
+                        casing = stack.copy();
+                        break;
+                    }
                 }
+                casingProposals.computeIfAbsent(element, key -> new LinkedHashMap<>())
+                    .put(signature, casing);
+                candidates = proposals(element, p, offered);
+                bySignal.put(signature, candidates);
             }
-            List<ItemStack> candidates = offers(element, p, simulation.signalAt(p));
             if (!candidates.isEmpty()) {
                 slots.put(p, candidates);
-                if (actual != null && !hatch(actual)) casings.put(p, actual.copy());
-                else if (casing != null) casings.put(p, casing);
+                ItemStack casing = casingProposals.getOrDefault(element, Collections.emptyMap())
+                    .get(signature);
+                if (actual != null && !hatch(actual)) casings.put(p, actual);
+                else if (hatch(actual)) {
+                    // A shared declaration can choose its casing from this exact coordinate/context.
+                    // Only positions that actually need restoration pay for a fresh native query.
+                    var offered = query(element, p, signal);
+                    if (offered != null && offered.getStacks() != null) for (ItemStack stack : offered.getStacks()) {
+                        if (stack != null && !hatch(stack)
+                            && stack.getItem() instanceof ItemBlock
+                            && accepts(element, p, stack)) {
+                            casings.put(p, stack.copy());
+                            break;
+                        }
+                    }
+                } else if (casing != null) casings.put(p, casing.copy());
             }
         }
-        // Raw constructors expose no element. NEI hooks supply seeds only, never target authority.
-        if (simulation.construction) discoverRawSeeds();
+        if (discovery.hasNext()) return false;
+        if (simulation.construction && !simulation.option("footprintOnly")) discoverRawSeeds();
+        discovery = null;
         discovered = true;
+        return true;
+    }
+
+    private String signature(ItemStack signal) {
+        return signal.stackSize + ":" + String.valueOf(signal.getTagCompound());
+    }
+
+    private List<ItemStack> proposals(IStructureElement<?> element, HologramProjectorSimulation.Position p,
+        IStructureElement.BlocksToPlace offered) {
+        List<ItemStack> result = new ArrayList<>();
+        if (offered != null) {
+            if (offered.getStacks() != null)
+                for (ItemStack stack : offered.getStacks()) if (stack != null && hatch(stack)) add(result, stack);
+            if (offered.getPredicate() != null) for (ItemStack candidate : simulation.items.hatches()) {
+                if (result.size() >= 128) break;
+                try {
+                    ItemStack sample = HologramNativePreviewItems.match(offered.getPredicate(), candidate);
+                    if (sample != null) add(result, sample);
+                } catch (RuntimeException | LinkageError ignored) {}
+            }
+        }
+        ItemStack actual = material(p);
+        if (result.isEmpty() && hatch(actual)) add(result, actual);
+        // Legacy no-placement hatch adders have no usable predicate. Only unresolved required
+        // positions or an explicit preset need the expensive native place/check fallback here.
+        if (result.isEmpty() && element != null
+            && (simulation.option("presetActive")
+                || simulation.world.isAirBlock(p.x(), p.y(), p.z()) && !acceptsAir(element, p))) {
+            for (ItemStack candidate : simulation.items.hatches()) {
+                if (result.size() >= 128) break;
+                if (accepts(element, p, candidate)) add(result, candidate);
+            }
+        }
+        return result;
     }
 
     @SuppressWarnings({ "rawtypes", "unchecked" })
@@ -126,51 +221,18 @@ final class HologramProjectorProbe {
 
     List<ItemStack> offers(IStructureElement<?> element, HologramProjectorSimulation.Position p, ItemStack signal) {
         List<ItemStack> known = slots.get(p);
-        if (known != null) return copies(known);
-        if (discovered) return Collections.emptyList();
+        if (discovered && validated.contains(p)) return known == null ? Collections.emptyList() : copies(known);
         if (element == null) {
             ItemStack seed = rawSeeds.get(p);
             return seed == null ? Collections.emptyList() : Collections.singletonList(seed.copy());
         }
-        String signature = signal.stackSize + ":" + String.valueOf(signal.getTagCompound());
-        Map<String, List<ItemStack>> bySignal = proposals.computeIfAbsent(element, key -> new LinkedHashMap<>());
-        List<ItemStack> prior = bySignal.get(signature);
-        if (prior != null) {
-            List<ItemStack> result = new ArrayList<>();
-            for (ItemStack candidate : prior) if (accepts(element, p, candidate)) add(result, candidate);
-            return result;
-        }
-        var offered = query(element, p, signal);
+        if (known == null) known = proposals(element, p, query(element, p, signal));
         List<ItemStack> result = new ArrayList<>();
-        if (offered == null) {
-            ItemStack actual = material(p);
-            if (hatch(actual) && accepts(element, p, actual)) add(result, actual);
-            else if (simulation.world.isAirBlock(p.x(), p.y(), p.z()) && !acceptsAir(element, p)) {
-                int examined = 0;
-                for (ItemStack candidate : simulation.items.catalog()) {
-                    if (++examined > 65536 || result.size() >= 128) break;
-                    if (hatch(candidate) && accepts(element, p, candidate)) add(result, candidate);
-                }
-            }
-            bySignal.put(signature, copies(result));
-            return result;
+        for (ItemStack candidate : known) if (accepts(element, p, candidate)) add(result, candidate);
+        if (discovered) {
+            slots.put(p, result);
+            validated.add(p);
         }
-        if (offered.getStacks() != null) for (ItemStack stack : offered.getStacks())
-            if (stack != null && hatch(stack) && accepts(element, p, stack)) add(result, stack);
-        // A complete listed literal block has no unexplained inventory search. Native chains can carry partial lists.
-        if (offered.getPredicate() != null
-            && (offered.getStacks() == null || HologramNativeStructurePreview.isChain(element) || !result.isEmpty())) {
-            int examined = 0;
-            for (ItemStack candidate : simulation.items.catalog()) {
-                if (++examined > 65536 || result.size() >= 128) break;
-                if (!hatch(candidate)) continue;
-                try {
-                    ItemStack sample = HologramNativePreviewItems.match(offered.getPredicate(), candidate);
-                    if (sample != null && accepts(element, p, sample)) add(result, sample);
-                } catch (RuntimeException | LinkageError ignored) {}
-            }
-        }
-        bySignal.put(signature, copies(result));
         return result;
     }
 
@@ -281,27 +343,24 @@ final class HologramProjectorProbe {
                 ItemStack seed = new ItemStack(cell.block(), 1, gt.getMetaTileID());
                 if (casing == null || hatch(casing) || !hatch(seed) || slots.containsKey(p)) continue;
                 rawFacings.put(p, gt.getFrontFacing());
-                if (rawAccepts(p, seed)) {
-                    casings.put(p, casing.copy());
-                    rawSeeds.put(p, seed.copy());
-                    slots.put(p, Collections.singletonList(seed.copy()));
-                } else rawFacings.remove(p);
+                // A seed is only a proposal. The single configured native replay below, and its
+                // exact result validation, decide whether a requested raw hatch survives.
+                casings.put(p, casing.copy());
+                rawSeeds.put(p, seed.copy());
+                slots.put(p, Collections.singletonList(seed.copy()));
             }
         } finally {
             fresh.setWorldObj(old);
         }
     }
 
-    private boolean rawAccepts(HologramProjectorSimulation.Position p, ItemStack stack) throws IOException {
-        try (HologramProjectorSimulation isolated = simulation.fork()) {
-            if (!isolated.probe.place(stack, p)) return false;
-            ForgeDirection facing = rawFacings.get(p);
-            if (facing != null && isolated.world.getTileEntity(p.x(), p.y(), p.z()) instanceof IGregTechTileEntity gt)
-                gt.setFrontFacing(facing);
-            isolated.replayIsolated(new HologramNativePreviewItems());
-            TileEntity result = isolated.world.getTileEntity(p.x(), p.y(), p.z());
-            return result instanceof IGregTechTileEntity gt && gt.getMetaTileID() == stack.getItemDamage();
-        }
+    private boolean rawModelMatches(HologramProjectorSimulation.Position p, ItemStack candidate) {
+        ItemStack seed = rawSeeds.get(p);
+        var original = seed == null ? null : gregtech.common.blocks.ItemMachines.getMetaTileEntity(seed);
+        var selected = gregtech.common.blocks.ItemMachines.getMetaTileEntity(candidate);
+        return original != null && selected != null
+            && original.getClass()
+                .isInstance(selected);
     }
 
     private boolean placeRaw(ItemStack stack, HologramProjectorSimulation.Position p) {
@@ -312,101 +371,183 @@ final class HologramProjectorProbe {
         return true;
     }
 
-    void apply(NBTTagCompound config) throws IOException {
-        // Restore actual per-position casing, never a controller-wide assumed material.
-        if (simulation.construction)
-            for (var e : casings.entrySet()) if (!place(e.getValue(), e.getKey())) throw new IOException("原生默认外壳无法放置。");
-        if (simulation.construction) for (var e : slots.entrySet()) {
-            var p = e.getKey();
-            if (!casings.containsKey(p) && simulation.world.isAirBlock(p.x(), p.y(), p.z())
-                && !e.getValue()
-                    .isEmpty())
-                if (!place(
-                    e.getValue()
-                        .get(0),
-                    p)) throw new IOException("当前原生仓位没有接受所选等级的仓室。");
-        }
+    boolean apply(NBTTagCompound config, long deadline) throws IOException {
+        if (config.getBoolean("footprintOnly")) return true;
         var pins = config.getTagList("nativeHatchChoices", 10);
-        Set<String> mandatory = new LinkedHashSet<>();
-        for (var it = simulation.world.currentPlacements(); it.hasNext();) {
-            var cell = it.next();
-            var p = new HologramProjectorSimulation.Position(cell.x(), cell.y(), cell.z());
-            if (hatch(material(p)) && !casings.containsKey(p)) mandatory.add(
-                HologramNativeTargetPlan.position(
-                    p.x() - simulation.controller.xCoord,
-                    p.y() - simulation.controller.yCoord,
-                    p.z() - simulation.controller.zCoord));
-        }
-        if (config.getBoolean("presetActive")) {
-            com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor
-                .setChannelData(simulation.trigger, "gt_hatch", 1);
-            for (var p : slots.keySet())
-                if (!rawSeeds.containsKey(p)) simulation.world.setBlockToAir(p.x(), p.y(), p.z());
-
-        }
-        Set<HologramProjectorSimulation.Position> pinnedPositions = new LinkedHashSet<>();
-        for (int n = 0; n < pins.tagCount(); n++) {
-            var row = pins.getCompoundTagAt(n);
-            var p = new HologramProjectorSimulation.Position(
-                simulation.controller.xCoord + row.getInteger("x"),
-                simulation.controller.yCoord + row.getInteger("y"),
-                simulation.controller.zCoord + row.getInteger("z"));
-            ItemStack wanted = new ItemStack(gregtech.api.GregTechAPI.sBlockMachines, 1, row.getInteger("id"));
-            IStructureElement<?> element = simulation.elements.get(p);
-            boolean raw = element == null && material(p) != null;
-            if (raw && row.hasKey("facing", 3) && row.getInteger("facing") >= 0)
-                rawFacings.put(p, ForgeDirection.getOrientation(row.getInteger("facing")));
-            boolean valid = raw ? rawAccepts(p, wanted) : element != null && accepts(element, p, wanted);
-            if (!valid) throw new IOException("所选仓室未被该位置的原生建造流程接受。");
-            pinnedPositions.add(p);
-            if (raw) {
-                if (!placeRaw(wanted, p)) throw new IOException("所选仓室未被该位置的原生建造流程接受。");
-            } else simulation.world.setBlockToAir(p.x(), p.y(), p.z());
-            if (row.hasKey("facing", 3) && row.getInteger("facing") >= 0
-                && simulation.world.getTileEntity(p.x(), p.y(), p.z()) instanceof IGregTechTileEntity gt)
-                gt.setFrontFacing(ForgeDirection.getOrientation(row.getInteger("facing")));
-        }
-        if (config.getBoolean("presetActive") && !rawSeeds.isEmpty()) {
-            HologramNativePreviewItems selectedSource = new HologramNativePreviewItems(
-                config,
-                mandatory,
-                this::installed);
-            int wanted = config.getInteger("hatchTier");
-            for (var p : rawSeeds.keySet()) {
-                if (pinnedPositions.contains(p)) continue;
-                ItemStack selected = null;
-                selectedSource.position(
-                    HologramNativeTargetPlan.position(
-                        p.x() - simulation.controller.xCoord,
-                        p.y() - simulation.controller.yCoord,
-                        p.z() - simulation.controller.zCoord));
-                int examined = 0;
-                for (ItemStack candidate : simulation.items.catalog()) {
-                    if (++examined > 65536) break;
-                    if (hatch(candidate) && selectedSource.takeOne(candidate, true)
-                        && (HologramCellPolicy.hatchTier(candidate) == wanted
-                            || config.getBoolean("hatchDowngrade") && HologramCellPolicy.hatchTier(candidate) <= wanted)
-                        && rawAccepts(p, candidate)) {
-                        selected = candidate;
-                        break;
+        while (System.nanoTime() < deadline) {
+            switch (applyStage) {
+                case 0 -> {
+                    if (casingCursor == null) casingCursor = casings.entrySet()
+                        .iterator();
+                    if (simulation.construction && casingCursor.hasNext()) {
+                        var e = casingCursor.next();
+                        if (!HologramValues.sameMaterial(material(e.getKey()), e.getValue())
+                            && !place(e.getValue(), e.getKey())) throw new IOException("原生默认外壳无法放置。");
+                    } else applyStage++;
+                }
+                case 1 -> {
+                    if (slotCursor == null) slotCursor = slots.keySet()
+                        .iterator();
+                    if (simulation.construction && slotCursor.hasNext()) {
+                        var p = slotCursor.next();
+                        if (!casings.containsKey(p) && simulation.world.isAirBlock(p.x(), p.y(), p.z())) {
+                            List<ItemStack> choices = offers(simulation.elements.get(p), p, simulation.signalAt(p));
+                            if (!choices.isEmpty() && !place(choices.get(0), p))
+                                throw new IOException("当前原生仓位没有接受所选等级的仓室。");
+                        }
+                    } else {
+                        slotCursor = null;
+                        applyStage++;
                     }
                 }
-                if (selected == null) throw new IOException("当前原生仓位没有接受所选等级的仓室。");
-                placeRaw(selected, p);
+                case 2 -> {
+                    if (mandatoryCursor == null) mandatoryCursor = simulation.world.currentPlacements();
+                    if (mandatoryCursor.hasNext()) {
+                        var cell = mandatoryCursor.next();
+                        var p = new HologramProjectorSimulation.Position(cell.x(), cell.y(), cell.z());
+                        if (hatch(material(p)) && !casings.containsKey(p)) mandatory.add(relative(p));
+                    } else applyStage++;
+                }
+                case 3 -> {
+                    if (config.getBoolean("presetActive")) {
+                        com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor
+                            .setChannelData(simulation.trigger, "gt_hatch", 1);
+                        if (slotCursor == null) slotCursor = slots.keySet()
+                            .iterator();
+                        if (slotCursor.hasNext()) {
+                            var p = slotCursor.next();
+                            if (!rawSeeds.containsKey(p)) simulation.world.setBlockToAir(p.x(), p.y(), p.z());
+                            break;
+                        }
+                    }
+                    applyStage++;
+                }
+                case 4 -> {
+                    if (pinCursor < pins.tagCount()) {
+                        var row = pins.getCompoundTagAt(pinCursor++);
+                        var p = position(row);
+                        ItemStack wanted = new ItemStack(
+                            gregtech.api.GregTechAPI.sBlockMachines,
+                            1,
+                            row.getInteger("id"));
+                        IStructureElement<?> element = simulation.elements.get(p);
+                        boolean raw = element == null && material(p) != null;
+                        boolean valid = raw ? rawSeeds.containsKey(p) : element != null && accepts(element, p, wanted);
+                        if (!valid) throw new IOException("所选仓室未被该位置的原生建造流程接受。");
+                        pinnedPositions.add(p);
+                        if (raw) {
+                            if (row.hasKey("facing", 3) && row.getInteger("facing") >= 0)
+                                rawFacings.put(p, ForgeDirection.getOrientation(row.getInteger("facing")));
+                            if (!placeRaw(wanted, p)) throw new IOException("所选仓室未被该位置的原生建造流程接受。");
+                        } else simulation.world.setBlockToAir(p.x(), p.y(), p.z());
+                    } else applyStage++;
+                }
+                case 5 -> {
+                    if (selectedSource == null)
+                        selectedSource = new HologramNativePreviewItems(config, mandatory, this::installed);
+                    if (rawCursor == null) rawCursor = rawSeeds.keySet()
+                        .iterator();
+                    if (config.getBoolean("presetActive") && rawCursor.hasNext()) {
+                        var p = rawCursor.next();
+                        if (pinnedPositions.contains(p)) break;
+                        selectedSource.position(relative(p));
+                        ItemStack selected = null;
+                        for (ItemStack candidate : selectedSource.hatches())
+                            if (selectedSource.takeOne(candidate, true) && rawModelMatches(p, candidate)) {
+                                selected = candidate;
+                                break;
+                            }
+                        if (selected == null || !placeRaw(selected, p)) throw new IOException("当前原生仓位没有接受所选等级的仓室。");
+                    } else {
+                        // A plain default target is already complete. Do not reconstruct it just to
+                        // prove that the native constructor still accepts its own unchanged output.
+                        if (config.getBoolean("presetActive") || pins.tagCount() > 0) {
+                            simulation.beginReplay(selectedSource);
+                            applyStage++;
+                        } else applyStage = 7;
+                    }
+                }
+                case 6 -> {
+                    if (simulation.replayStep()) applyStage++;
+                }
+                case 7 -> {
+                    if (pinCursor > 0) pinCursor = 0;
+                    applyStage++;
+                }
+                case 8 -> {
+                    if (pinCursor < pins.tagCount()) {
+                        var row = pins.getCompoundTagAt(pinCursor++);
+                        var p = position(row);
+                        if (!(simulation.world.getTileEntity(p.x(), p.y(), p.z()) instanceof IGregTechTileEntity gt)
+                            || gt.getMetaTileID() != row.getInteger("id")) throw new IOException("所选仓室未被原生建造流程保留。");
+                        if (row.hasKey("facing", 3) && row.getInteger("facing") >= 0)
+                            orient(position(row), row.getInteger("facing"));
+                    } else return true;
+                }
+                default -> throw new IllegalStateException("LOCAL_NATIVE_PREVIEW_APPLY_STAGE");
             }
         }
-        if (simulation.construction || config.getBoolean("presetActive") || pins.tagCount() > 0)
-            simulation.replay(new HologramNativePreviewItems(config, mandatory, this::installed));
+        return false;
+    }
+
+    private String relative(HologramProjectorSimulation.Position p) {
+        return HologramNativeTargetPlan.position(
+            p.x() - simulation.controller.xCoord,
+            p.y() - simulation.controller.yCoord,
+            p.z() - simulation.controller.zCoord);
+    }
+
+    private HologramProjectorSimulation.Position position(NBTTagCompound row) {
+        return new HologramProjectorSimulation.Position(
+            simulation.controller.xCoord + row.getInteger("x"),
+            simulation.controller.yCoord + row.getInteger("y"),
+            simulation.controller.zCoord + row.getInteger("z"));
+    }
+
+    @SuppressWarnings({ "rawtypes", "unchecked" })
+    private boolean directionAccepted(HologramProjectorSimulation.Position p, int direction) {
+        if (!(simulation.world.getTileEntity(p.x(), p.y(), p.z()) instanceof IGregTechTileEntity gt)
+            || gt.getMetaTileEntity() == null) return false;
+        ForgeDirection facing = ForgeDirection.getOrientation(direction);
+        if (!gt.getMetaTileEntity()
+            .isFacingValid(facing)) return false;
+        gt.setFrontFacing(facing);
+        IStructureElement element = simulation.elements.get(p);
+        if (element == null) return rawSeeds.containsKey(p);
+        if (simulation.context instanceof MTEMultiBlockBase machine) machine.clearHatches();
+        return element.check(simulation.context, simulation.world, p.x(), p.y(), p.z())
+            && gt.getFrontFacing() == facing;
+    }
+
+    private void orient(HologramProjectorSimulation.Position p, int direction) throws IOException {
+        if (rawSeeds.containsKey(p)) {
+            if (!(simulation.world.getTileEntity(p.x(), p.y(), p.z()) instanceof IGregTechTileEntity gt)
+                || gt.getFrontFacing()
+                    .ordinal() != direction
+                || !gt.getMetaTileEntity()
+                    .isFacingValid(ForgeDirection.getOrientation(direction)))
+                throw new IOException("所选仓室方向未被原生建造流程保留。");
+            return;
+        }
+        if (direction < 0 || direction > 5 || !directionAccepted(p, direction))
+            throw new IOException("所选仓室方向不被原生位置接受。");
+    }
+
+    int facingMask(HologramProjectorSimulation.Position p, ItemStack sample) {
+        if (!hatch(sample) || !HologramValues.sameMaterial(material(p), sample)
+            || !(simulation.world.getTileEntity(p.x(), p.y(), p.z()) instanceof IGregTechTileEntity gt)) return 0;
+        ForgeDirection original = gt.getFrontFacing();
+        int mask = 0;
+        try {
+            for (int direction = 0; direction < 6; direction++)
+                if (directionAccepted(p, direction)) mask |= 1 << direction;
+            return mask;
+        } finally {
+            gt.setFrontFacing(original);
+        }
     }
 
     private Map<Integer, Integer> installed() {
-        Map<Integer, Integer> result = new LinkedHashMap<>();
-        for (var it = simulation.world.currentPlacements(); it.hasNext();) {
-            var cell = it.next();
-            if (cell.tile() instanceof IGregTechTileEntity tile
-                && tile.getMetaTileEntity() instanceof gregtech.api.metatileentity.implementations.MTEHatch)
-                result.merge(tile.getMetaTileID(), 1, Integer::sum);
-        }
-        return result;
+        return simulation.world.installedHatches();
     }
 }

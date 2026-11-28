@@ -11,13 +11,11 @@ import java.util.Map;
 
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.init.Blocks;
-import net.minecraft.init.Items;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 import net.minecraft.world.World;
 
-import com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor;
 import com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing;
 import com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation;
 import com.miaokatze.gtmb.hologram.HologramStockNativeWire.Projection;
@@ -42,9 +40,9 @@ final class HologramNativeProjectionJob implements HologramConstructionJobs.Sour
 
         final java.lang.ref.WeakReference<World> world;
         final int x, y, z, facing, id;
-        final HologramNativeTargetPlan plan;
+        final List<HologramNativeTargetPlan.Offset> offsets;
 
-        Baseline(BaseMetaTileEntity controller, HologramNativeTargetPlan plan) {
+        Baseline(BaseMetaTileEntity controller, List<HologramNativeTargetPlan.Offset> offsets) {
             world = new java.lang.ref.WeakReference<>(controller.getWorldObj());
             x = controller.xCoord;
             y = controller.yCoord;
@@ -52,7 +50,7 @@ final class HologramNativeProjectionJob implements HologramConstructionJobs.Sour
             id = controller.getMetaTileID();
             facing = ((MTEEnhancedMultiBlockBase<?>) controller.getMetaTileEntity()).getExtendedFacing()
                 .ordinal();
-            this.plan = plan;
+            this.offsets = java.util.Collections.unmodifiableList(offsets);
         }
 
         boolean matches(BaseMetaTileEntity controller) {
@@ -85,10 +83,22 @@ final class HologramNativeProjectionJob implements HologramConstructionJobs.Sour
     private final long started = System.nanoTime();
     static final String LIMITED_SCOPE_DETAIL = "按本次原生已知范围处理；更早参数丢失的范围外残留无法识别。";
     private boolean initialized, scopeFallback;
+    private Baseline previous;
+    private List<HologramNativeTargetPlan.Offset> baselineOffsets, operationOffsets;
+    private List<HologramNativeTargetPlan.Offset> targetOffsets = new ArrayList<>();
+    private final java.util.TreeMap<HologramNativeTargetPlan.Offset, HologramNativeTargetPlan.Cell> union = new java.util.TreeMap<>(
+        Comparator.comparingInt(HologramNativeTargetPlan.Offset::y)
+            .reversed()
+            .thenComparingInt(HologramNativeTargetPlan.Offset::z)
+            .thenComparingInt(HologramNativeTargetPlan.Offset::x));
+    private java.util.Iterator<HologramNativeTargetPlan.Cell> unionRows;
+    private int preparePhase, prepareCursor;
+    private boolean occupied;
+    private long preparedTotal;
     private HologramMaterials.Context stock, recovery;
     private List<HologramNativeTargetPlan.Cell> work = java.util.Collections.emptyList();
     private final Map<HologramBlueprintResources.ExactKey, ItemStack> funding = new LinkedHashMap<>();
-    private final HologramNativeConstruction.ProjectionCache placements = new HologramNativeConstruction.ProjectionCache();
+    private HologramNativeConstruction.ProjectionCache placements = new HologramNativeConstruction.ProjectionCache();
     private final boolean creative;
     private int next, fundCursor;
     private boolean anchorRemoved;
@@ -109,102 +119,260 @@ final class HologramNativeProjectionJob implements HologramConstructionJobs.Sour
         if (!current()) throw new IOException("原生目标准备期间控制器、访问权限或工具已变化。");
     }
 
-    /** Native simulation/check callbacks are indivisible; the owning queue checks cancellation between boundaries. */
-    private void initialize() throws IOException {
-        HologramNativeTargetPlan cached;
-        synchronized (HologramNativeProjectionJob.class) {
-            cached = cachedBaseline(controller);
-        }
-        scopeFallback = cached == null && intent.operation() != Operation.BUILD;
-        // A cache is optional source data, never a prerequisite or authorization for BEGIN.
-        HologramNativeTargetPlan baseline = cached != null ? cached : compileBaseline(intent, main, facing);
-        target = intent.operation() == Operation.DEMOLISH ? baseline : compile(intent, main, facing);
-        if (!current()) throw new IOException("施工上下文已变化。");
-        if (intent.operation() != Operation.DEMOLISH && !target.targetDigest()
-            .equals(intent.nativeTargetDigest())) throw new IOException("客户端投影与服务器原生目标不同，请重新读取后确认。");
-        Stage stage = stage(endpoint.world, controller, baseline);
-        if (!current()) throw new IOException("施工上下文已变化。");
-        if (!allows(intent.operation(), stage)) throw new IOException("当前结构状态不能执行此操作：" + stage);
-        baseline(controller, baseline);
-        stock = new HologramMaterials.Context(endpoint.player, session.materialSettings, session.slot);
-        session.materialContext = stock;
-        recovery = HologramDemolition.recoveryContext(endpoint.player, session.slot, intent.destination());
-        var union = new LinkedHashMap<String, HologramNativeTargetPlan.Cell>();
-        for (var cell : baseline.cells()) union.put(key(cell), cell);
-        if (intent.operation() != Operation.DEMOLISH) {
-            // Old-only positions are cleared after a native size/channel change; adjacent coordinates never enter.
-            for (var cell : target.cells()) union.put(key(cell), cell);
-        }
-        work = new ArrayList<>(union.values());
-        work.removeIf(cell -> cell.dx() == 0 && cell.dy() == 0 && cell.dz() == 0);
-        work.sort(
-            Comparator.comparingInt(HologramNativeTargetPlan.Cell::dy)
-                .reversed()
-                .thenComparingInt(HologramNativeTargetPlan.Cell::dz)
-                .thenComparingInt(HologramNativeTargetPlan.Cell::dx));
-        if (intent.operation() != Operation.DEMOLISH) {
-            var targets = new LinkedHashMap<String, HologramNativeTargetPlan.Cell>();
-            for (var cell : target.cells()) targets.put(key(cell), cell);
-            for (int i = 0; i < work.size(); i++) {
-                var before = work.get(i);
-                var wanted = targets.get(key(before));
-                if (wanted == null) work.set(i, air(before));
+    /** Preparation uses the existing job budget; native checks remain indivisible server callbacks. */
+    private boolean initialize(long deadline) throws IOException {
+        while (System.nanoTime() < deadline) {
+            if (!current()) throw new IOException("施工上下文已变化。");
+            switch (preparePhase) {
+                case 0 -> {
+                    previous = cachedBaseline(controller);
+                    scopeFallback = previous == null && intent.operation() != Operation.BUILD;
+                    target = intent.operation() == Operation.DEMOLISH
+                        ? previous == null ? beginFootprint(intent, main, facing) : null
+                        : beginTarget(intent, main, facing);
+                    preparePhase++;
+                }
+                case 1 -> {
+                    if (target != null && !target.advance(deadline)) return false;
+                    if (target != null && !target.complete()) throw new IOException(target.failure());
+                    if (intent.operation() != Operation.DEMOLISH && !target.targetDigest()
+                        .equals(intent.nativeTargetDigest())) throw new IOException("客户端投影与服务器原生目标不同，请重新读取后确认。");
+                    baselineOffsets = previous == null ? targetOffsets : previous.offsets;
+                    prepareCursor = 0;
+                    preparePhase++;
+                }
+                case 2 -> {
+                    if (target != null) {
+                        var cells = target.cells();
+                        while (prepareCursor < cells.size() && System.nanoTime() < deadline) {
+                            var cell = cells.get(prepareCursor++);
+                            var offset = offset(cell);
+                            targetOffsets.add(offset);
+                            union.put(
+                                offset,
+                                intent.operation() == Operation.DEMOLISH ? air(offset) : constructionCell(cell));
+                        }
+                        if (prepareCursor < cells.size()) return false;
+                        target.close();
+                        target = null;
+                    }
+                    prepareCursor = 0;
+                    preparePhase++;
+                }
+                case 3 -> {
+                    while (prepareCursor < baselineOffsets.size() && System.nanoTime() < deadline) {
+                        var offset = baselineOffsets.get(prepareCursor++);
+                        union.computeIfAbsent(offset, HologramNativeProjectionJob::air);
+                        if (offset.x() == 0 && offset.y() == 0 && offset.z() == 0) continue;
+                        int x = controller.xCoord + offset.x(), y = controller.yCoord + offset.y(),
+                            z = controller.zCoord + offset.z();
+                        if (!endpoint.world.blockExists(x, y, z)) throw new IOException("当前结构范围包含未加载区块。");
+                        occupied |= endpoint.world.getBlock(x, y, z) != Blocks.air
+                            || endpoint.world.getTileEntity(x, y, z) != null;
+                    }
+                    if (prepareCursor < baselineOffsets.size()) return false;
+                    preparePhase++;
+                }
+                case 4 -> {
+                    // GT/StructureLib world callbacks cannot safely be moved across threads or interrupted.
+                    checkNativeStructure(machine, controller);
+                    if (!current()) throw new IOException("施工上下文已变化。");
+                    var stage = machine.mMachine ? Stage.FORMED : occupied ? Stage.UNFORMED : Stage.CONTROLLER_ONLY;
+                    if (!allows(intent.operation(), stage)) throw new IOException("当前结构状态不能执行此操作：" + stage);
+                    baseline(controller, baselineOffsets);
+                    stock = new HologramMaterials.Context(endpoint.player, session.materialSettings, session.slot);
+                    session.materialContext = stock;
+                    recovery = HologramDemolition.recoveryContext(endpoint.player, session.slot, intent.destination());
+                    work = new ArrayList<>();
+                    operationOffsets = previous == null ? targetOffsets : new ArrayList<>();
+                    unionRows = union.values()
+                        .iterator();
+                    preparePhase++;
+                }
+                case 5 -> {
+                    while (unionRows.hasNext() && System.nanoTime() < deadline) {
+                        var cell = unionRows.next();
+                        if (operationOffsets != targetOffsets) operationOffsets.add(offset(cell));
+                        if (cell.dx() != 0 || cell.dy() != 0 || cell.dz() != 0) work.add(cell);
+                        unionRows.remove();
+                    }
+                    if (unionRows.hasNext()) return false;
+                    unionRows = null;
+                    // An interrupted replacement may have touched new-only positions. Keep their union until success.
+                    synchronized (HologramNativeProjectionJob.class) {
+                        BASELINES.remove(controller);
+                        baseline(controller, operationOffsets);
+                    }
+                    operationOffsets = null;
+                    previous = null;
+                    baselineOffsets = null;
+                    preparedTotal = work.size() + (intent.operation() == Operation.DEMOLISH ? 1 : 0);
+                    initialized = true;
+                    return true;
+                }
+                default -> throw new IOException("原生准备阶段无效。");
             }
         }
-        if (!current()) throw new IOException("施工上下文已变化。");
-        initialized = true;
+        return false;
     }
 
-    private static HologramNativeTargetPlan.Cell air(HologramNativeTargetPlan.Cell before) {
+    private static HologramNativeTargetPlan.Offset offset(HologramNativeTargetPlan.Cell cell) {
+        return new HologramNativeTargetPlan.Offset(cell.dx(), cell.dy(), cell.dz());
+    }
+
+    private static HologramNativeTargetPlan.Cell constructionCell(HologramNativeTargetPlan.Cell cell) {
+        // Native placement consumes the owned material/NBT snapshot, never a simulation element or its world.
         return new HologramNativeTargetPlan.Cell(
-            before.dx(),
-            before.dy(),
-            before.dz(),
+            cell.dx(),
+            cell.dy(),
+            cell.dz(),
+            cell.block(),
+            cell.metadata(),
+            cell.material(),
+            cell.facing(),
+            null,
+            cell.tileData(),
+            null,
+            null,
+            cell.requiredAir());
+    }
+
+    private static HologramNativeTargetPlan.Cell air(HologramNativeTargetPlan.Offset offset) {
+        return new HologramNativeTargetPlan.Cell(
+            offset.x(),
+            offset.y(),
+            offset.z(),
             Blocks.air,
             0,
             null,
             -1,
-            new NBTTagCompound(),
-            new NBTTagCompound(),
-            before.element(),
-            before.trigger(),
+            null,
+            null,
+            null,
+            null,
             true);
     }
 
-    static ServerObservation observe(HologramWorkspace.ActionEndpoint endpoint, Projection intent, int main,
-        int encodedFacing, int x, int y, int z) throws IOException {
-        var controller = controller(endpoint, intent, x, y, z, encodedFacing);
-        var machine = (MTEEnhancedMultiBlockBase<?>) controller.getMetaTileEntity();
-        HologramNativeTargetPlan cached;
-        synchronized (HologramNativeProjectionJob.class) {
+    /** A PROBE owns only its footprint run, and releases it at every terminal boundary. */
+    static final class Observation implements AutoCloseable {
+
+        private final HologramStockNativeEntry.Submission submission;
+        private final BaseMetaTileEntity controller;
+        private final Baseline cached;
+        private HologramNativeTargetPlan pending;
+        private final List<HologramNativeTargetPlan.Offset> offsets = new ArrayList<>();
+        private int cursor;
+        private boolean occupied, closed;
+        private ServerObservation result;
+
+        Observation(HologramStockNativeEntry.Submission submission) throws IOException {
+            this.submission = submission;
+            var intent = submission.intent;
+            controller = controller(
+                submission.endpoint,
+                intent.projection(),
+                intent.x(),
+                intent.y(),
+                intent.z(),
+                intent.facing());
             cached = cachedBaseline(controller);
         }
-        // World observation is independent of a newly edited, possibly incomplete preset.
-        var target = cached != null ? cached : compileBaseline(intent, main, machine.getExtendedFacing());
-        var baseline = baseline(controller, target);
-        var stage = stage(endpoint.world, controller, baseline);
-        if (controller(endpoint, intent, x, y, z, encodedFacing) != controller)
-            throw new IOException("原生观察期间控制器或访问权限已变化。");
-        return new ServerObservation(intent.controller(), x, y, z, stage, intent.targetRevision(), "");
+
+        boolean advance(long deadline) throws IOException {
+            if (closed) throw new IOException("原生观察请求已关闭。");
+            requireCurrent();
+            if (result != null) return true;
+            if (System.nanoTime() >= deadline) return false;
+            var intent = submission.intent;
+            if (cached == null) {
+                if (pending == null) pending = beginFootprint(
+                    intent.projection(),
+                    intent.main(),
+                    ((MTEEnhancedMultiBlockBase<?>) controller.getMetaTileEntity()).getExtendedFacing());
+                if (!pending.advance(deadline)) return false;
+                if (!pending.complete()) throw new IOException(pending.failure());
+            }
+            var cells = cached == null ? pending.cells() : null;
+            int size = cached == null ? cells.size() : cached.offsets.size();
+            while (cursor < size && System.nanoTime() < deadline) {
+                var offset = cached == null ? offset(cells.get(cursor++)) : cached.offsets.get(cursor++);
+                if (cached == null) offsets.add(offset);
+                if (offset.x() == 0 && offset.y() == 0 && offset.z() == 0) continue;
+                int x = controller.xCoord + offset.x(), y = controller.yCoord + offset.y(),
+                    z = controller.zCoord + offset.z();
+                if (!submission.endpoint.world.blockExists(x, y, z)) throw new IOException("当前结构范围包含未加载区块。");
+                occupied |= submission.endpoint.world.getBlock(x, y, z) != Blocks.air
+                    || submission.endpoint.world.getTileEntity(x, y, z) != null;
+            }
+            if (cursor < size || System.nanoTime() >= deadline) return false;
+            requireCurrent();
+            var machine = (MTEEnhancedMultiBlockBase<?>) controller.getMetaTileEntity();
+            checkNativeStructure(machine, controller);
+            requireCurrent();
+            var stage = machine.mMachine ? Stage.FORMED : occupied ? Stage.UNFORMED : Stage.CONTROLLER_ONLY;
+            if (cached == null) baseline(controller, offsets);
+            result = new ServerObservation(
+                intent.projection()
+                    .controller(),
+                intent.x(),
+                intent.y(),
+                intent.z(),
+                stage,
+                intent.projection()
+                    .targetRevision(),
+                "");
+            if (pending != null) {
+                pending.close();
+                pending = null;
+            }
+            return true;
+        }
+
+        private void requireCurrent() throws IOException {
+            if (closed || !submission.current()) throw new IOException("原生观察请求已变化。");
+            var intent = submission.intent;
+            if (controller(
+                submission.endpoint,
+                intent.projection(),
+                intent.x(),
+                intent.y(),
+                intent.z(),
+                intent.facing()) != controller) throw new IOException("原生观察期间控制器或访问权限已变化。");
+        }
+
+        ServerObservation result() {
+            return result;
+        }
+
+        public void close() {
+            if (closed) return;
+            closed = true;
+            if (pending != null) {
+                pending.close();
+                pending = null;
+            }
+            // Successful observation transfers this compact list to the baseline.
+            if (result == null) offsets.clear();
+        }
     }
 
-    private static HologramNativeTargetPlan compileBaseline(Projection intent, int main, ExtendedFacing facing)
+    private static HologramNativeTargetPlan beginFootprint(Projection intent, int main, ExtendedFacing facing)
+        throws IOException {
+        var channels = new NBTTagCompound();
+        intent.channels()
+            .forEach(channels::setInteger);
+        var config = new NBTTagCompound();
+        config.setBoolean("footprintOnly", true);
+        return HologramNativeTargetPlan
+            .begin(intent.controller(), facing, HologramNativeTargetPlan.canonicalTrigger(main, channels), config);
+    }
+
+    private static HologramNativeTargetPlan beginTarget(Projection intent, int main, ExtendedFacing facing)
         throws IOException {
         var channels = new NBTTagCompound();
         intent.channels()
             .forEach(channels::setInteger);
         var trigger = HologramNativeTargetPlan.canonicalTrigger(main, channels);
-        var result = HologramNativeTargetPlan.compileFootprint(intent.controller(), facing, trigger);
-        if (result == null || !result.complete())
-            throw new IOException(result == null ? "原生控制器未提供可读取的结构范围。" : result.failure());
-        return result;
-    }
-
-    private static HologramNativeTargetPlan compile(Projection intent, int main, ExtendedFacing facing)
-        throws IOException {
-        var trigger = new ItemStack(Items.feather, main);
-        intent.channels()
-            .forEach((name, value) -> ChannelDataAccessor.setChannelData(trigger, name, value));
         var config = intent.configuration();
         var choices = new NBTTagList();
         for (var choice : intent.hatches()) {
@@ -217,10 +385,7 @@ final class HologramNativeProjectionJob implements HologramConstructionJobs.Sour
             choices.appendTag(row);
         }
         config.setTag("nativeHatchChoices", choices);
-        var result = HologramNativeTargetPlan.compile(intent.controller(), facing, trigger, config);
-        if (result == null || !result.complete())
-            throw new IOException(result == null ? "原生投影未返回目标。" : result.failure());
-        return result;
+        return HologramNativeTargetPlan.begin(intent.controller(), facing, trigger, config);
     }
 
     private static BaseMetaTileEntity controller(HologramWorkspace.ActionEndpoint endpoint, Projection intent, int x,
@@ -268,8 +433,8 @@ final class HologramNativeProjectionJob implements HologramConstructionJobs.Sour
         return !tile.isInvalid() && tile.getMetaTileEntity() == machine && machine.getBaseMetaTileEntity() == tile;
     }
 
-    private static synchronized HologramNativeTargetPlan baseline(BaseMetaTileEntity controller,
-        HologramNativeTargetPlan target) {
+    private static synchronized Baseline baseline(BaseMetaTileEntity controller,
+        List<HologramNativeTargetPlan.Offset> offsets) {
         BASELINES.entrySet()
             .removeIf(
                 entry -> entry.getKey()
@@ -278,46 +443,45 @@ final class HologramNativeProjectionJob implements HologramConstructionJobs.Sour
         if (old != null) return old;
         int retained = BASELINES.values()
             .stream()
-            .mapToInt(
-                saved -> saved.plan.cells()
-                    .size())
+            .mapToInt(saved -> saved.offsets.size())
             .sum();
-        while (!BASELINES.isEmpty() && (BASELINES.size() >= 128 || retained + target.cells()
-            .size() > BASELINE_CELLS)) {
+        while (!BASELINES.isEmpty() && (BASELINES.size() >= 128 || retained + offsets.size() > BASELINE_CELLS)) {
             var entry = BASELINES.entrySet()
                 .iterator()
                 .next();
-            retained -= entry.getValue().plan.cells()
-                .size();
+            retained -= entry.getValue().offsets.size();
             BASELINES.remove(entry.getKey());
         }
-        if (target.cells()
-            .size() <= BASELINE_CELLS) BASELINES.put(controller, new Baseline(controller, target));
-        return target;
+        var saved = new Baseline(controller, offsets);
+        if (offsets.size() <= BASELINE_CELLS) BASELINES.put(controller, saved);
+        return saved;
     }
 
-    private static synchronized HologramNativeTargetPlan cachedBaseline(BaseMetaTileEntity controller) {
+    private static synchronized Baseline cachedBaseline(BaseMetaTileEntity controller) {
         var saved = BASELINES.get(controller);
         if (saved == null) return null;
         if (controller.isInvalid() || !saved.matches(controller)) {
             BASELINES.remove(controller);
             return null;
         }
-        return saved.plan;
+        return saved;
     }
 
-    private static Stage stage(World world, BaseMetaTileEntity controller, HologramNativeTargetPlan plan)
-        throws IOException {
-        boolean occupied = false;
-        for (var cell : plan.cells()) {
-            if (cell.dx() == 0 && cell.dy() == 0 && cell.dz() == 0) continue;
-            int x = controller.xCoord + cell.dx(), y = controller.yCoord + cell.dy(), z = controller.zCoord + cell.dz();
-            if (!world.blockExists(x, y, z)) throw new IOException("当前结构范围包含未加载区块。");
-            occupied |= world.getBlock(x, y, z) != Blocks.air || world.getTileEntity(x, y, z) != null;
+    /** Only the native callback is timed; a slow third-party check cannot be preempted safely. */
+    private static void checkNativeStructure(MTEEnhancedMultiBlockBase<?> machine, BaseMetaTileEntity controller) {
+        long started = System.nanoTime();
+        try {
+            machine.checkStructure(true, controller);
+        } finally {
+            long elapsed = System.nanoTime() - started;
+            if (elapsed >= 50_000_000L) com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.info(
+                "Native structure check boundary controller={} at={},{},{} elapsedMs={}",
+                controller.getMetaTileID(),
+                controller.xCoord,
+                controller.yCoord,
+                controller.zCoord,
+                elapsed / 1_000_000L);
         }
-        var machine = (MTEEnhancedMultiBlockBase<?>) controller.getMetaTileEntity();
-        machine.checkStructure(true, controller);
-        return machine.mMachine ? Stage.FORMED : occupied ? Stage.UNFORMED : Stage.CONTROLLER_ONLY;
     }
 
     private static boolean allows(Operation operation, Stage stage) {
@@ -359,10 +523,6 @@ final class HologramNativeProjectionJob implements HologramConstructionJobs.Sour
             && endpoint.world.getTileEntity(session.x, session.y, session.z) == null;
     }
 
-    private static String key(HologramNativeTargetPlan.Cell cell) {
-        return cell.dx() + "," + cell.dy() + "," + cell.dz();
-    }
-
     public HologramSession session() {
         return session;
     }
@@ -384,7 +544,7 @@ final class HologramNativeProjectionJob implements HologramConstructionJobs.Sour
     }
 
     public long total() {
-        return initialized ? work.size() + (intent.operation() == Operation.DEMOLISH ? 1 : 0) : 0;
+        return preparedTotal;
     }
 
     public boolean exhausted() {
@@ -396,10 +556,7 @@ final class HologramNativeProjectionJob implements HologramConstructionJobs.Sour
     }
 
     public boolean prepare(long deadline) throws IOException {
-        if (!initialized) {
-            if (System.nanoTime() >= deadline) return false;
-            initialize();
-        }
+        if (!initialized && !initialize(deadline)) return false;
         while (fundCursor < work.size() && System.nanoTime() < deadline) {
             if (!current()) throw new IOException("施工上下文已变化。");
             var cell = work.get(fundCursor++);
@@ -460,14 +617,32 @@ final class HologramNativeProjectionJob implements HologramConstructionJobs.Sour
     }
 
     public void finished(HologramConstructionJobs.Job job) {
-        if (scopeFallback) job.reason = job.reason.isEmpty() || "施工完成。".equals(job.reason) ? LIMITED_SCOPE_DETAIL
-            : job.reason + " " + LIMITED_SCOPE_DETAIL;
-        if (job.end != HologramConstructionJobs.End.COMPLETE) return;
-        if (intent.operation() != Operation.DEMOLISH && !controller.isInvalid())
-            machine.checkStructure(true, controller);
-        synchronized (HologramNativeProjectionJob.class) {
-            BASELINES.remove(controller);
-            if (intent.operation() != Operation.DEMOLISH && !controller.isInvalid()) baseline(controller, target);
+        try {
+            if (scopeFallback) job.reason = job.reason.isEmpty() || "施工完成。".equals(job.reason) ? LIMITED_SCOPE_DETAIL
+                : job.reason + " " + LIMITED_SCOPE_DETAIL;
+            if (job.end != HologramConstructionJobs.End.COMPLETE) return;
+            if (intent.operation() != Operation.DEMOLISH && !controller.isInvalid())
+                checkNativeStructure(machine, controller);
+            synchronized (HologramNativeProjectionJob.class) {
+                BASELINES.remove(controller);
+                if (intent.operation() != Operation.DEMOLISH && !controller.isInvalid())
+                    baseline(controller, targetOffsets);
+            }
+        } finally {
+            if (target != null) {
+                target.close();
+                target = null;
+            }
+            work = java.util.Collections.emptyList();
+            union.clear();
+            unionRows = null;
+            baselineOffsets = null;
+            operationOffsets = null;
+            previous = null;
+            targetOffsets = java.util.Collections.emptyList();
+            placements = null;
+            funding.clear();
+            fundRows = null;
         }
     }
 }
