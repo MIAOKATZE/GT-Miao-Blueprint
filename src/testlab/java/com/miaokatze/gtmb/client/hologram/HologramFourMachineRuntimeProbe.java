@@ -48,7 +48,7 @@ final class HologramFourMachineRuntimeProbe {
 
     private final Path save, output;
     private final UUID actorId;
-    private final boolean fullMatrix, ebfRepairSlice;
+    private final boolean fullMatrix, ebfRepairSlice, ebfActionsSlice;
     private final List<MachineCase> cases = new ArrayList<>();
     private final List<Map<String, Object>> caseResults = new ArrayList<>();
     private final Map<String, Object> report = new LinkedHashMap<>();
@@ -70,31 +70,39 @@ final class HologramFourMachineRuntimeProbe {
     private HologramClientStockNative.Context submittedContext;
     private NBTTagCompound submittedSettings;
     private String submittedTool;
+    private String submittedDigest;
     private int submittedSlot;
     private boolean submittedScreenClosed, performanceCompleted, businessReopened, businessReopenedDrawn;
     private long submittedAt;
+    private long initialOpenAt;
+    private boolean initialGuiPostObserved;
     private long cleanupAuditAt;
     private int phase, ticks, submitPhase;
     private long since = System.nanoTime();
     private final HologramFourMachineScreenVisit screenVisit = new HologramFourMachineScreenVisit();
     private Boolean tutorialObservedActive;
     private boolean done, restored;
-    private boolean initialStageAttempted, unformedCycle;
+    private boolean initialStageAttempted, aeCycle;
     private int caseIndex, sourcePhase, editPhase, channelIndex;
     private int disabledActionIndex, disabledActionBegins;
-    private NBTTagCompound unchangedWorld, expectedDrops;
+    private int formedRefreshPhase = -1;
+    private NBTTagCompound unchangedWorld, expectedDrops, conflictBefore;
     private Map<NBTTagCompound, Long> plannedDelta;
     private List<Target> damaged;
     private String screenshot;
+    private volatile com.miaokatze.gtmb.hologram.HologramCenterNeighborRuntimeProbe centerNeighbor;
+    private volatile boolean centerUiVerified;
+    private boolean centerUiAssembled;
 
     HologramFourMachineRuntimeProbe(Path save, Path output, UUID actorId, Map<String, Object> parent) {
         require(enabled() && Boolean.getBoolean("miaotest.host.environment"), "Exact isolated host opt-in required");
         String slice = System.getProperty("gtmb.testlab.fourMachineSlice", "ebf");
         require(
-            "ebf".equals(slice) || "ebf-repair".equals(slice) || "all".equals(slice),
+            "ebf".equals(slice) || "ebf-repair".equals(slice) || "ebf-actions".equals(slice) || "all".equals(slice),
             "Unknown bounded native action matrix");
         fullMatrix = "all".equals(slice);
         ebfRepairSlice = "ebf-repair".equals(slice);
+        ebfActionsSlice = "ebf-actions".equals(slice);
         if (fullMatrix) for (HologramFourMachineSpec spec : HologramFourMachineSpec.values())
             for (ExtendedFacing facing : spec.orientations()) cases.add(new MachineCase(spec, facing));
         else cases.add(new MachineCase(HologramFourMachineSpec.EBF, ExtendedFacing.NORTH_NORMAL_NONE));
@@ -106,9 +114,11 @@ final class HologramFourMachineRuntimeProbe {
         report.put(
             "scope",
             fullMatrix ? "Four live native machine action matrix including NORTH/EAST, inventory and finite AE"
-                : ebfRepairSlice
-                    ? "EBF damage-repair slice: default BUILD, LV preset REPAIR, real body damage, natural UNFORMED and REPAIR to natural FORMED; remaining matrix NOT_RUN"
-                    : "EBF vertical slice: default BUILD and LV preset REPAIR; remaining matrix NOT_RUN");
+                : ebfActionsSlice
+                    ? "One EBF: real GUI initialization, UNFORMED BUILD, native FORMED gate, unchanged REPLACE and FORMED DEMOLISH; other matrix NOT_RUN"
+                    : ebfRepairSlice
+                        ? "EBF damaged-body BUILD slice: explicit fixture clearing, real conflict BUILD rejection, natural UNFORMED to FORMED; remaining matrix NOT_RUN"
+                        : "EBF vertical slice: default BUILD and LV preset BUILD with explicit fixture clearing; remaining matrix NOT_RUN");
         if (ebfRepairSlice) report.put(
             "remainingMatrix",
             "NOT_RUN: MV replacement, formed/unformed demolition, other machines/orientations, AE and preset-clear matrix; this EBF slice cannot satisfy four-machine acceptance");
@@ -170,11 +180,41 @@ final class HologramFourMachineRuntimeProbe {
         if (!initialStageAttempted) {
             if (fullMatrix && !fixture.bankReady()) return;
             if (!fixture.settleControllerReward()) return;
+            if (ebfActionsSlice) {
+                if (centerNeighbor == null) {
+                    int[] anchor = fixture.anchor();
+                    centerNeighbor = com.miaokatze.gtmb.hologram.HologramCenterNeighborRuntimeProbe.begin(
+                        world,
+                        (EntityPlayerMP) world.playerEntities.get(0),
+                        anchor[0] + 256,
+                        128,
+                        anchor[2],
+                        output.resolve("center-neighbor-owned-recovery.txt"));
+                }
+                centerNeighbor.tick(System.nanoTime() + 5_000_000L);
+                if (!centerNeighbor.done()) return;
+                require(
+                    centerNeighbor.result()
+                        .getBoolean("passed"),
+                    "Native center runtime failed: " + centerNeighbor.result());
+                if (!centerUiVerified) return;
+                centerNeighbor.close();
+                report.put(
+                    "centerNeighbor",
+                    centerNeighbor.result()
+                        .toString());
+                centerNeighbor = null;
+                since = System.nanoTime();
+            }
             report.put(
                 "controllerRewardPreparation",
                 fixture.rewardPreparationReceipt()
                     .toString());
             initialStageAttempted = true;
+            report.put(
+                "constructionSoundAudit",
+                fixture.constructionSoundAudit()
+                    .toString());
             fixture.stageController(current().spec, current().facing);
             List<ItemStack> hatches = new ArrayList<>();
             for (String tier : new String[] { "LV", "MV" })
@@ -191,11 +231,16 @@ final class HologramFourMachineRuntimeProbe {
     boolean client(Minecraft mc) throws Exception {
         if (done) return true;
         require(System.nanoTime() - since < 100_000_000_000L, "Four-machine EBF phase timed out: " + phase);
+        var center = centerNeighbor;
+        if (!ready && !centerUiVerified && center != null && center.done()) {
+            verifyCenterUi(mc);
+            return false;
+        }
         if (!ready || mc.thePlayer == null || mc.theWorld == null) return false;
         report.put("phase", phase);
         report.put("machine", current().spec.key);
         report.put("orientation", current().facing.toString());
-        report.put("unformedDemolitionCycle", unformedCycle);
+        report.put("aeDemolitionCycle", aeCycle);
         if (pending != null && !pending.isDone()) return false;
         if (pending != null) {
             pending.join();
@@ -228,6 +273,7 @@ final class HologramFourMachineRuntimeProbe {
                 current().facing.getDirection()
                     .ordinal());
             GuiScreen previous = mc.currentScreen;
+            if (initialOpenAt == 0) initialOpenAt = System.nanoTime();
             screenVisit.open(screen, () -> screen.openFrom(previous));
             tutorialObservedActive = null;
             next();
@@ -275,7 +321,7 @@ final class HologramFourMachineRuntimeProbe {
         if (++ticks < 3 || screenshot != null) return false;
         switch (phase) {
             case 1 -> {
-                if (!targetReady("CONTROLLER_ONLY")) return false;
+                if (!targetReady("UNFORMED")) return false;
                 if (!present("control.1720")) {
                     click("launcher.3");
                     return false;
@@ -288,8 +334,7 @@ final class HologramFourMachineRuntimeProbe {
                         .isEmpty(),
                     "Controller-only BUILD unavailable");
                 for (HologramStockNativeWire.Operation action : new HologramStockNativeWire.Operation[] {
-                    HologramStockNativeWire.Operation.REPAIR, HologramStockNativeWire.Operation.REPLACE,
-                    HologramStockNativeWire.Operation.DEMOLISH })
+                    HologramStockNativeWire.Operation.REPLACE, HologramStockNativeWire.Operation.DEMOLISH })
                     require(
                         !screen.nativeActionBlocker(action)
                             .isEmpty(),
@@ -316,6 +361,19 @@ final class HologramFourMachineRuntimeProbe {
                         + target.size());
                 else require(hatchCount == 0 && materials > 0, "Default optional-free native target differs");
                 record("controller-only-default", targetTag(target));
+                if (ebfActionsSlice) {
+                    if (!present("control.94")) {
+                        click("launcher.4");
+                        return false;
+                    }
+                    previous = new ArrayList<>();
+                    click("control.94");
+                    screenshot = imageName("unformed-default-before-build");
+                    phase = 6;
+                    ticks = 0;
+                    since = System.nanoTime();
+                    return false;
+                }
                 pending = fixture.request(() -> {
                     fixture.supply(materials(target), fullMatrix);
                     return null;
@@ -354,12 +412,10 @@ final class HologramFourMachineRuntimeProbe {
                     !lastAudit.getCompoundTag("controller")
                         .getBoolean("naturalFormed"),
                     "Default optional-free EBF unexpectedly formed");
-                if (fullMatrix && unformedCycle) {
-                    phase = 25;
-                    ticks = 0;
-                    since = System.nanoTime();
-                    return false;
-                }
+                require(
+                    !screen.nativeActionBlocker(HologramStockNativeWire.Operation.DEMOLISH)
+                        .isEmpty(),
+                    "UNFORMED body unexpectedly permits demolition");
                 if (fullMatrix && current().spec == HologramFourMachineSpec.PRECISE_ASSEMBLER && !initialGlass())
                     return false;
                 if (!present("control.94")) {
@@ -393,6 +449,7 @@ final class HologramFourMachineRuntimeProbe {
                     "Preset did not generate real native hatch targets");
                 record("lv-preset-target", targetTag(target));
                 pending = fixture.request(() -> {
+                    previous = vacateDifferences(previous, target);
                     fixture.supply(materials(target), fullMatrix);
                     return null;
                 });
@@ -401,7 +458,7 @@ final class HologramFourMachineRuntimeProbe {
             }
             case 9 -> {
                 pending = fixture.request(() -> {
-                    fixture.watch(points(target, true), "PRESET_REPAIR");
+                    fixture.watch(points(target, true), "PRESET_BUILD");
                     before = fixture.resources();
                     plannedDelta = prepareDelta(previous, target);
                     return before;
@@ -409,7 +466,7 @@ final class HologramFourMachineRuntimeProbe {
                 next();
             }
             case 10 -> {
-                if (!submit(HologramStockNativeWire.Operation.REPAIR)) return false;
+                if (!submit(HologramStockNativeWire.Operation.BUILD)) return false;
                 next();
             }
             case 11 -> {
@@ -421,15 +478,22 @@ final class HologramFourMachineRuntimeProbe {
                 compareWorld(lastAudit, target);
                 compareResources(before, lastAudit.getCompoundTag("resources"), plannedDelta);
                 firstHatchSkins(lastAudit, target, previous);
-                record("preset-repair-immediate-world", lastAudit);
+                record("preset-build-immediate-world", lastAudit);
                 next();
             }
             case 13 -> {
                 if (pending == null) pending = fixture.request(this::audit);
                 if (!lastAudit.getCompoundTag("controller")
                     .getBoolean("naturalFormed")) return false;
+                if (!formedTargetReady()) return false;
                 compareWorld(lastAudit, target);
-                record("preset-repair-naturally-formed-world", lastAudit);
+                record("preset-build-naturally-formed-world", lastAudit);
+                if (ebfActionsSlice) {
+                    phase = 42;
+                    ticks = 0;
+                    since = System.nanoTime();
+                    return false;
+                }
                 if (!fullMatrix && !ebfRepairSlice) {
                     report.put("ebfSlicePassed", true);
                     report.put("remainingMatrix", "NOT_RUN; this report cannot satisfy four-machine acceptance");
@@ -475,16 +539,24 @@ final class HologramFourMachineRuntimeProbe {
                     .getBoolean("naturalFormed") || !targetReady("UNFORMED")) return false;
                 record("damage-naturally-unformed-world", lastAudit);
                 record("damage-unformed-native-ui", screen.ui.session.state().data);
+                require(
+                    !screen.nativeActionBlocker(HologramStockNativeWire.Operation.REPLACE)
+                        .isEmpty()
+                        && !screen.nativeActionBlocker(HologramStockNativeWire.Operation.DEMOLISH)
+                            .isEmpty(),
+                    "Damaged UNFORMED body permits replacement or demolition");
+                conflictBefore = lastAudit;
                 pending = fixture.request(() -> {
-                    fixture.watch(points(target, true), "DAMAGE_REPAIR");
+                    fixture.supply(materials(target), fullMatrix);
                     before = fixture.resources();
-                    plannedDelta = prepareDelta(damaged, target);
                     return before;
                 });
-                next();
+                phase = 46;
+                ticks = 0;
+                since = System.nanoTime();
             }
             case 16 -> {
-                if (!submit(HologramStockNativeWire.Operation.REPAIR)) return false;
+                if (!submit(HologramStockNativeWire.Operation.BUILD)) return false;
                 next();
             }
             case 17 -> {
@@ -496,17 +568,17 @@ final class HologramFourMachineRuntimeProbe {
                 compareWorld(lastAudit, target);
                 compareResources(before, lastAudit.getCompoundTag("resources"), plannedDelta);
                 retainedTiles(unchangedWorld, lastAudit);
-                record("damage-repair-world", lastAudit);
+                record("damage-build-world", lastAudit);
                 next();
             }
             case 19 -> {
                 if (pending == null) pending = fixture.request(this::audit);
                 if (!lastAudit.getCompoundTag("controller")
-                    .getBoolean("naturalFormed") || !targetReady("FORMED")) return false;
+                    .getBoolean("naturalFormed") || !formedTargetReady()) return false;
                 compareWorld(lastAudit, target);
                 retainedTiles(unchangedWorld, lastAudit);
-                record("damage-repair-naturally-formed-world", lastAudit);
-                record("damage-repair-formed-native-ui", screen.ui.session.state().data);
+                record("damage-build-naturally-formed-world", lastAudit);
+                record("damage-build-formed-native-ui", screen.ui.session.state().data);
                 if (ebfRepairSlice) {
                     report.put("ebfRepairSlicePassed", true);
                     report.put("wire", wire.snapshot());
@@ -574,7 +646,7 @@ final class HologramFourMachineRuntimeProbe {
                 firstHatchSkins(lastAudit, target, previous);
                 record("replacement-world", lastAudit);
                 previous = target;
-                if (current().spec == HologramFourMachineSpec.EBF && !unformedCycle) {
+                if (current().spec == HologramFourMachineSpec.EBF && !aeCycle) {
                     phase = 30;
                     ticks = 0;
                     since = System.nanoTime();
@@ -584,7 +656,11 @@ final class HologramFourMachineRuntimeProbe {
                 if (pending == null) pending = fixture.request(this::audit);
                 boolean formed = lastAudit.getCompoundTag("controller")
                     .getBoolean("naturalFormed");
-                if (formed == unformedCycle || !targetReady(unformedCycle ? "UNFORMED" : "FORMED")) return false;
+                if (!formed || !formedTargetReady()) return false;
+                require(
+                    !screen.nativeActionBlocker(HologramStockNativeWire.Operation.BUILD)
+                        .isEmpty(),
+                    "FORMED body unexpectedly permits BUILD");
                 compareWorld(lastAudit, target);
                 screen.ui.preview.clearSelection();
                 pending = fixture.request(() -> {
@@ -630,22 +706,35 @@ final class HologramFourMachineRuntimeProbe {
                     before,
                     lastAudit.getCompoundTag("resources"),
                     readCounts(expectedDrops.getTagList("items", 10)),
-                    unformedCycle);
+                    aeCycle);
                 controllerLast(lastAudit);
-                record(unformedCycle ? "unformed-demolished-to-AE" : "formed-demolished-to-inventory", lastAudit);
+                record(aeCycle ? "formed-demolished-to-AE" : "formed-demolished-to-inventory", lastAudit);
                 next();
             }
             case 29 -> {
                 Map<String, Object> finished = new LinkedHashMap<>();
                 finished.put("machine", current().spec.key);
                 finished.put("orientation", current().facing.toString());
-                finished.put("cycle", unformedCycle ? "UNFORMED_TO_AE" : "FULL_CHAIN_TO_INVENTORY");
+                finished.put(
+                    "cycle",
+                    ebfActionsSlice ? "THREE_ACTIONS_TO_INVENTORY"
+                        : aeCycle ? "FORMED_TO_AE" : "FULL_CHAIN_TO_INVENTORY");
                 finished.put("passed", true);
                 caseResults.add(finished);
                 mc.displayGuiScreen(null);
-                if (!unformedCycle) unformedCycle = true;
+                if (ebfActionsSlice) {
+                    report.put("ebfActionsSlicePassed", true);
+                    report.put(
+                        "remainingMatrix",
+                        "NOT_RUN: damaged-body rejection, other machines/orientations, AE and changed replacement");
+                    report.put("wire", wire.snapshot());
+                    done = true;
+                    write();
+                    return true;
+                }
+                if (!aeCycle) aeCycle = true;
                 else {
-                    unformedCycle = false;
+                    aeCycle = false;
                     caseIndex++;
                 }
                 if (caseIndex >= cases.size()) {
@@ -757,8 +846,9 @@ final class HologramFourMachineRuntimeProbe {
                     .count();
                 require(hatches >= 6, "Reapplied MV preset has no optional native hatches");
                 pending = fixture.request(() -> {
+                    previous = vacateDifferences(previous, target);
                     fixture.supply(materials(target), true);
-                    fixture.watch(points(target, true), "REAPPLY_PRESET_REPAIR");
+                    fixture.watch(points(target, true), "REAPPLY_PRESET_BUILD");
                     before = fixture.resources();
                     plannedDelta = prepareDelta(previous, target);
                     return before;
@@ -767,7 +857,7 @@ final class HologramFourMachineRuntimeProbe {
                 next();
             }
             case 39 -> {
-                if (!submit(HologramStockNativeWire.Operation.REPAIR)) return false;
+                if (!submit(HologramStockNativeWire.Operation.BUILD)) return false;
                 next();
             }
             case 40 -> {
@@ -780,14 +870,91 @@ final class HologramFourMachineRuntimeProbe {
                 compareResources(before, lastAudit.getCompoundTag("resources"), plannedDelta);
                 firstHatchSkins(lastAudit, target, previous);
                 if (!lastAudit.getCompoundTag("controller")
-                    .getBoolean("naturalFormed") || !targetReady("FORMED")) {
+                    .getBoolean("naturalFormed") || !formedTargetReady()) {
                     pending = fixture.request(this::audit);
                     return false;
                 }
-                record("preset-reapplied-repair-naturally-formed", lastAudit);
+                record("preset-reapplied-build-naturally-formed", lastAudit);
                 report.put("presetRepairedAfterClear", true);
                 previous = target;
                 phase = 25;
+                ticks = 0;
+                since = System.nanoTime();
+            }
+            case 42 -> {
+                if (!targetReady("FORMED")) return false;
+                require(
+                    !screen.nativeActionBlocker(HologramStockNativeWire.Operation.BUILD)
+                        .isEmpty(),
+                    "FORMED native gate enabled BUILD");
+                require(
+                    screen.nativeActionBlocker(HologramStockNativeWire.Operation.REPLACE)
+                        .isEmpty()
+                        && screen.nativeActionBlocker(HologramStockNativeWire.Operation.DEMOLISH)
+                            .isEmpty(),
+                    "FORMED native gate did not enable replacement and demolition");
+                target = freeze();
+                previous = target;
+                pending = fixture.request(() -> {
+                    unchangedWorld = audit();
+                    compareWorld(unchangedWorld, target);
+                    fixture.watch(points(target, true), "UNCHANGED_REPLACE");
+                    before = fixture.resources();
+                    plannedDelta = prepareDelta(target, target);
+                    require(plannedDelta.isEmpty(), "Unchanged replacement unexpectedly has a material delta");
+                    return before;
+                });
+                screenshot = imageName("formed-gates-and-unchanged-target");
+                next();
+            }
+            case 43 -> {
+                if (!submit(HologramStockNativeWire.Operation.REPLACE)) return false;
+                next();
+            }
+            case 44 -> {
+                if (!completed()) return false;
+                pending = fixture.request(this::audit);
+                next();
+            }
+            case 45 -> {
+                compareWorld(lastAudit, target);
+                retainedTiles(unchangedWorld, lastAudit);
+                compareResources(before, lastAudit.getCompoundTag("resources"), plannedDelta);
+                require(
+                    lastAudit.getCompoundTag("worldWrites")
+                        .getBoolean("complete"),
+                    "Unchanged replacement write trace is incomplete; zero writes cannot be proved");
+                require(
+                    lastAudit.getCompoundTag("worldWrites")
+                        .getTagList("writes", 10)
+                        .tagCount() == 0,
+                    "Unchanged replacement performed physical block writes");
+                record("unchanged-replace-zero-writes-zero-materials", lastAudit);
+                phase = 25;
+                ticks = 0;
+                since = System.nanoTime();
+            }
+            case 46 -> {
+                if (!submit(HologramStockNativeWire.Operation.BUILD)) return false;
+                next();
+            }
+            case 47 -> {
+                if (!conflictRefused()) return false;
+                pending = fixture.request(this::audit);
+                next();
+            }
+            case 48 -> {
+                sameWorld(conflictBefore, lastAudit);
+                compareResources(before, lastAudit.getCompoundTag("resources"), new LinkedHashMap<>());
+                record("conflicting-build-refused-without-world-or-material-changes", lastAudit);
+                pending = fixture.request(() -> {
+                    damaged = vacateDifferences(damaged, target);
+                    fixture.watch(points(target, true), "DAMAGE_BUILD_AFTER_EXPLICIT_FIXTURE_CLEAR");
+                    before = fixture.resources();
+                    plannedDelta = prepareDelta(damaged, target);
+                    return before;
+                });
+                phase = 16;
                 ticks = 0;
                 since = System.nanoTime();
             }
@@ -796,7 +963,101 @@ final class HologramFourMachineRuntimeProbe {
         return false;
     }
 
+    private void verifyCenterUi(Minecraft mc) throws Exception {
+        if (mc.theWorld == null || mc.thePlayer == null) return;
+        NBTTagCompound expected = centerNeighbor.result();
+        int x = expected.getInteger("anchorX"), y = expected.getInteger("anchorY"), z = expected.getInteger("anchorZ");
+        if (screen == null) {
+            var tile = mc.theWorld.getTileEntity(x, y, z);
+            // Chunk TE creation can precede GregTech's initial machine packet. As in the EBF
+            // phase, open only after the real native identity exists; do not freeze an ID=0 context.
+            if (!(tile instanceof gregtech.api.metatileentity.BaseMetaTileEntity base)
+                || base.getMetaTileID() != expected.getInteger("controllerId")
+                || base.getMetaTileEntity() == null) return;
+            wire = new HologramFourMachineWireAudit(mc);
+            screen = HologramScreen
+                .localController(tile, 0, net.minecraftforge.common.util.ForgeDirection.NORTH.ordinal());
+            initialOpenAt = System.nanoTime();
+            GuiScreen previous = mc.currentScreen;
+            screenVisit.open(screen, () -> screen.openFrom(previous));
+            return;
+        }
+        HologramState state = screen.ui.session.state();
+        if (screen.ui.tutorial.active()) {
+            if (screenVisit.takeTutorialExit(screen, true))
+                HologramMuiProbeInput.key(screen, (char) 0, Keyboard.KEY_ESCAPE);
+            return;
+        }
+        if (!state.data.getBoolean("nativeTargetReady") || !state.data.getBoolean("nativeSiteSnapshot")) return;
+        require(
+            state.data.getBoolean("siteKnown") && state.data.getInteger("siteUnknown") == 0,
+            "Actual center snapshot lost complete site proof");
+        require(
+            state.cells.size() == expected.getInteger("actualCellCount") + 1,
+            "Actual center UI was truncated or included neighbor cells");
+        require(
+            state.data.getString("nativeTargetDigest")
+                .equals(expected.getString("targetDigest")),
+            "Actual center UI differs from the server's frozen target");
+        if (!centerUiAssembled) {
+            centerUiAssembled = true;
+            report.put("centerUi", state.data.toString());
+            screenshot = "center-neighbor-complete-native-snapshot";
+            return;
+        }
+        if (screenshot != null) return;
+        HologramMuiProbeInput.key(screen, (char) 0, Keyboard.KEY_ESCAPE);
+        if (mc.currentScreen == screen) return;
+        require(mc.currentScreen == null, "Center native workspace did not return to the owned world");
+        report.put("centerOpenToNaturalGuiPostNanos", report.get("initialOpenToNaturalGuiPostNanos"));
+        report.put("centerOpenToCompleteNaturalFrameNanos", System.nanoTime() - initialOpenAt);
+        initialOpenAt = 0;
+        initialGuiPostObserved = false;
+        screen = null;
+        centerUiVerified = true;
+        report.put("centerCompleteNaturalFrame", true);
+    }
+
     private volatile NBTTagCompound lastAudit, actualDamage;
+
+    private List<Target> vacateDifferences(List<Target> actual, List<Target> wanted) throws Exception {
+        Map<String, Target> desired = new LinkedHashMap<>();
+        for (Target cell : wanted) desired.put(cell.key(), cell);
+        List<int[]> positions = new ArrayList<>();
+        List<Target> result = new ArrayList<>(actual.size());
+        for (Target cell : actual) {
+            Target next = desired.get(cell.key());
+            if (cell.item != null && next != null && !cell.same(next)) {
+                positions.add(cell.position());
+                result.add(new Target(cell, "minecraft:air", 0, null));
+            } else result.add(cell);
+        }
+        if (!positions.isEmpty()) record(
+            "explicit-owned-fixture-vacating-before-build",
+            fixture.vacateBuildDifferences(positions.toArray(new int[positions.size()][])));
+        return result;
+    }
+
+    private boolean conflictRefused() {
+        if (submittedBegin == null) submittedBegin = wire.beginAfter(beginsBefore);
+        if (submittedBegin == null) return false;
+        require(
+            submittedBegin.operation == HologramStockNativeWire.Operation.BUILD.wireId()
+                && wire.beginCount() == beginsBefore + 1,
+            "Conflict probe did not send exactly one real BUILD");
+        var reply = wire.latest(submittedBegin.request);
+        if (reply == null || reply.phase() == HologramStockNativeWire.Phase.ACCEPTED
+            || reply.phase() == HologramStockNativeWire.Phase.ACTIVE) return false;
+        require(
+            reply.phase() == HologramStockNativeWire.Phase.REFUSED,
+            "Conflicting BUILD was not explicitly refused: " + reply);
+        if (!performance.completed(submittedBegin.request.toString())) return false;
+        require(
+            !HologramClientStockNative.OWNER.pendingHere(HologramClientStockNative.context(Minecraft.getMinecraft())),
+            "Refused conflict BUILD retained business ownership");
+        record("actual-conflicting-build-refusal", reply.toString());
+        return true;
+    }
 
     /** Read-only evidence from the existing server audit and actual client state; never manufactures a stage. */
     private void observationEvidence() {
@@ -843,9 +1104,22 @@ final class HologramFourMachineRuntimeProbe {
             && !data.getBoolean("capturePending");
     }
 
+    /** One explicit UI rescan after the server's native mMachine observation, never a timer retry. */
+    private boolean formedTargetReady() {
+        if (targetReady("FORMED")) return true;
+        if (formedRefreshPhase != phase) {
+            formedRefreshPhase = phase;
+            record("explicit-ui-rescan-after-native-formed", lastAudit.getCompoundTag("controller"));
+            screen.refreshLocalController(
+                (NBTTagCompound) screen.ui.config.configuration()
+                    .copy());
+        }
+        return false;
+    }
+
     private boolean submit(HologramStockNativeWire.Operation operation) throws Exception {
         if (submitPhase == 0) {
-            if (!present("control." + (1720 + operation.ordinal()))) {
+            if (!present("control." + (1720 + operation.uiIndex()))) {
                 click("launcher.3");
                 return false;
             }
@@ -854,7 +1128,7 @@ final class HologramFourMachineRuntimeProbe {
                 screen.nativeActionBlocker(operation)
                     .isEmpty(),
                 "Native action refused before submission: " + operation);
-            click("control." + (1720 + operation.ordinal()));
+            click("control." + (1720 + operation.uiIndex()));
             submitPhase++;
             return false;
         }
@@ -872,7 +1146,7 @@ final class HologramFourMachineRuntimeProbe {
             return false;
         }
         if (submitPhase == 2) {
-            int destination = operation == HologramStockNativeWire.Operation.DEMOLISH ? (unformedCycle ? 1 : 0)
+            int destination = operation == HologramStockNativeWire.Operation.DEMOLISH ? (aeCycle ? 1 : 0)
                 : operation == HologramStockNativeWire.Operation.REPLACE && aeRecoveryReplace() ? 1 : 0;
             if (operation != HologramStockNativeWire.Operation.BUILD
                 && screen.ui.review.nativeRecoveryDestination() != destination) {
@@ -883,7 +1157,9 @@ final class HologramFourMachineRuntimeProbe {
             if (!present("materials.control.55") || !screen.ui.review.materialControlEnabled(55)) return false;
             record("material-confirm-" + operation, screen.ui.review.materialDialogProbeState());
             beginsBefore = wire.beginCount();
-            submittedOperation = operation.ordinal();
+            submittedOperation = operation.wireId();
+            submittedDigest = screen.ui.session.state().data.getString("nativeTargetDigest");
+            require(submittedDigest.matches("[0-9a-f]{64}"), "Submitted UI has no exact native target digest");
             submittedSources = (screen.ui.config.sourceEnabled("materialMain") ? 1 : 0)
                 | (screen.ui.config.sourceEnabled("materialContainers") ? 2 : 0)
                 | (screen.ui.config.sourceEnabled("materialMe") ? 4 : 0);
@@ -900,8 +1176,7 @@ final class HologramFourMachineRuntimeProbe {
             performanceCompleted = false;
             businessReopened = false;
             businessReopenedDrawn = false;
-            performance
-                .submitted(current().spec.key, current().facing.toString(), phase, operation.name(), unformedCycle);
+            performance.submitted(current().spec.key, current().facing.toString(), phase, operation.name(), aeCycle);
             click("materials.control.55");
             record("material-submit-post-input-" + operation, screen.ui.review.materialDialogProbeState());
             record("material-submit-post-notice-" + operation, screen.ui.session.notice());
@@ -923,8 +1198,11 @@ final class HologramFourMachineRuntimeProbe {
                     "Multiple real business BEGINs followed one submit");
                 require(
                     submittedBegin.operation == submittedOperation && (submittedBegin.sources & 7) == submittedSources
-                        && submittedBegin.destination == submittedDestination,
-                    "Real business BEGIN differs from the submitted UI operation, source mask or destination");
+                        && submittedBegin.destination == submittedDestination
+                        && (submittedOperation == HologramStockNativeWire.Operation.DEMOLISH.wireId()
+                            ? submittedBegin.targetDigest.isEmpty()
+                            : submittedDigest.equals(submittedBegin.targetDigest)),
+                    "Real business BEGIN differs from the submitted UI operation, source mask, destination or target digest");
                 record(
                     "native-business-request",
                     "request=" + submittedBegin.request
@@ -934,6 +1212,7 @@ final class HologramFourMachineRuntimeProbe {
                         + submittedBegin.sources
                         + "; destination="
                         + submittedBegin.destination);
+                record("submitted-native-ui-target-digest", submittedDigest);
             }
         }
         HologramStockNativeWire.Reply reply = submittedBegin == null ? null : wire.latest(submittedBegin.request);
@@ -952,6 +1231,24 @@ final class HologramFourMachineRuntimeProbe {
         require(
             reply.phase() == HologramStockNativeWire.Phase.COMPLETE,
             "Actual native action did not complete: " + reply);
+        if (ebfActionsSlice) {
+            int solid = 0;
+            for (Target cell : target) if (cell.item != null) solid++;
+            int expectedPlaced = phase == 11 ? solid : phase == 44 ? 0 : phase == 27 ? solid + 1 : -1;
+            require(
+                expectedPlaced >= 0 && reply.placed() == expectedPlaced,
+                "Actual native terminal write count differs: phase=" + phase
+                    + " expected="
+                    + expectedPlaced
+                    + " actual="
+                    + reply.placed());
+            record(
+                "native-terminal-write-accounting",
+                "placed=" + reply.placed()
+                    + "; expected="
+                    + expectedPlaced
+                    + "; unchanged targets independently checked against world and ledger");
+        }
         require(
             wire.beginCount() == submittedBegin.ordinal && submittedBegin.ordinal == beginsBefore + 1,
             "Terminal did not correspond to exactly one real outbound business BEGIN");
@@ -966,7 +1263,14 @@ final class HologramFourMachineRuntimeProbe {
     }
 
     private boolean businessWaitPhase() {
-        return phase == 4 || phase == 11 || phase == 17 || phase == 23 || phase == 27 || phase == 34 || phase == 40;
+        return phase == 4 || phase == 11
+            || phase == 17
+            || phase == 23
+            || phase == 27
+            || phase == 34
+            || phase == 40
+            || phase == 44
+            || phase == 47;
     }
 
     private void requireDetachedBusiness(Minecraft mc) {
@@ -1017,7 +1321,7 @@ final class HologramFourMachineRuntimeProbe {
         require(
             !HologramClientStockNative.OWNER.pendingHere(HologramClientStockNative.context(mc)),
             "Matching COMPLETE left a live native business Flow");
-        if (submittedOperation == HologramStockNativeWire.Operation.DEMOLISH.ordinal()) {
+        if (submittedOperation == HologramStockNativeWire.Operation.DEMOLISH.wireId()) {
             require(mc.currentScreen == null, "Demolition retained or replaced its closed native machine screen");
             return true;
         }
@@ -1374,13 +1678,19 @@ final class HologramFourMachineRuntimeProbe {
         step.put("phase", phase);
         step.put("machine", current().spec.key);
         step.put("orientation", current().facing.toString());
-        step.put("unformedCycle", unformedCycle);
+        step.put("aeCycle", aeCycle);
         step.put("evidence", value instanceof NBTTagCompound || value instanceof NBTTagList ? value.toString() : value);
         steps.add(step);
     }
 
     void guiPost(GuiScreen gui, long frame) throws Exception {
         if (gui != screen) return;
+        if (!initialGuiPostObserved) {
+            initialGuiPostObserved = true;
+            report.put("initialOpenToNaturalGuiPostNanos", System.nanoTime() - initialOpenAt);
+            report.put("initialNaturalGuiPostFrame", frame);
+            record("initial-natural-native-gui-post", screen.ui.session.state().data);
+        }
         if (businessReopened && !businessReopenedDrawn) {
             businessReopenedDrawn = true;
             record("production-controller-reopen-natural-gui-post", frame);
@@ -1392,7 +1702,12 @@ final class HologramFourMachineRuntimeProbe {
         if (screenshot == null) return;
         HologramState displayed = HologramRenderer.previewDisplayState();
         if (displayed == null || displayed.identity != screen.ui.session.state()
-            .controllerView(0).identity) return;
+            .controllerView(0).identity && displayed.identity
+                != screen.ui.session.state()
+                    .controllerView(1).identity)
+            return;
+        if (!HologramRenderer.editor()
+            .previewMeshReady(displayed)) return;
         NBTTagCompound rendered = HologramRenderer.editor()
             .lessonInspection(displayed);
         if (!rendered.getBoolean("snapshotPresented") || rendered.getInteger("presentedVisibleCellCount") <= 0) return;
@@ -1465,8 +1780,28 @@ final class HologramFourMachineRuntimeProbe {
         }
         if (fixture != null) {
             if (System.nanoTime() < cleanupAuditAt) return false;
-            if (cleanup == null) cleanup = fixture.request(fixture::restore);
+            if (cleanup == null) cleanup = fixture.request(() -> {
+                if (centerNeighbor != null) {
+                    centerNeighbor.close();
+                    centerNeighbor = null;
+                }
+                return fixture.restore();
+            });
             if (!cleanup.isDone()) return false;
+            if (cleanup.isCompletedExceptionally()) {
+                try {
+                    cleanup.join();
+                } catch (java.util.concurrent.CompletionException failure) {
+                    report.put("restorationFailure", String.valueOf(failure.getCause()));
+                    report.put("cleanupPending", true);
+                    report.put("passed", false);
+                    report.put("retainedOwnedWorld", save.toString());
+                    cleanup = null;
+                    cleanupAuditAt = System.nanoTime() + 1_000_000_000L;
+                    write();
+                    return false;
+                }
+            }
             NBTTagCompound attempt = cleanup.join(), guard = attempt.getCompoundTag("recoveryGuard");
             report.put("recoveryAudit", guard.toString());
             report.put("recoveryClear", guard.getBoolean("clear"));
@@ -1515,7 +1850,8 @@ final class HologramFourMachineRuntimeProbe {
                 && Boolean.TRUE.equals(report.get("aeReplacementRecovered"))
                 && Boolean.TRUE.equals(report.get("presetClearedToCasing"))
                 && Boolean.TRUE.equals(report.get("presetRepairedAfterClear"))
-                || ebfRepairSlice && Boolean.TRUE.equals(report.get("ebfRepairSlicePassed")))
+                || ebfRepairSlice && Boolean.TRUE.equals(report.get("ebfRepairSlicePassed"))
+                || ebfActionsSlice && centerUiVerified && Boolean.TRUE.equals(report.get("ebfActionsSlicePassed")))
                 && !report.containsKey("failure"));
         restored = true;
         write();
@@ -1548,7 +1884,7 @@ final class HologramFourMachineRuntimeProbe {
         return current().spec.key + "-"
             + current().facing.toString()
                 .replace(' ', '-')
-            + (unformedCycle ? "-unformed" : "")
+            + (aeCycle ? "-ae" : "")
             + "-"
             + suffix;
     }
@@ -1608,11 +1944,11 @@ final class HologramFourMachineRuntimeProbe {
     }
 
     private boolean aeOnlyBuild() {
-        return fullMatrix && unformedCycle && current().spec == HologramFourMachineSpec.EBF;
+        return fullMatrix && aeCycle && current().spec == HologramFourMachineSpec.EBF;
     }
 
     private boolean aeRecoveryReplace() {
-        return fullMatrix && !unformedCycle && current().spec == HologramFourMachineSpec.EBF;
+        return fullMatrix && !aeCycle && current().spec == HologramFourMachineSpec.EBF;
     }
 
     private static void requireOptionalFreeEbf(List<Target> target) {
@@ -1628,7 +1964,14 @@ final class HologramFourMachineRuntimeProbe {
     }
 
     private boolean postBusinessReviewPhase() {
-        return phase == 5 || phase == 12 || phase == 18 || phase == 24 || phase == 28 || phase == 35 || phase == 41;
+        return phase == 5 || phase == 12
+            || phase == 18
+            || phase == 24
+            || phase == 28
+            || phase == 35
+            || phase == 41
+            || phase == 45
+            || phase == 48;
     }
 
     private boolean disabledActions() throws Exception {
@@ -1640,7 +1983,7 @@ final class HologramFourMachineRuntimeProbe {
             wire.beginCount() == disabledActionBegins && !HologramClientStockNative.OWNER
                 .pendingHere(HologramClientStockNative.context(Minecraft.getMinecraft())),
             "A grey controller-only action dispatched business work");
-        if (disabledActionIndex >= 3) return true;
+        if (disabledActionIndex >= 2) return true;
         String key = "control." + (1721 + disabledActionIndex);
         Object registry = HologramTestLabUiDiagnostics.readDiagnosticField(screen.ui.shell, "targets");
         Object registered = ((Map<?, ?>) registry).get(key);
@@ -1902,12 +2245,12 @@ final class HologramFourMachineRuntimeProbe {
             NBTTagCompound second = b.get(entry.getKey());
             require(
                 second != null && first.getInteger("liveTileIdentity") == second.getInteger("liveTileIdentity"),
-                "REPAIR replaced matching native TE at " + entry.getKey());
+                "BUILD replaced matching native TE at " + entry.getKey());
             require(
                 first.getTagList("nativeInventory", 10)
                     .equals(second.getTagList("nativeInventory", 10))
                     && first.getLong("storedEU") == second.getLong("storedEU"),
-                "REPAIR overwrote native inventory/energy");
+                "BUILD overwrote native inventory/energy");
         }
     }
 

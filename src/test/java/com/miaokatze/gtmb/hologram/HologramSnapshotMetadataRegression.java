@@ -551,11 +551,14 @@ final class HologramSnapshotMetadataRegression {
                 "repeated identity selection uses the existing review");
             SimpleAssert.that(
                 HologramAuthoringWorkflow.blueprintAction(session, repeated, "removeBlueprintObstructions"),
-                "published zero blockers require no world traversal");
+                "retired obstruction-removal request is handled without executing a world operation");
+            SimpleAssert.that(
+                session.status.contains("不再受理移除阻塞物请求"),
+                "retired blueprint clearing is explicitly refused even when no blockers were published");
         }
         SimpleAssert.that(
             session.planRevision == revision && session.placementReviewNonce == nonce,
-            "thirty no-op review actions never rebuild the plan or invalidate review authority");
+            "unchanged review controls and refused clearing requests never rebuild the plan or invalidate review authority");
         repeated.setBoolean("all", false);
         SimpleAssert.that(
             !HologramAuthoringWorkflow.unchangedBlueprintAction(session, repeated, "configurePlacementNbt"),

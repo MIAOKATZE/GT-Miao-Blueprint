@@ -192,8 +192,8 @@ public final class HologramClientP0Regression {
         actions(state, Operation.BUILD);
         SimpleAssert.eq("仅控制器", state.statusCaption(), "server observation replaces the opening progress caption");
         state.observe(new ServerObservation(236, 0, 64, 0, Stage.UNFORMED, revision, ""));
-        SimpleAssert.eq(Operation.REPAIR, state.action(), "unfinished structures default to repair");
-        actions(state, Operation.REPAIR, Operation.DEMOLISH);
+        SimpleAssert.eq(Operation.BUILD, state.action(), "unfinished structures default to build");
+        actions(state, Operation.BUILD);
         state.observe(new ServerObservation(236, 0, 64, 0, Stage.FORMED, revision, ""));
         SimpleAssert.eq(Operation.REPLACE, state.action(), "formed structures default to replacement");
         actions(state, Operation.REPLACE, Operation.DEMOLISH);
@@ -213,16 +213,16 @@ public final class HologramClientP0Regression {
             "invalidated world evidence cannot authorize " + action);
         state.targetFailed("Fixture invalid optional preset");
         state.observe(new ServerObservation(236, 0, 64, 0, Stage.FORMED, state.targetRevision(), ""));
-        actions(state, Operation.DEMOLISH);
-        SimpleAssert
-            .that(state.select(Operation.DEMOLISH), "a bad desired preset does not block whole-machine demolition");
+        actions(state);
+        SimpleAssert.that(!state.select(Operation.DEMOLISH), "unready scope cannot authorize demolition");
         state.targetReady();
         actions(state, Operation.REPLACE, Operation.DEMOLISH);
+        SimpleAssert.that(state.select(Operation.DEMOLISH), "formed ready scope admits demolition");
         NBTTagCompound metadata = state.metadata();
         SimpleAssert
             .eq("FORMED", metadata.getString("nativeStage"), "published formation comes from the server observation");
         SimpleAssert.eq(
-            Operation.DEMOLISH.ordinal(),
+            Operation.DEMOLISH.uiIndex(),
             metadata.getInteger("nativeAction"),
             "the selected action is independent of target configuration");
         SimpleAssert.that(

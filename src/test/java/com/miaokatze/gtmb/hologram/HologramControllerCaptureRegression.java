@@ -1256,9 +1256,9 @@ public final class HologramControllerCaptureRegression {
                 world.occupied = Blocks.stone;
                 world.occupiedX = cell.x;
                 SimpleAssert.eq(
-                    "pending",
+                    "blocked",
                     HologramPlanPolicy.classify(s, cell, index),
-                    "occupied native required air reaches the native clearing transaction");
+                    "occupied native required air cannot authorize cleanup in build");
                 s.mode = 1;
                 SimpleAssert.eq(
                     "pending",

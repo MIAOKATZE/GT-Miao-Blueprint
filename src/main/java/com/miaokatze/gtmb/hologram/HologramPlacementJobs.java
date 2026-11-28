@@ -75,12 +75,18 @@ final class HologramPlacementJobs {
     }
 
     static void begin(HologramSession s, net.minecraft.nbt.NBTTagCompound action) {
+        String operationRefusal = HologramPlanPolicy.legacyOperationRefusal(s);
+        if (!operationRefusal.isEmpty()) {
+            s.forcePlacementReady = false;
+            s.status = operationRefusal;
+            return;
+        }
         try {
             if (!HologramSessionPolicy.valid(s)) throw new java.io.IOException("施工上下文已变化。");
             boolean voucher = !s.virtual && action != null
                 && action.getBoolean("useDecorationVoucher")
                 && HologramMaterialAccess.voucherSelected(s);
-            var source = new CapturedSource(s, false);
+            var source = new CapturedSource(s);
             var job = HologramConstructionJobs.start(java.util.UUID.randomUUID(), 0, source);
             if (job.terminal) return;
             s.forcePlacementReady = false;
@@ -95,36 +101,6 @@ final class HologramPlacementJobs {
         } catch (java.io.IOException failure) {
             s.status = failure.getMessage();
         }
-    }
-
-    static void clearObstructions(HologramSession s, net.minecraft.nbt.NBTTagCompound action)
-        throws java.io.IOException {
-        if (!s.virtual || s.capture == null
-            || !s.virtualPlacement
-            || !s.virtualLocked
-            || !s.blueprintAwaitingConfirmation
-            || !s.placementReviewIssued
-            || !action.hasKey("placementReviewNonce", 4)
-            || action.getLong("placementReviewNonce") != s.placementReviewNonce
-            || !action.hasKey("planRevision", 4)
-            || action.getLong("planRevision") != s.planRevision
-            || !s.player.capabilities.allowEdit
-            || !HologramSessionPolicy.valid(s)
-            || s.job == 1
-            || s.job == 2) throw new java.io.IOException("请先锁定蓝图位置并核对当前清障范围");
-        if (!HologramPlanPolicy.planCurrent(s)) throw new java.io.IOException("现场已变化，请重新核对清障范围");
-        s.work.clear();
-        for (int i = 0; i < s.capture.cells.size(); i++) {
-            var cell = s.capture.cells.get(i);
-            if (!cell.anchor && !HologramSessionPolicy.ignoredPlacementAir(s, cell, i)
-                && HologramSessionPolicy.inScope(s, cell, i)) s.work.add(i);
-        }
-        var job = HologramConstructionJobs.start(java.util.UUID.randomUUID(), 0, new CapturedSource(s, true));
-        if (job.terminal) return;
-        s.cursor = s.completed = 0;
-        s.job = 1;
-        s.phase = "RUNNING";
-        s.status = "正在按蓝图范围原生清障";
     }
 
     /** Finite target adapter only: no independent placement, payment, retry, cancellation or finish loop. */
@@ -150,17 +126,16 @@ final class HologramPlacementJobs {
         final net.minecraft.block.Block controllerBlock;
         final int controllerX, controllerY, controllerZ, controllerId, controllerFront, controllerMetadata;
         HologramConstructionJobs.Target finalAnchor;
-        boolean anchorOffered, anchorRemoved;
-        final boolean creative, clearing;
+        boolean anchorOffered, anchorRemoved, startedWriting;
+        final boolean creative;
         final int mode;
         final long revision, started = System.nanoTime();
         int prepared, cursor;
         long skipped;
         final it.unimi.dsi.fastutil.longs.LongOpenHashSet budgeted = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
 
-        CapturedSource(HologramSession s, boolean clearing) {
+        CapturedSource(HologramSession s) {
             this.s = s;
-            this.clearing = clearing;
             capture = s.capture;
             indices = new java.util.ArrayList<>(s.work);
             mode = s.mode;
@@ -198,7 +173,8 @@ final class HologramPlacementJobs {
         }
 
         public HologramStockNativeWire.Operation operation() {
-            return clearing || mode == 2 ? HologramStockNativeWire.Operation.DEMOLISH
+            if (s.virtual) return HologramStockNativeWire.Operation.BUILD;
+            return mode == 2 ? HologramStockNativeWire.Operation.DEMOLISH
                 : mode == 1 ? HologramStockNativeWire.Operation.REPLACE : HologramStockNativeWire.Operation.BUILD;
         }
 
@@ -219,7 +195,7 @@ final class HologramPlacementJobs {
         }
 
         public boolean canReplace() {
-            return mode == 1 || creative;
+            return !s.virtual && mode == 1;
         }
 
         public boolean current() {
@@ -242,6 +218,7 @@ final class HologramPlacementJobs {
 
         private boolean contextStillBound() {
             return !s.cancelled && s.capture == capture
+                && s.mode == mode
                 && s.planRevision == revision
                 && s.player.worldObj == world
                 && s.player.dimension == s.dimension
@@ -299,7 +276,7 @@ final class HologramPlacementJobs {
                 int index = indices.get(prepared++);
                 var cell = capture.cells.get(index);
                 capture.positions.putIfAbsent(HologramValues.position(cell), cell);
-                if (clearing || mode == 2 || cell.anchor && !s.virtual) continue;
+                if (mode == 2 || cell.anchor && !s.virtual) continue;
                 var sample = HologramCellPolicy.targetFor(s, cell, index);
                 if (sample == null) continue;
                 var block = HologramCellPolicy.targetPreviewBlock(s, cell, sample);
@@ -358,20 +335,10 @@ final class HologramPlacementJobs {
                     skipped++;
                     continue;
                 }
-                if (clearing
-                    && (HologramCellPolicy.trivial(world, cell.x, cell.y, cell.z) || HologramCellPolicy.targetMatches(
-                        s,
-                        cell,
-                        index,
-                        world.getBlock(cell.x, cell.y, cell.z),
-                        world.getBlockMetadata(cell.x, cell.y, cell.z)))) {
-                    skipped++;
-                    continue;
-                }
                 var target = targets.get(index);
                 boolean requiredAir = !cell.unknown && cell.block == net.minecraft.init.Blocks.air
-                    && (s.virtual && mode != 0 || HologramElementCatalog.nativeAir(cell.element));
-                if (!clearing && mode != 2 && !requiredAir && target == null) {
+                    && HologramElementCatalog.nativeAir(cell.element);
+                if (mode != 2 && !requiredAir && target == null) {
                     skipped++;
                     continue;
                 }
@@ -384,7 +351,7 @@ final class HologramPlacementJobs {
                     cell.y,
                     cell.z,
                     target,
-                    clearing || mode == 2 || requiredAir,
+                    mode == 2 || requiredAir,
                     controller);
                 if (this.controller != null && mode == 2
                     && cell.x == controllerX
@@ -409,6 +376,10 @@ final class HologramPlacementJobs {
         }
 
         public void before(HologramConstructionJobs.Target target) throws java.io.IOException {
+            if (!startedWriting) {
+                String refusal = HologramPlanPolicy.legacyOperationRefusal(s);
+                if (!refusal.isEmpty()) throw new java.io.IOException(refusal);
+            }
             if (creative || target.prepared == null || target.prepared.assets.isEmpty()) return;
             if (!budgeted.contains(com.gtnewhorizon.gtnhlib.util.CoordinatePacker.pack(target.x, target.y, target.z))
                 && !HologramNativeConstruction.matches(s, target.prepared, target.x, target.y, target.z)) {
@@ -418,6 +389,8 @@ final class HologramPlacementJobs {
         }
 
         public void committed(HologramConstructionJobs.Target target, boolean changed) {
+            // Matched rows do not authorize later writes; the first committed change freezes formation admission.
+            if (changed) startedWriting = true;
             if (changed && target == finalAnchor) anchorRemoved = true;
             var cell = capture.positions.get(target.x + "," + target.y + "," + target.z);
             if (cell != null) {

@@ -54,6 +54,8 @@ final class HologramNativeUiText {
 
     static String reason(String raw) {
         if (raw == null || raw.isEmpty()) return "";
+        if (raw.startsWith("NATIVE_SITE_"))
+            return projectorOr("native.reason.site.unconfirmed", "原生流程未能确认完整现场，替换与拆除已停用（%1$s）。", raw);
         if (raw.startsWith("GT native persistence did not retain selected machineMode: ")) return projectorOr(
             "native.reason.item_state.mode_rejected",
             "原生设备未接受所选模式：%1$s",
@@ -106,7 +108,21 @@ final class HologramNativeUiText {
             case "控制器不支持原生现场读取。" -> projectorOr("native.reason.site.unsupported_controller", raw);
             case "控制器没有原生生存建造接口。" -> projectorOr("native.reason.site.no_survival", raw);
             case "原生现场读取已取消。" -> projectorOr("native.reason.site.cancelled", raw);
-            case "现场仓室数量超过原生请求上限。" -> projectorOr("native.reason.site.too_many_hatches", raw);
+            case "现场仓室数量超过原生请求上限。", "现场仓室超过限制。" -> projectorOr("native.reason.site.too_many_hatches", raw);
+            case "现场仓室采用项超过限制。" -> projectorOr("native.reason.site.too_many_choices", raw);
+            case "现场方块采用项不属于已证明的普通原生位置。" -> projectorOr("native.reason.site.plain_position_unproved", raw);
+            case "原生声明无法证明未编辑现场材料的位置，已保留原目标。" -> projectorOr("native.reason.site.material_position_unproved", raw);
+            case "现场方块未被原生位置接受。", "未编辑的现场材料未被新原生位置接受。", "新材料未被现场原生位置接受。" -> projectorOr(
+                "native.reason.site.material_rejected",
+                raw);
+            case "当前主尺寸尚未恢复，新目标会改变现场形状；请先明确主尺寸。" -> projectorOr("native.reason.site.unknown_main_shape_changed", raw);
+            case "现场仓室无法建立独立的原生方向实例。" -> projectorOr("native.reason.site.hatch_direction_context", raw);
+            case "原生材料域没有提供确定的替换材料。" -> projectorOr("native.reason.site.material_unavailable", raw);
+            case "所选仓室不属于完整现场足迹。" -> projectorOr("native.reason.site.hatch_outside_footprint", raw);
+            case "此仓室位置缺少新型号的原生声明证明。" -> projectorOr("native.reason.site.hatch_model_unproved", raw);
+            case "服务端缺少此仓室的原生位置证明。" -> projectorOr("native.reason.site.hatch_position_unproved", raw);
+            case "仓室方向无效。" -> projectorOr("native.reason.local.invalid_facing", raw);
+            case "所选仓室型号无法原生放置。" -> projectorOr("native.reason.preview.hatch_rejected", raw);
             case "原生现场读取期间方块、仓室身份或朝向已变化，请重新读取。" -> projectorOr("native.reason.site.changed", raw);
             case "现场范围尚未被原生流程完整证明，不能替换或拆除。" -> projectorOr("native.reason.site.unconfirmed_scope", raw);
             case "现场仓室的原生物品无效。" -> projectorOr("native.reason.site.invalid_item", raw);
@@ -119,7 +135,7 @@ final class HologramNativeUiText {
                 "native.reason.preview.no_progress",
                 "原生构造连续多轮没有有效进展，已停止准备。");
             case "所选仓室未被原生建造流程保留。" -> projectorOr("native.reason.preview.hatch_not_retained", raw);
-            case "所选仓室方向不被原生位置接受。", "所选仓室方向未被原生建造流程保留。" -> projectorOr(
+            case "所选仓室方向不被原生位置接受。", "所选仓室方向未被原生建造流程保留。", "仓室原生接口拒绝此方向。", "仓室新方向未被现场原生位置接受。" -> projectorOr(
                 "native.reason.preview.hatch_direction_rejected",
                 raw);
             case "施工请求已处理，未重复执行。" -> projectorOr("native.reason.job.replayed", raw);
@@ -378,9 +394,9 @@ final class HologramNativeUiText {
             case "施工期间控制器或区块已变化。" -> projectorOr(
                 "native.reason.the_controller_or_chunks_changed_during_construction",
                 "施工期间控制器或区块已变化。");
-            case "新建范围已出现方块，请重新读取后补建。" -> projectorOr(
+            case "新建范围已出现方块，请重新读取后补建。", "建造范围已有变化，请重新读取后建造。" -> projectorOr(
                 "native.reason.blocks_appeared_in_the_new_build_area_read",
-                "新建范围已出现方块，请重新读取后补建。");
+                "建造范围已有变化，请重新读取后建造。");
             case "原生结构操作异常，已保留实际完成结果。" -> projectorOr(
                 "native.reason.the_native_operation_failed_actual_completed_results_were",
                 "原生结构操作异常，已保留实际完成结果。");

@@ -250,36 +250,27 @@ final class HologramEditorPropertiesPane {
                             : projectorOr("native.ui.complete_current_plan", "当前完整规划"))));
         Flow modes = row();
         boolean nativeController = ui.session.state().data.getBoolean("localStandardController");
-        String[] modeNames = nativeController
-            ? new String[] { projectorOr("native.ui.build", "建造"), projectorOr("native.ui.repair", "补建"),
-                projectorOr("native.ui.replace", "替换"), projectorOr("native.ui.demolish", "拆除") }
-            : new String[] { projectorOr("native.ui.repair", "补建"), projectorOr("native.ui.replace", "替换"),
-                projectorOr("native.ui.demolish", "拆除") };
-        for (int i = 0; i < modeNames.length; i++) {
-            final int mode = i;
+        var actions = nativeController
+            ? new com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation[] {
+                com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.BUILD,
+                com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.REPLACE,
+                com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.DEMOLISH }
+            : new com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation[] {
+                com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.BUILD };
+        for (var action : actions) {
             modes.child(
                 action(
-                    (nativeController ? 1720 : 70) + i,
-                    () -> (ui.session.state().data.getInteger(nativeController ? "nativeAction" : "mode") == mode ? "✓ "
-                        : "") + modeNames[mode],
+                    nativeController ? 1720 + action.uiIndex() : 70,
+                    () -> (ui.session.state().data.getInteger(nativeController ? "nativeAction" : "mode")
+                        == action.uiIndex() ? "✓ " : "") + HologramNativeControllerState.label(action),
                     () -> nativeController ? ui.host.parent()
-                        .nativeActionBlocker(
-                            com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.values()[mode])
-                        .isEmpty()
+                        .nativeActionBlocker(action)
+                        .isEmpty() : ui.session.configurationEditable(),
+                    () -> nativeController ? ui.host.parent()
+                        .nativeActionBlocker(action)
                         : ui.session.configurationEditable()
-                            && (mode != 2 || !ui.session.state().data.getBoolean("virtual")),
-                    () -> nativeController ? ui.host.parent()
-                        .nativeActionBlocker(
-                            com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.values()[mode])
-                        : mode == 2 && ui.session.state().data.getBoolean("virtual")
-                            ? projectorOr(
-                                "native.ui.virtual_presets_cannot_be_demolished_create_a",
-                                "虚拟预设不支持拆除；请先建立实体控制器。")
-                            : ui.session.configurationEditable()
-                                ? projectorOr(
-                                    "native.ui.changes_the_planning_mode_only_construction_requires",
-                                    "只修改规划模式；施工须另行核对材料。")
-                                : ui.session.editingReason()).expanded());
+                            ? projectorOr("native.ui.blueprints_build_only", "蓝图仅支持建造；施工须另行核对材料。")
+                            : ui.session.editingReason()).expanded());
         }
         source.child(modes);
         Flow structure = section();

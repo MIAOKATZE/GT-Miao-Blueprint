@@ -110,6 +110,10 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
         return simulation.nativeResult;
     }
 
+    int retainedMaterialCount() {
+        return simulation.world.retainedMaterialCount();
+    }
+
     int extraDisplayCells() {
         return 0;
     }

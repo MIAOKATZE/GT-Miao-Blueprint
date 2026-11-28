@@ -336,7 +336,7 @@ final class HologramUiCanvas {
         if (id == 93 && ui.session.selectedCell() != null && ui.session.selectedCell().family.isEmpty())
             return projectorOr("native_common.disabled.no_family", "本格没有可安全识别的同类部件，请使用单格范围。");
         if (id == 61 && ui.session.state().data.getInteger("mode") == 2)
-            return projectorOr("native_common.disabled.demolish_target", "拆除模式无需指定新方块；切换补建或替换后可选材。");
+            return projectorOr("native_common.disabled.demolish_target", "拆除模式无需指定新方块；切换替换后可选材。");
         if (id == 50 && ui.session.state().data.getInteger("scope") >= 2 && ui.session.selectedCell() == null)
             return projectorOr("native_common.disabled.scope_selection", "选中格或同类部件范围需要先选择预览格。");
         if (id == 92 || id == 93 || id == 65) return ui.session.selectedCell() == null
@@ -423,7 +423,7 @@ final class HologramUiCanvas {
             case 70:
             case 71:
             case 72:
-                return "选择补建、替换或拆除；主界面数字键 1 / 2 / 3 也可切换。切换模式不会直接施工。";
+                return "结构可选择建造、替换或拆除；蓝图仅支持建造。数字键 1 / 2 / 3 选择允许的操作，仍须确认施工。";
             case 108:
             case 109:
                 return projectorOr("native_common.help.undo", "撤销 / 重做仅改变规划，不回滚已施工的世界方块。");

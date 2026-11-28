@@ -139,17 +139,13 @@ final class HologramPlanClassifier {
         boolean matches = actual == previewBlock && actualMeta == previewMeta
             && validationDamageMatches(actual, actualMeta, target);
         World world = s.player.worldObj;
-        boolean empty = !s.player.capabilities.isCreativeMode
-            && HologramCellPolicy.trivial(world, cell.x, cell.y, cell.z);
-        if (!s.player.capabilities.isCreativeMode && !empty && !matches) return "blocked";
+        boolean empty = HologramCellPolicy.trivial(world, cell.x, cell.y, cell.z);
+        if (!empty && !matches) return "blocked";
         if (matches) return "satisfied";
         // Permission callbacks remain per position and receive the current tool/channels.
         if (!world.canMineBlock(s.player, cell.x, cell.y, cell.z)
             || !s.player.canPlayerEdit(cell.x, cell.y, cell.z, 1, HologramSessionPolicy.trigger(s))) return "protected";
-        if (empty || s.player.capabilities.isCreativeMode && HologramCellPolicy.trivial(world, cell.x, cell.y, cell.z))
-            return "pending";
-        if (!s.player.capabilities.isCreativeMode) return "blocked";
-        return HologramCellPolicy.removable(s, cell) ? "pending" : "protected";
+        return empty ? "pending" : "blocked";
     }
 
     private boolean validationDamageMatches(Block actual, int metadata, ItemStack paid) {

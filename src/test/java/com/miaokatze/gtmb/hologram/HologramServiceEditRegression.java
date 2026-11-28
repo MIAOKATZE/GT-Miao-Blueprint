@@ -237,13 +237,29 @@ final class HologramServiceEditRegression {
             SimpleAssert.eq(0, get(session, "job"), "obstruction rejects the whole selected range");
             SimpleAssert.that(((String) get(session, "status")).contains("1 格结构占位被遮挡"), "blocked count is visible");
             player.capabilities.isCreativeMode = true;
+            NBTTagList creativeStock = player.inventory.writeToNBT(new NBTTagList());
             SimpleAssert.eq(
-                "pending",
+                "blocked",
                 classify.invoke(null, session, cell, 0),
-                "creative ordinary obstruction can be overwritten");
-            world.occupant = new TileEntity();
-            SimpleAssert
-                .eq("protected", classify.invoke(null, session, cell, 0), "creative unknown tile stays protected");
+                "creative build cannot overwrite an ordinary obstruction");
+            build.invoke(null, session, false);
+            SimpleAssert.that(
+                (Integer) get(session, "job") == 0 && !HologramConstructionJobs.active(player)
+                    && world.occupied == Blocks.stone
+                    && creativeStock.equals(player.inventory.writeToNBT(new NBTTagList())),
+                "creative build refusal keeps the world block and complete player inventory unchanged");
+            TileEntity obstruction = new TileEntity();
+            world.occupant = obstruction;
+            SimpleAssert.eq(
+                "blocked",
+                classify.invoke(null, session, cell, 0),
+                "creative build refuses occupied tile conflicts before any destructive handling");
+            build.invoke(null, session, false);
+            SimpleAssert.that(
+                world.occupant == obstruction && world.occupied == Blocks.stone
+                    && !HologramConstructionJobs.active(player)
+                    && creativeStock.equals(player.inventory.writeToNBT(new NBTTagList())),
+                "unknown tile and inventory remain intact when creative build is refused");
             world.occupant = null;
             SimpleAssert.eq(true, member.invoke(null, session, cell), "declared existing block is an original member");
             cell.userPosition = true;
@@ -397,8 +413,8 @@ final class HologramServiceEditRegression {
         build.setAccessible(true);
         build.invoke(null, session);
         SimpleAssert.that(
-            ((String) get(session, "status")).contains("放置") && ((String) get(session, "status")).contains("确定位置"),
-            "pure editing refuses direct build even with a stale lock");
+            ((String) get(session, "status")).contains("蓝图仅支持建造"),
+            "retired blueprint mode refuses direct build even with a stale lock");
         SimpleAssert.eq(jobBefore, get(session, "job"), "pure editing direct build never starts or changes a job");
         SimpleAssert.that(get(session, "capture") == capture, "refused build preserves exact editing capture");
         SimpleAssert.eq(before, map(session, "pins"), "refused build preserves all target overrides");

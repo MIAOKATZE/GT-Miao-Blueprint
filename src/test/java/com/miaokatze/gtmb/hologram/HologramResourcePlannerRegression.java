@@ -644,7 +644,7 @@ public final class HologramResourcePlannerRegression {
                 .that(!HologramPlanPolicy.constructionAllowed(optimized), "preflight still rejects the whole build");
             SimpleAssert.eq(2, blocked, "the reference pass finds both separated obstructions");
             SimpleAssert.eq(
-                "选定范围有 2 格结构占位被遮挡，已整体拒绝补建，请清空后重试",
+                "选定范围有 2 格结构占位被遮挡，已整体拒绝建造，请清空后重试",
                 optimized.status,
                 "optimized preflight preserves the complete blocked count and feedback");
             int oldPlans = 0, newPlans = 0;
@@ -1090,6 +1090,8 @@ public final class HologramResourcePlannerRegression {
                 "virtual anchor plan tolerates an absent optional preset without a cache NPE");
             SimpleAssert
                 .eq("protected", missingPreset.planStatus.get(0), "absent-preset anchor retains original protection");
+            int matching = 0, pending = 0, blocked = 0, creativeBlocked = 0;
+            NBTTagList inventoryBefore = player.inventory.writeToNBT(new NBTTagList());
             for (int i = 0; i < 50000; i++) {
                 net.minecraft.block.Block source = types[i % types.length];
                 cell.block = source;
@@ -1110,11 +1112,24 @@ public final class HologramResourcePlannerRegression {
                     HologramPlanPolicy.classify(s, cell, 0),
                     result,
                     "ordinary proof preserves each current-world and creative/survival result");
-                String expected = actual == source ? "satisfied"
-                    : actual == Blocks.air || player.capabilities.isCreativeMode ? "pending" : "blocked";
+                String expected = actual == source ? "satisfied" : actual == Blocks.air ? "pending" : "blocked";
                 SimpleAssert
                     .eq(expected, result, "50000 ordinary classifications retain position-specific world state");
+                if ("satisfied".equals(result)) matching++;
+                else if ("pending".equals(result)) pending++;
+                else if ("blocked".equals(result)) {
+                    blocked++;
+                    if (player.capabilities.isCreativeMode) creativeBlocked++;
+                }
             }
+            SimpleAssert.eq(34286, matching, "existing matching blocks stay unchanged in the deterministic workload");
+            SimpleAssert.eq(10000, pending, "only the every-fifth empty position is offered for build");
+            SimpleAssert.eq(5714, blocked, "every-seventh occupied mismatch outside empty positions stays blocked");
+            SimpleAssert.eq(714, creativeBlocked, "creative status never grants replacement in the build workload");
+            SimpleAssert.eq(
+                inventoryBefore,
+                player.inventory.writeToNBT(new NBTTagList()),
+                "the 50000 read-only classifications cannot reserve, recover or consume player inventory");
             SimpleAssert.eq(
                 50000L,
                 classifier.ordinaryCells,
@@ -1225,9 +1240,13 @@ public final class HologramResourcePlannerRegression {
             for (net.minecraft.block.Block occupied : new net.minecraft.block.Block[] { Blocks.bedrock, Blocks.dirt }) {
                 world.occupied = occupied;
                 SimpleAssert.eq(
+                    "blocked",
+                    HologramPlanPolicy.classify(s, cell, 0),
+                    "creative build never obtains replacement authority");
+                SimpleAssert.eq(
                     HologramPlanPolicy.classify(s, cell, 0),
                     classifier.classify(s, cell, 0, true, occupied, 0, null),
-                    "creative ordinary replacement preserves the original removable predicate");
+                    "creative ordinary build preserves the same conflict refusal in both classifiers");
             }
             world.occupant = new net.minecraft.tileentity.TileEntity();
             SimpleAssert.eq(

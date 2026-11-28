@@ -11,10 +11,11 @@ final class HologramBuildPreparation {
     private HologramBuildPreparation() {}
 
     static void nativeBuild(HologramSession s) {
+        if (operationBlocked(s)) return;
         if (HologramDeferredPlanRefresh.blocked(s)) return;
         if (HologramSessionPolicy.blockedByAreaImport(s)) return;
         if (s.mode != 0) {
-            s.status = "原版搭建只用于补建模式";
+            s.status = "原版搭建只用于建造模式";
             return;
         }
         // Native constructors can write outside the verified differential transaction.
@@ -35,6 +36,7 @@ final class HologramBuildPreparation {
     }
 
     private static void directBuild(HologramSession s, boolean rescan, NBTTagCompound reviewedAction) {
+        if (operationBlocked(s)) return;
         String scopedRefusal = HologramWorkspace.legacyConstructionRefusal(s.player);
         if (scopedRefusal != null) {
             s.status = scopedRefusal;
@@ -64,6 +66,7 @@ final class HologramBuildPreparation {
     }
 
     static void reviewedBuild(HologramSession s, NBTTagCompound action) {
+        if (operationBlocked(s)) return;
         if (HologramDeferredPlanRefresh.blocked(s)) return;
         if (s.job == 1 || s.job == 2) return;
         if (s.capture != null && s.capture.projectionOnly) {
@@ -122,6 +125,15 @@ final class HologramBuildPreparation {
             return;
         }
         scan(s);
+    }
+
+    private static boolean operationBlocked(HologramSession s) {
+        String refusal = HologramPlanPolicy.legacyOperationRefusal(s);
+        if (refusal.isEmpty()) return false;
+        s.forcePlacementReady = false;
+        s.buildAfterCapture = false;
+        s.status = refusal;
+        return true;
     }
 
     static void scan(HologramSession s) {

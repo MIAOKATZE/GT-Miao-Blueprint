@@ -57,7 +57,7 @@ public final class HologramNativeTargetPlan implements AutoCloseable {
     private String failure = "";
     private String targetDigest;
     private final NBTTagCompound configuration;
-    private final HologramNativePreviewItems validation;
+    private HologramNativePreviewItems validation;
     private final java.util.Map<Offset, NBTTagCompound> siteChoices = new java.util.HashMap<>();
     private int phase;
     private boolean closed;
@@ -69,9 +69,29 @@ public final class HologramNativeTargetPlan implements AutoCloseable {
             .thenComparingInt(Offset::z));
     private java.util.Iterator<Cell> digestCursor;
     private java.security.MessageDigest digest;
+    private int siteBlockCursor;
+    private java.util.Iterator<Cell> frozenCursor;
+    private final int controllerId;
+    private List<Cell> inheritedSite = Collections.emptyList();
+    private NBTTagCompound inheritedSettings;
+    private java.util.Iterator<Cell> inheritedCursor;
+    private final java.util.Set<String> editedSiteChannels = new java.util.HashSet<>();
+    private final java.util.IdentityHashMap<IStructureElement<?>, Boolean> editedSiteDomains = new java.util.IdentityHashMap<>();
+    private boolean editedSiteMain;
+    private final java.util.Map<Offset, Cell> retainedHatches = new java.util.HashMap<>();
+    private final java.util.Map<Offset, Cell> retainedChoiceCells = new java.util.HashMap<>();
+    private final java.util.Map<Offset, Cell> editedHatches = new java.util.HashMap<>();
+    private java.util.Iterator<NBTTagCompound> hatchEditCursor;
+    private HologramProjectorSimulation retainedSimulation;
+    private HologramNativeTargetPlan declarationPlan;
+    private final java.util.Set<String> retainedMaterialChannels = new java.util.HashSet<>();
+    private java.util.Iterator<Cell> materialEditCursor;
+    private boolean requireSameSiteShape;
+    private final java.util.Set<Offset> remainingSiteShape = new java.util.HashSet<>();
 
     private HologramNativeTargetPlan(int id, ExtendedFacing orientation, ItemStack signal, NBTTagCompound config)
         throws IOException {
+        controllerId = id;
         if (signal == null || signal.getItem() == null
             || orientation == null
             || id < 0
@@ -108,6 +128,22 @@ public final class HologramNativeTargetPlan implements AutoCloseable {
             true);
         nativeRun.configure(config);
         world = nativeRun.targetWorld();
+    }
+
+    /** Server-owned, already proved actual cells. This path never constructs an empty machine. */
+    private HologramNativeTargetPlan(int id, ExtendedFacing orientation, List<Cell> actual, NBTTagCompound config) {
+        controllerId = id;
+        facing = orientation;
+        configuration = (NBTTagCompound) config.copy();
+        trigger = canonicalTrigger(Math.max(1, config.getInteger("main")), config.getCompoundTag("channels"));
+        validation = null;
+        frozenCursor = actual.iterator();
+        phase = 7;
+    }
+
+    static HologramNativeTargetPlan fromSite(int id, ExtendedFacing facing, List<Cell> cells,
+        NBTTagCompound configuration) {
+        return new HologramNativeTargetPlan(id, facing, cells, configuration);
     }
 
     static BaseMetaTileEntity freshController(int id, ExtendedFacing facing) throws IOException {
@@ -192,6 +228,13 @@ public final class HologramNativeTargetPlan implements AutoCloseable {
             "siteControllerConfiguration",
             siteSettings.getCompoundTag("siteControllerConfiguration")
                 .copy());
+        // Only the server's proved baseline can supply inherited concrete site blocks. A numeric
+        // signal change invalidates unscoped inherited material choices; explicit target wins.
+        result.removeTag("siteActualBlocks");
+        if (sameParameters && siteSettings.hasKey("siteActualBlocks", 9)) result.setTag(
+            "siteActualBlocks",
+            siteSettings.getTagList("siteActualBlocks", 10)
+                .copy());
         return result;
     }
 
@@ -216,6 +259,94 @@ public final class HologramNativeTargetPlan implements AutoCloseable {
         }
     }
 
+    public static HologramNativeTargetPlan begin(int controllerId, ExtendedFacing facing, ItemStack trigger,
+        NBTTagCompound config, List<Cell> actual, NBTTagCompound siteSettings) throws IOException {
+        if (config == null) config = new NBTTagCompound();
+        if (actual != null && !actual.isEmpty()
+            && siteSettings != null
+            && siteSettings.getBoolean("siteKnown")
+            && !siteSettings.getBoolean("siteMainRecovered")
+            && config.getInteger("main") == siteSettings.getInteger("main")) {
+            if (config.getBoolean("presetActive") != siteSettings.getBoolean("presetActive")
+                || !config.getCompoundTag("hatchProfile")
+                    .equals(siteSettings.getCompoundTag("hatchProfile"))) {
+                HologramNativeTargetPlan plan = begin(controllerId, facing, trigger, config);
+                plan.adoptSite(actual, siteSettings);
+                plan.requireSameSiteShape = true;
+                return plan;
+            }
+            HologramNativeTargetPlan plan = new HologramNativeTargetPlan(controllerId, facing, actual, config);
+            try {
+                plan.controller = freshController(
+                    controllerId,
+                    facing,
+                    config.getCompoundTag("siteControllerConfiguration"));
+                plan.context = plan.controller.getMetaTileEntity();
+                IConstructable constructable = HologramStructureDiscovery
+                    .localConstructable(plan.controller, plan.context, facing);
+                if (constructable == null) throw new IOException("控制器未提供原生投影流程。");
+                plan.retainedSimulation = new HologramProjectorSimulation(
+                    plan.controller,
+                    plan.context,
+                    constructable,
+                    plan.trigger,
+                    null,
+                    facing,
+                    true);
+                plan.retainedSimulation.configure(config);
+                plan.world = plan.retainedSimulation.world;
+                plan.controller.setWorldObj(plan.world);
+                plan.adoptSite(actual, siteSettings);
+                NBTTagList choices = config.getTagList("nativeHatchChoices", 10);
+                if (choices.tagCount() > 128) throw new IOException("现场仓室采用项超过限制。");
+                for (int i = 0; i < choices.tagCount(); i++) {
+                    NBTTagCompound row = choices.getCompoundTagAt(i);
+                    plan.siteChoices
+                        .put(new Offset(row.getInteger("x"), row.getInteger("y"), row.getInteger("z")), row);
+                }
+                // A client snapshot deliberately contains no executable elements. Resolve declarations only
+                // after the user requests an edit; this ordinary runner never publishes its template cells.
+                if (cpw.mods.fml.common.FMLCommonHandler.instance()
+                    .getEffectiveSide()
+                    .isClient()) {
+                    NBTTagCompound declarations = (NBTTagCompound) config.copy();
+                    declarations.removeTag("nativeHatchChoices");
+                    declarations.removeTag("hatchProfile");
+                    declarations.removeTag("siteActualBlocks");
+                    declarations.setBoolean("presetActive", false);
+                    declarations.setBoolean("rangeOnly", true);
+                    plan.declarationPlan = begin(controllerId, facing, trigger, declarations);
+                    plan.phase = 10;
+                } else plan.phase = 8;
+                return plan;
+            } catch (IOException | RuntimeException | LinkageError broken) {
+                plan.close();
+                throw broken;
+            }
+        }
+        HologramNativeTargetPlan plan = begin(controllerId, facing, trigger, config);
+        plan.adoptSite(actual, siteSettings);
+        return plan;
+    }
+
+    private void adoptSite(List<Cell> actual, NBTTagCompound siteSettings) {
+        inheritedSite = actual == null ? Collections.emptyList() : actual;
+        inheritedSettings = siteSettings == null ? null : (NBTTagCompound) siteSettings.copy();
+        if (inheritedSettings == null || !inheritedSettings.getBoolean("siteKnown"))
+            inheritedSite = Collections.emptyList();
+        inheritedCursor = inheritedSite.iterator();
+        if (inheritedSettings != null) {
+            editedSiteMain = configuration.getInteger("main") != inheritedSettings.getInteger("main");
+            NBTTagCompound before = inheritedSettings.getCompoundTag("channels"),
+                after = configuration.getCompoundTag("channels");
+            java.util.Set<String> names = new java.util.HashSet<>();
+            for (Object name : before.func_150296_c()) names.add((String) name);
+            for (Object name : after.func_150296_c()) names.add((String) name);
+            for (String name : names)
+                if (!java.util.Objects.equals(before.getTag(name), after.getTag(name))) editedSiteChannels.add(name);
+        }
+    }
+
     public boolean ready() {
         return phase == 6;
     }
@@ -227,6 +358,56 @@ public final class HologramNativeTargetPlan implements AutoCloseable {
         try {
             while (System.nanoTime() < deadline) {
                 switch (phase) {
+                    case 10 -> {
+                        if (!declarationPlan.advance(deadline)) return false;
+                        phase = 8;
+                    }
+                    case 8 -> {
+                        if (inheritedCursor.hasNext()) seedRetainedCell(inheritedCursor.next());
+                        else {
+                            inheritedCursor = null;
+                            if (declarationPlan != null) {
+                                declarationPlan.close();
+                                declarationPlan = null;
+                            }
+                            if (!retainedMaterialChannels.containsAll(editedSiteChannels)) {
+                                beginGuardedTemplate();
+                                continue;
+                            }
+                            materialEditCursor = inheritedSite.iterator();
+                            phase = 11;
+                        }
+                    }
+                    case 11 -> {
+                        if (materialEditCursor.hasNext()) editRetainedMaterial(materialEditCursor.next());
+                        else {
+                            materialEditCursor = null;
+                            hatchEditCursor = siteChoices.values()
+                                .iterator();
+                            phase = 9;
+                        }
+                    }
+                    case 9 -> {
+                        if (hatchEditCursor.hasNext()) editRetainedHatch(hatchEditCursor.next());
+                        else {
+                            hatchEditCursor = null;
+                            retainedSimulation.checkStructure();
+                            inheritedSite = Collections.emptyList();
+                            phase = 7;
+                        }
+                    }
+                    case 7 -> {
+                        if (frozenCursor.hasNext()) {
+                            Cell cell = frozenCursor.next();
+                            if (cell.dx() == 0 && cell.dy() == 0 && cell.dz() == 0) continue;
+                            cell = editedHatches.getOrDefault(new Offset(cell.dx(), cell.dy(), cell.dz()), cell);
+                            cells.add(cell);
+                            digestCells.put(new Offset(cell.dx(), cell.dy(), cell.dz()), cell);
+                        } else {
+                            frozenCursor = null;
+                            phase = 4;
+                        }
+                    }
                     case 0 -> {
                         if (!nativeRun.advance(deadline)) return false;
                         channels = nativeRun.channels();
@@ -237,6 +418,7 @@ public final class HologramNativeTargetPlan implements AutoCloseable {
                         phase++;
                     }
                     case 1 -> {
+                        if (!applySiteBlocks(deadline)) return false;
                         if (!configuration.getBoolean("footprintOnly")) nativeRun.checkTargetStructure();
                         placementCursor = nativeRun.placements();
                         phase++;
@@ -257,18 +439,20 @@ public final class HologramNativeTargetPlan implements AutoCloseable {
                             if (!world.hasPlacement(p.x(), p.y(), p.z())) snapshot(p.x(), p.y(), p.z());
                         } else {
                             visitedCursor = null;
+                            if (requireSameSiteShape && !remainingSiteShape.isEmpty())
+                                throw new IOException("当前主尺寸尚未恢复，新目标会改变现场形状；请先明确主尺寸。");
                             phase++;
                         }
                     }
                     case 4 -> {
                         if (cells.isEmpty()) throw new IOException("原生流程未提供可构建的完整结构足迹。");
-                        validation.requireConfiguredChoices(Collections.emptyList());
+                        if (validation != null) validation.requireConfiguredChoices(Collections.emptyList());
                         try {
                             digest = java.security.MessageDigest.getInstance("SHA-256");
                         } catch (java.security.NoSuchAlgorithmException impossible) {
                             throw new IllegalStateException(impossible);
                         }
-                        updateDigest(controller.getMetaTileID() + ":" + facing.ordinal() + "\n");
+                        updateDigest(controllerId + ":" + facing.ordinal() + "\n");
                         digestCursor = digestCells.values()
                             .iterator();
                         phase++;
@@ -283,7 +467,7 @@ public final class HologramNativeTargetPlan implements AutoCloseable {
                             digestCursor = null;
                             digestCells.clear();
                             digest = null;
-                            nativeRun.close();
+                            if (nativeRun != null) nativeRun.close();
                             phase++;
                             return true;
                         }
@@ -305,6 +489,10 @@ public final class HologramNativeTargetPlan implements AutoCloseable {
     public void close() {
         closed = true;
         if (nativeRun != null) nativeRun.close();
+        if (retainedSimulation != null) retainedSimulation.close();
+        retainedSimulation = null;
+        if (declarationPlan != null) declarationPlan.close();
+        declarationPlan = null;
         nativeRun = null;
         world = null;
         controller = null;
@@ -312,12 +500,282 @@ public final class HologramNativeTargetPlan implements AutoCloseable {
         placementCursor = null;
         visitedCursor = null;
         digestCursor = null;
+        frozenCursor = null;
+        inheritedCursor = null;
+        inheritedSite = Collections.emptyList();
+        inheritedSettings = null;
+        editedSiteDomains.clear();
+        retainedHatches.clear();
+        retainedChoiceCells.clear();
+        editedHatches.clear();
+        hatchEditCursor = null;
+        materialEditCursor = null;
+        retainedMaterialChannels.clear();
+        remainingSiteShape.clear();
         digestCells.clear();
         digest = null;
     }
 
     private void updateDigest(String value) {
         digest.update(value.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+
+    private boolean applySiteBlocks(long deadline) throws IOException {
+        var inherited = configuration.getTagList("siteActualBlocks", 10);
+        if (configuration.getBoolean("footprintOnly")) return true;
+        boolean recording = world.edit(true);
+        boolean updates = gregtech.api.threads.RunnableMachineUpdate.isCurrentThreadEnabled();
+        try {
+            gregtech.api.threads.RunnableMachineUpdate.setCurrentThreadEnabled(false);
+            while (siteBlockCursor < inherited.tagCount() && System.nanoTime() < deadline) {
+                var row = inherited.getCompoundTagAt(siteBlockCursor++);
+                int x = Math.addExact(controller.xCoord, row.getInteger("x"));
+                int y = Math.addExact(controller.yCoord, row.getInteger("y"));
+                int z = Math.addExact(controller.zCoord, row.getInteger("z"));
+                Block block = Block.getBlockFromName(row.getString("block"));
+                int meta = row.getInteger("meta");
+                if (block == null || block == Blocks.air
+                    || meta < 0
+                    || meta > 15
+                    || block.hasTileEntity(meta)
+                    || world.isAirBlock(x, y, z)
+                    || world.getTileEntity(x, y, z) != null
+                    || nativeRun.elementAt(x, y, z) == null) throw new IOException("现场方块采用项不属于已证明的普通原生位置。");
+                world.setBlock(x, y, z, block, meta, 0);
+                @SuppressWarnings("unchecked")
+                IStructureElement<Object> element = (IStructureElement<Object>) nativeRun.elementAt(x, y, z);
+                if (!element.check(context, world, x, y, z)) throw new IOException("现场方块未被原生位置接受。");
+            }
+            if (siteBlockCursor != inherited.tagCount()) return false;
+            while (inheritedCursor != null && inheritedCursor.hasNext() && System.nanoTime() < deadline) {
+                Cell actual = inheritedCursor.next();
+                if (requireSameSiteShape && (actual.dx() != 0 || actual.dy() != 0 || actual.dz() != 0))
+                    remainingSiteShape.add(new Offset(actual.dx(), actual.dy(), actual.dz()));
+                if (actual.dx() == 0 && actual.dy() == 0 && actual.dz() == 0 || actual.block() == Blocks.air
+                    || actual.block()
+                        .hasTileEntity(actual.metadata()))
+                    continue;
+                int x = Math.addExact(controller.xCoord, actual.dx()),
+                    y = Math.addExact(controller.yCoord, actual.dy()),
+                    z = Math.addExact(controller.zCoord, actual.dz());
+                if (world.isAirBlock(x, y, z) || world.getTileEntity(x, y, z) != null) continue;
+                IStructureElement<?> element = nativeRun.elementAt(x, y, z);
+                if (element != null && editedSiteDomain(element)) continue;
+                if (world.getBlock(x, y, z) == actual.block() && world.getBlockMetadata(x, y, z) == actual.metadata())
+                    continue;
+                if (element == null) throw new IOException("原生声明无法证明未编辑现场材料的位置，已保留原目标。");
+                if (actual.material() != null) world.materialSelected(actual.material(), true);
+                world.setBlock(x, y, z, actual.block(), actual.metadata(), 0);
+                if (actual.material() != null) world.materialSelected(actual.material(), false);
+                @SuppressWarnings("unchecked")
+                IStructureElement<Object> checked = (IStructureElement<Object>) element;
+                if (!checked.check(context, world, x, y, z)) throw new IOException("未编辑的现场材料未被新原生位置接受。");
+            }
+            if (inheritedCursor != null && inheritedCursor.hasNext()) return false;
+            inheritedCursor = null;
+            inheritedSite = Collections.emptyList();
+            return true;
+        } finally {
+            gregtech.api.threads.RunnableMachineUpdate.setCurrentThreadEnabled(updates);
+            world.edit(recording);
+        }
+    }
+
+    private boolean editedSiteDomain(IStructureElement<?> element) {
+        Boolean cached = editedSiteDomains.get(element);
+        if (cached != null) return cached;
+        java.util.Collection<String> channels = element.getChannels();
+        boolean edited = false;
+        if (channels != null) for (String channel : channels) {
+            if (editedSiteChannels.contains(channel) || editedSiteMain && !configuration.getCompoundTag("channels")
+                .hasKey(channel, 3)) {
+                edited = true;
+                break;
+            }
+        }
+        if (editedSiteMain && (channels == null || channels.isEmpty())) edited = true;
+        editedSiteDomains.put(element, edited);
+        return edited;
+    }
+
+    /** Explicit edits may use one ordinary native generation, but an unknown main must not shrink its site. */
+    private void beginGuardedTemplate() throws IOException {
+        HologramNativeTargetPlan generated = begin(controllerId, facing, trigger, configuration);
+        retainedSimulation.close();
+        retainedSimulation = null;
+        controller = generated.controller;
+        context = generated.context;
+        world = generated.world;
+        nativeRun = generated.nativeRun;
+        validation = generated.validation;
+        generated.nativeRun = null;
+        inheritedCursor = inheritedSite.iterator();
+        frozenCursor = null;
+        retainedHatches.clear();
+        retainedChoiceCells.clear();
+        editedHatches.clear();
+        retainedMaterialChannels.clear();
+        requireSameSiteShape = true;
+        phase = 0;
+    }
+
+    /** The proved footprint is seeded once, within advance's existing per-cell deadline. */
+    private void seedRetainedCell(Cell cell) throws IOException {
+        if (cell.dx() == 0 && cell.dy() == 0 && cell.dz() == 0 || cell.block() == Blocks.air) return;
+        int x = Math.addExact(controller.xCoord, cell.dx()), y = Math.addExact(controller.yCoord, cell.dy()),
+            z = Math.addExact(controller.zCoord, cell.dz());
+        if (cell.material() != null) world.materialSelected(cell.material(), true);
+        try {
+            world.setBlock(x, y, z, cell.block(), cell.metadata(), 0);
+        } finally {
+            if (cell.material() != null) world.materialSelected(cell.material(), false);
+        }
+        IStructureElement<?> element = cell.element();
+        if (element == null && declarationPlan != null && declarationPlan.nativeRun != null)
+            element = declarationPlan.nativeRun.elementAt(x, y, z);
+        if (element != null) {
+            var p = new HologramProjectorSimulation.Position(x, y, z);
+            retainedSimulation.elements.put(p, element);
+            retainedSimulation.signals.put(p, trigger);
+            if (element.getChannels() != null) retainedMaterialChannels.addAll(element.getChannels());
+        }
+        Offset at = new Offset(cell.dx(), cell.dy(), cell.dz());
+        if (HologramCellPolicy.hatchTier(cell.material()) == Integer.MAX_VALUE) {
+            if (siteChoices.containsKey(at)) retainedChoiceCells.put(at, cell);
+            return;
+        }
+        if (retainedHatches.size() >= 128) throw new IOException("现场仓室超过限制。");
+        BaseMetaTileEntity hatch = new BaseMetaTileEntity();
+        hatch.setWorldObj(world);
+        hatch.xCoord = x;
+        hatch.yCoord = y;
+        hatch.zCoord = z;
+        hatch.setInitialValuesAsNBT(
+            null,
+            (short) cell.material()
+                .getItemDamage());
+        hatch.setFrontFacing(net.minecraftforge.common.util.ForgeDirection.getOrientation(cell.facing()));
+        if (hatch.getMetaTileEntity() == null || hatch.getFrontFacing()
+            .ordinal() != cell.facing()) throw new IOException("现场仓室无法建立独立的原生方向实例。");
+        world.setTileEntity(x, y, z, hatch);
+        retainedHatches.put(
+            new Offset(cell.dx(), cell.dy(), cell.dz()),
+            new Cell(
+                cell.dx(),
+                cell.dy(),
+                cell.dz(),
+                cell.block(),
+                cell.metadata(),
+                cell.material(),
+                cell.facing(),
+                cell.display(),
+                cell.tileData(),
+                element,
+                trigger,
+                cell.requiredAir()));
+    }
+
+    @SuppressWarnings({ "rawtypes", "unchecked" })
+    private void editRetainedMaterial(Cell previous) throws IOException {
+        if (previous.dx() == 0 && previous.dy() == 0 && previous.dz() == 0 || previous.block() == Blocks.air
+            || previous.block()
+                .hasTileEntity(previous.metadata()))
+            return;
+        var p = new HologramProjectorSimulation.Position(
+            controller.xCoord + previous.dx(),
+            controller.yCoord + previous.dy(),
+            controller.zCoord + previous.dz());
+        IStructureElement element = retainedSimulation.elements.get(p);
+        if (element == null || !editedSiteDomain(element)) return;
+        var offered = retainedSimulation.probe.query(element, p, trigger);
+        if (offered == null || offered.getStacks() == null) throw new IOException("原生材料域没有提供确定的替换材料。");
+        ItemStack material = null;
+        for (ItemStack stack : offered.getStacks())
+            if (stack != null && HologramCellPolicy.hatchTier(stack) == Integer.MAX_VALUE) {
+                material = stack;
+                break;
+            }
+        if (material == null || !retainedSimulation.probe.place(material, p)
+            || !element.check(context, world, p.x(), p.y(), p.z())) throw new IOException("新材料未被现场原生位置接受。");
+        Offset at = new Offset(previous.dx(), previous.dy(), previous.dz());
+        editedHatches.put(
+            at,
+            new Cell(
+                previous.dx(),
+                previous.dy(),
+                previous.dz(),
+                world.getBlock(p.x(), p.y(), p.z()),
+                world.getBlockMetadata(p.x(), p.y(), p.z()),
+                material.copy(),
+                -1,
+                null,
+                null,
+                element,
+                trigger,
+                false));
+    }
+
+    @SuppressWarnings("unchecked")
+    private void editRetainedHatch(NBTTagCompound row) throws IOException {
+        Offset at = new Offset(row.getInteger("x"), row.getInteger("y"), row.getInteger("z"));
+        Cell previous = retainedHatches.get(at);
+        if (previous == null) previous = retainedChoiceCells.get(at);
+        if (previous == null) throw new IOException("所选仓室不属于完整现场足迹。");
+        boolean existingHatch = HologramCellPolicy.hatchTier(previous.material()) != Integer.MAX_VALUE;
+        boolean changedModel = !existingHatch || previous.material()
+            .getItemDamage() != row.getInteger("id");
+        int direction = row.hasKey("facing", 3) ? row.getInteger("facing") : previous.facing();
+        if (direction < 0) direction = previous.facing();
+        if (direction == previous.facing() && !changedModel) return;
+        if (direction > 5) throw new IOException("仓室方向无效。");
+        int x = controller.xCoord + at.x(), y = controller.yCoord + at.y(), z = controller.zCoord + at.z();
+        var p = new HologramProjectorSimulation.Position(x, y, z);
+        IStructureElement<?> element = retainedSimulation.elements.get(p);
+        if (element == null && changedModel) throw new IOException("此仓室位置缺少新型号的原生声明证明。");
+        if (!existingHatch && retainedHatches.size() >= 128) throw new IOException("现场仓室超过限制。");
+        ItemStack material = previous.material();
+        if (changedModel) {
+            material = new ItemStack(GregTechAPI.sBlockMachines, 1, row.getInteger("id"));
+            if (HologramCellPolicy.hatchTier(material) == Integer.MAX_VALUE
+                || !retainedSimulation.probe.place(material, new HologramProjectorSimulation.Position(x, y, z)))
+                throw new IOException("所选仓室型号无法原生放置。");
+        }
+        BaseMetaTileEntity hatch = (BaseMetaTileEntity) world.getTileEntity(x, y, z);
+        if (direction < 0) direction = hatch.getFrontFacing()
+            .ordinal();
+        hatch.setFrontFacing(net.minecraftforge.common.util.ForgeDirection.getOrientation(direction));
+        if (hatch.getFrontFacing()
+            .ordinal() != direction) throw new IOException("仓室原生接口拒绝此方向。");
+        if (element == null) {
+            if (cpw.mods.fml.common.FMLCommonHandler.instance()
+                .getEffectiveSide()
+                .isServer()) throw new IOException("服务端缺少此仓室的原生位置证明。");
+        } else if (!((IStructureElement<Object>) element).check(context, world, x, y, z))
+            throw new IOException("仓室新方向未被现场原生位置接受。");
+        NBTTagCompound display = changedModel ? HologramDisplaySnapshot.projection(hatch)
+            : previous.display() == null ? null
+                : (NBTTagCompound) previous.display()
+                    .copy();
+        if (display != null) display.setInteger("facing", direction);
+        NBTTagCompound data = changedModel || previous.tileData() == null ? null
+            : (NBTTagCompound) previous.tileData()
+                .copy();
+        if (data != null && data.hasKey("mFacing")) data.setByte("mFacing", (byte) direction);
+        Cell edited = new Cell(
+            previous.dx(),
+            previous.dy(),
+            previous.dz(),
+            world.getBlock(x, y, z),
+            world.getBlockMetadata(x, y, z),
+            material,
+            direction,
+            display,
+            data,
+            element,
+            previous.trigger(),
+            previous.requiredAir());
+        editedHatches.put(at, edited);
+        retainedHatches.put(at, edited);
     }
 
     @SuppressWarnings({ "rawtypes", "unchecked" })
@@ -334,6 +792,8 @@ public final class HologramNativeTargetPlan implements AutoCloseable {
             && element.check(context, world, x, y, z)
             && HologramElementCatalog.nativeAir(element);
         if (block == Blocks.air && !air) return;
+        if (requireSameSiteShape && !remainingSiteShape.remove(p))
+            throw new IOException("当前主尺寸尚未恢复，新目标会改变现场形状；请先明确主尺寸。");
         ItemStack item = air ? null : world.materialAt(x, y, z);
         int direction = -1;
         NBTTagCompound display = null, data = null;
@@ -379,7 +839,7 @@ public final class HologramNativeTargetPlan implements AutoCloseable {
             element,
             nativeRun.triggerAt(x, y, z),
             air);
-        validation.recordConfiguredChoice(cell);
+        if (validation != null) validation.recordConfiguredChoice(cell);
         cells.add(cell);
         digestCells.put(p, cell);
         HologramBlueprintLimits.require(1L + cells.size());
@@ -504,8 +964,23 @@ public final class HologramNativeTargetPlan implements AutoCloseable {
     }
 
     int facingMask(int dx, int dy, int dz, ItemStack sample) throws IOException {
-        if (nativeRun == null || controller == null || HologramCellPolicy.hatchTier(sample) == Integer.MAX_VALUE)
-            return 0;
+        if (controller == null || HologramCellPolicy.hatchTier(sample) == Integer.MAX_VALUE) return 0;
+        if (nativeRun == null) {
+            var p = new HologramProjectorSimulation.Position(
+                controller.xCoord + dx,
+                controller.yCoord + dy,
+                controller.zCoord + dz);
+            if (retainedSimulation.elements.containsKey(p)) return retainedSimulation.probe.facingMask(p, sample);
+            Cell previous = retainedHatches.get(new Offset(dx, dy, dz));
+            if (previous == null || !HologramValues.sameMaterial(previous.material(), sample)) return 0;
+            BaseMetaTileEntity hatch = (BaseMetaTileEntity) world
+                .getTileEntity(controller.xCoord + dx, controller.yCoord + dy, controller.zCoord + dz);
+            int mask = 0;
+            for (net.minecraftforge.common.util.ForgeDirection direction : net.minecraftforge.common.util.ForgeDirection.VALID_DIRECTIONS)
+                if (hatch.getMetaTileEntity()
+                    .isFacingValid(direction)) mask |= 1 << direction.ordinal();
+            return mask;
+        }
         return nativeRun.facingMask(controller.xCoord + dx, controller.yCoord + dy, controller.zCoord + dz, sample);
     }
 
@@ -523,6 +998,19 @@ public final class HologramNativeTargetPlan implements AutoCloseable {
 
     @SuppressWarnings({ "rawtypes", "unchecked" })
     List<ItemStack> offers(Cell cell) {
+        if (nativeRun == null) {
+            var p = new HologramProjectorSimulation.Position(
+                controller.xCoord + cell.dx(),
+                controller.yCoord + cell.dy(),
+                controller.zCoord + cell.dz());
+            IStructureElement<?> element = retainedSimulation.elements.get(p);
+            if (element != null) return retainedSimulation.probe.offers(element, p, trigger);
+            Cell installed = retainedHatches.get(new Offset(cell.dx(), cell.dy(), cell.dz()));
+            if (installed == null || installed.material() == null) return Collections.emptyList();
+            return Collections.singletonList(
+                installed.material()
+                    .copy());
+        }
         return nativeRun.nativeOffers(
             cell.element(),
             controller.xCoord + cell.dx(),

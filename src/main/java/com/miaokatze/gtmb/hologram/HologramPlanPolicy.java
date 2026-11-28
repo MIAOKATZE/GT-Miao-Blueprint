@@ -21,6 +21,24 @@ final class HologramPlanPolicy {
 
     private HologramPlanPolicy() {}
 
+    /** Legacy reviewed captures obey the same cached native-state rule as native protocol requests. */
+    static String legacyOperationRefusal(HologramSession s) {
+        if (s.virtual) return s.mode == 0 ? "" : "蓝图仅支持建造，请重新核对建造目标";
+        HologramStockNativeWire.Operation operation = switch (s.mode) {
+            case 0 -> HologramStockNativeWire.Operation.BUILD;
+            case 1 -> HologramStockNativeWire.Operation.REPLACE;
+            case 2 -> HologramStockNativeWire.Operation.DEMOLISH;
+            default -> null;
+        };
+        if (operation == null) return "施工操作无效，请重新确认";
+        if (s.machine == null)
+            return operation == HologramStockNativeWire.Operation.BUILD ? "" : "无法取得机器原生成型状态，未授权替换或拆除";
+        boolean formed = s.machine.mMachine;
+        boolean allowed = HologramNativeProjectionJob
+            .allows(operation, formed ? HologramStockNativeWire.Stage.FORMED : HologramStockNativeWire.Stage.UNFORMED);
+        return allowed ? "" : formed ? "结构已成型，请使用替换或拆除" : "结构尚未成型，请使用建造";
+    }
+
     /** Pure preflight: never posts Forge events or calls element.check/checkMachine. */
     static String classify(HologramSession s, HologramCapture.Cell c, int index) {
         if (HologramSessionPolicy.ignoredPlacementAir(s, c, index)) return "satisfied";
@@ -39,6 +57,7 @@ final class HologramPlanPolicy {
     /** One atomic classification reuses its just-read primary state; native permissions remain live callbacks. */
     static String classify(HologramSession s, HologramCapture.Cell c, int index, boolean loaded, Block old, int meta,
         TileEntity tile) {
+        if (s.virtual && s.mode != 0) return "protected";
         if (HologramSessionPolicy.ignoredPlacementAir(s, c, index)) return "satisfied";
         World w = s.player.worldObj;
         if (c.y < 0 || c.y >= w.getHeight() || !loaded) return "unsupported";
@@ -47,7 +66,8 @@ final class HologramPlanPolicy {
         if (s.mode != 2 && HologramCellPolicy.requiredNativeAir(s, c, index)) {
             if (c.unknown) return "protected";
             // This is an explicit native empty target. Actual harvest/edit/Forge permissions belong to remove.
-            return HologramCellPolicy.targetMatches(s, c, index, old, meta) ? "satisfied" : "pending";
+            return HologramCellPolicy.targetMatches(s, c, index, old, meta) ? "satisfied"
+                : s.mode == 0 ? "blocked" : "pending";
         }
         // Native payload errors must survive even when their primary material cannot be sampled.
         boolean resourceChecked = s.mode != 2 && s.virtual
@@ -78,8 +98,7 @@ final class HologramPlanPolicy {
         if (s.mode == 1 && (!s.replacementReady || !HologramCellPolicy.originalMember(s, c))) return "protected";
         if (c.userPosition && !HologramCellPolicy.explicitTarget(s, c, index)) return "satisfied";
         Boolean matches = null;
-        if (s.mode == 0 && !s.player.capabilities.isCreativeMode
-            && !HologramCellPolicy.trivial(w, c.x, c.y, c.z)
+        if (s.mode == 0 && !HologramCellPolicy.trivial(w, c.x, c.y, c.z)
             && (HologramCellPolicy.targetFor(s, c, index) != null || c.block == Blocks.air && !c.unknown)) {
             matches = HologramCellPolicy.targetMatches(s, c, index, old, meta);
             if (!matches) return "blocked";
@@ -104,7 +123,7 @@ final class HologramPlanPolicy {
             if (!sampleApproved && !HologramCellPolicy.acceptableSample(s, c, target)) return "unsupported";
         }
         if (empty) return s.mode == 1 ? "protected" : "pending";
-        if (s.mode == 0 && !s.player.capabilities.isCreativeMode) return "blocked";
+        if (s.mode == 0) return "blocked";
         if (!HologramCellPolicy.removable(s, c)) return "protected";
         return sampleApproved || HologramCellPolicy.acceptableSample(s, c, target) ? "pending" : "protected";
     }
@@ -129,7 +148,7 @@ final class HologramPlanPolicy {
         if (c.anchor) return "始终保留控制器锚点";
         String declarationProtection = HologramSourcePolicy.protectionReason(s, c, index);
         if (declarationProtection != null) return declarationProtection;
-        if ("blocked".equals(c.status)) return "结构占位被遮挡，生存补建不会替换旧方块，请清空后重试";
+        if ("blocked".equals(c.status)) return "结构占位被遮挡，建造不会替换旧方块，请清空后重试";
         if (s.mode == 1 && (!s.replacementReady || !HologramCellPolicy.originalMember(s, c)))
             return "替换仅限已完整构建的原结构位置；新增位置与声明空气保持现场";
         if (s.mode == 1 && HologramCellPolicy.orientationOnly(s, c, index)) return "仅调整现有仓室朝向，不拆除、不扣材料";
@@ -167,7 +186,7 @@ final class HologramPlanPolicy {
     }
 
     static boolean structureBuilt(HologramSession s) {
-        return !s.virtual && s.machine != null && (s.machine.mMachine || replacementStructureBuilt(s));
+        return !s.virtual && s.machine != null && s.machine.mMachine;
     }
 
     /** Verify the original declaration without invoking a mutating machine check. */
@@ -216,6 +235,11 @@ final class HologramPlanPolicy {
     }
 
     static boolean constructionAllowed(HologramSession s) {
+        String operationRefusal = legacyOperationRefusal(s);
+        if (!operationRefusal.isEmpty()) {
+            s.status = operationRefusal;
+            return false;
+        }
         if (!HologramGeometryEdits.requirePlan(s)) return false;
         if (HologramSessionPolicy.blockedByAreaImport(s)) return false;
         if (s.capture == null || !s.capture.sourceCurrent()) {
@@ -232,11 +256,11 @@ final class HologramPlanPolicy {
             return false;
         }
         if (s.mode == 1 && !replacementStructureBuilt(s)) {
-            s.status = "替换需要绑定真实控制器且原结构完整构建，请先补建或重新扫描";
+            s.status = "替换需要绑定真实控制器且原结构完整构建，请先建造或重新扫描";
             return false;
         }
         int blocked = 0;
-        if (s.mode == 0 && !s.player.capabilities.isCreativeMode) {
+        if (s.mode == 0) {
             HologramPlanClassifier classifier = new HologramPlanClassifier(s);
             World world = s.player.worldObj;
             for (int i = 0; i < s.capture.cells.size(); i++) {
@@ -252,7 +276,7 @@ final class HologramPlanPolicy {
             }
         }
         if (blocked == 0) return true;
-        s.status = "选定范围有 " + blocked + " 格结构占位被遮挡，已整体拒绝补建，请清空后重试";
+        s.status = "选定范围有 " + blocked + " 格结构占位被遮挡，已整体拒绝建造，请清空后重试";
         return false;
     }
 

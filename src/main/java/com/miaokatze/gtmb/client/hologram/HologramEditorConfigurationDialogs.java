@@ -448,7 +448,7 @@ final class HologramEditorConfigurationDialogs {
         NBTTagList restrictions = semantics.getTagList("restrictions", 8);
         int restriction = index - rules.tagCount();
         return restriction < restrictions.tagCount()
-            ? (projectorOr("native.ui.repair_315", "补放 ·") + " ") + restrictions.getStringTagAt(restriction)
+            ? (projectorOr("native.ui.build_restrictions", "建造 ·") + " ") + restrictions.getStringTagAt(restriction)
             : "";
     }
 

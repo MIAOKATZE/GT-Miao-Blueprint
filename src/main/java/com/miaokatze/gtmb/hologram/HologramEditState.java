@@ -80,7 +80,7 @@ final class HologramEditState {
         presetSupported = s.presetSupported;
         presetAvailable = s.presetAvailable;
         presetReason = s.presetReason;
-        mode = s.mode;
+        mode = s.virtual ? 0 : s.mode;
         scope = s.scope;
         selected = s.selected;
         if (s.capture != null) for (int index : s.selectedIndices) if (index >= 0 && index < s.capture.cells.size())
@@ -242,7 +242,7 @@ final class HologramEditState {
                 if (virtualEdited.contains(key)) s.virtualEdited.add(key);
                 else s.virtualEdited.remove(key);
             }
-            s.mode = mode;
+            s.mode = s.virtual ? 0 : mode;
             s.scope = scope;
             s.selected = selected;
             s.selectedIndices.clear();
@@ -290,7 +290,7 @@ final class HologramEditState {
         s.presetSupported = presetSupported;
         s.presetAvailable = presetAvailable;
         s.presetReason = presetReason;
-        s.mode = mode;
+        s.mode = s.virtual ? 0 : mode;
         s.scope = scope;
         s.selected = selected;
         s.selectedIndices.clear();

@@ -72,6 +72,7 @@ public final class HologramNetwork {
     private static final HologramStockNativeServer stockNativeServer = new HologramStockNativeServer(
         HologramNetwork::sendStockNativeReply);
     private static volatile StockNativeReplies stockNativeReplies;
+    public static final String NATIVE_SITE_REPLY = "nativeSiteReply";
     private static final String RETIRED_PLACEMENT_REPLY = "retiredWholePlacement";
     private static final String RETIRED_PLACEMENT_REASON = "旧版整份施工上传已停用，未开始施工。请使用两端支持的新版施工入口。";
     private static final String RETIRED_MATERIAL_CHECK_REASON = "旧版服务器材料核对已停用；请在本地查看材料清单。";
@@ -201,8 +202,55 @@ public final class HologramNetwork {
     private static void sendStockNativeReply(HologramWorkspace.ActionEndpoint endpoint,
         HologramStockNativeWire.Reply reply) {
         SimpleNetworkWrapper wire = channel;
-        if (wire != null && HologramWorkspace.currentActionEndpoint(endpoint))
+        if (wire == null || !HologramWorkspace.currentActionEndpoint(endpoint)) return;
+        NBTTagCompound snapshot = reply.siteSnapshot();
+        if (snapshot == null) {
             wire.sendTo(new State(HologramStockNativeWire.writeReply(reply)), endpoint.player);
+            return;
+        }
+        // This already frozen DTO transfers to the existing bounded encoder. Do not copy its complete cell list
+        // into a small observation packet or allocate an independent transport owner/token.
+        String session = reply.key()
+            .request()
+            .toString();
+        snapshot.setString("session", session);
+        snapshot.setTag(NATIVE_SITE_REPLY, HologramStockNativeWire.writeReply(reply));
+        SnapshotTicket ticket = reserveState(endpoint.player, session, false);
+        if (ticket == null) {
+            var refused = new HologramStockNativeWire.Reply(
+                reply.key(),
+                HologramStockNativeWire.Phase.REFUSED,
+                0,
+                "现场快照传输未准备好，请重新扫描。");
+            wire.sendTo(new State(HologramStockNativeWire.writeReply(refused)), endpoint.player);
+            return;
+        }
+        completeOwnedState(ticket, snapshot, () -> HologramWorkspace.currentActionEndpoint(endpoint), () -> {});
+    }
+
+    /** Client decoder transfers its owned root directly to the exact native request receiver. */
+    public static boolean dispatchStockNativeSiteSnapshot(NBTTagCompound snapshot, Object inboundHandler) {
+        StockNativeReplies current = stockNativeReplies;
+        if (snapshot == null || current == null || inboundHandler == null || !snapshot.hasKey(NATIVE_SITE_REPLY, 10))
+            return false;
+        var reply = HologramStockNativeWire.readReply(snapshot.getCompoundTag(NATIVE_SITE_REPLY));
+        if (reply == null || reply.observation() == null
+            || !snapshot.getString("session")
+                .equals(
+                    reply.key()
+                        .request()
+                        .toString()))
+            return false;
+        current.accept(
+            new HologramStockNativeWire.Reply(
+                reply.key(),
+                reply.phase(),
+                reply.placed(),
+                reply.reason(),
+                reply.observation(),
+                snapshot),
+            inboundHandler);
+        return true;
     }
 
     static void sendPresetQuote(HologramWorkspace.ActionEndpoint endpoint, NBTTagCompound tag) {
@@ -944,8 +992,11 @@ public final class HologramNetwork {
                 continue;
             }
             if (snapshot.encoding == null) {
-                snapshot.encoding = HologramSnapshotEncoding
-                    .submit(snapshot.owned, snapshot.sequence, box.owner != null && box.owner.snapshotPaletteProtocol);
+                // Native wire v9 requires this existing palette decoder on both ends; no workspace owner
+                // is needed to negotiate it a second time for the same typed native receipt.
+                boolean palette = box.owner != null && box.owner.snapshotPaletteProtocol
+                    || snapshot.owned.hasKey(NATIVE_SITE_REPLY, 10);
+                snapshot.encoding = HologramSnapshotEncoding.submit(snapshot.owned, snapshot.sequence, palette);
                 continue;
             }
             HologramSnapshotEncoding.Job encoding = snapshot.encoding;

@@ -1666,6 +1666,10 @@ final class HologramState {
                 : controllerCell.localObservationMissing();
         }
 
+        boolean nativeRequiredAir() {
+            return raw.getBoolean("nativeRequiredAir");
+        }
+
         String hintIcon(int side) {
             return hintIcons == null ? "" : hintIcons[side];
         }

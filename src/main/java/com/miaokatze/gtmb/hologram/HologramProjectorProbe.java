@@ -573,16 +573,39 @@ final class HologramProjectorProbe {
     }
 
     int facingMask(HologramProjectorSimulation.Position p, ItemStack sample) {
-        if (!hatch(sample) || !HologramValues.sameMaterial(material(p), sample)
-            || !(simulation.world.getTileEntity(p.x(), p.y(), p.z()) instanceof IGregTechTileEntity gt)) return 0;
-        ForgeDirection original = gt.getFrontFacing();
+        if (!hatch(sample)) return 0;
+        boolean candidate = !HologramValues.sameMaterial(material(p), sample);
+        if (candidate && simulation.elements.get(p) == null) return 0;
+        Block block = candidate ? simulation.world.getBlock(p.x(), p.y(), p.z()) : null;
+        int meta = candidate ? simulation.world.getBlockMetadata(p.x(), p.y(), p.z()) : 0;
+        NBTTagCompound tile = candidate ? savedTile(p) : null;
+        ItemStack paid = candidate ? material(p) : null;
+        IGregTechTileEntity placed = null;
+        ForgeDirection original = null;
+        World previousWorld = simulation.controller.getWorldObj();
+        boolean recording = simulation.world.edit(true);
+        boolean updates = gregtech.api.threads.RunnableMachineUpdate.isCurrentThreadEnabled();
         int mask = 0;
         try {
+            if (updates) gregtech.api.threads.RunnableMachineUpdate.setCurrentThreadEnabled(false);
+            simulation.controller.setWorldObj(simulation.world);
+            if (candidate && !place(sample, p)) return 0;
+            if (!(simulation.world.getTileEntity(p.x(), p.y(), p.z()) instanceof IGregTechTileEntity gt)) return 0;
+            placed = gt;
+            original = gt.getFrontFacing();
             for (int direction = 0; direction < 6; direction++)
                 if (directionAccepted(p, direction)) mask |= 1 << direction;
             return mask;
         } finally {
-            gt.setFrontFacing(original);
+            try {
+                if (candidate) restore(p, block, meta, tile, paid);
+                else if (placed != null) placed.setFrontFacing(original);
+            } finally {
+                simulation.world.edit(recording);
+                simulation.controller.setWorldObj(previousWorld);
+                if (gregtech.api.threads.RunnableMachineUpdate.isCurrentThreadEnabled() != updates)
+                    gregtech.api.threads.RunnableMachineUpdate.setCurrentThreadEnabled(updates);
+            }
         }
     }
 

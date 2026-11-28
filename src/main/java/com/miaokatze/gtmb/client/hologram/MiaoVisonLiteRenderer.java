@@ -791,9 +791,8 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
                     Face outline = new Face(c, projected, 0, currentView);
                     boolean renderedCurrent = currentView || c.anchor
                         || c.status.equals("protected") && c.actualStack != null;
-                    outline.fadeDefault = !c.sourceMissing
-                        && (outline.nativeModel ? !HologramBlockRender.missingTexture(c, renderedCurrent)
-                            : completePreviewMaterial(outline.material));
+                    outline.fadeDefault = outline.nativeModel ? !HologramBlockRender.missingTexture(c, renderedCurrent)
+                        : completePreviewMaterial(outline.material);
                     outlines.add(outline);
                     if (HologramBlockRender.ready(c, currentView)) {
                         nativePreviewCells.add(c);
@@ -992,7 +991,6 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
             float outlineDensity = 1;
             int lineVertices = 0, lineLimit = 0;
             int outlinedCells = 0;
-            double[] cornerDepths = new double[8];
             boolean outlineDrawn = false;
             boolean streamedLines = false;
             ScreenLineStream previewLineStream = null;
@@ -1003,7 +1001,13 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
                     Face face = cachedOutlines.get(at);
                     boolean chosen = face.cell.index == selected
                         || selection != null && selection.contains(face.cell.index);
-                    boolean problem = previewProblemOutline(state, face.cell, face.empty, face.fadeDefault);
+                    Boolean completeMaterial = face.nativeModel || face.material != null ? face.fadeDefault : null;
+                    boolean problem = previewProblemOutline(
+                        state,
+                        face.cell,
+                        face.empty,
+                        completeMaterial,
+                        currentView);
                     if (previewOutlineVertices(chosen, problem) == 0) continue;
                     float alpha = previewOutlineAlpha(chosen, problem);
                     if (!outlineDrawn) {
@@ -1027,22 +1031,14 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
                         blue = (color & 255) / 255f;
                     if (streamedLines) previewLineStream.color(red, green, blue, alpha);
                     else t.setColorRGBA_F(red, green, blue, alpha);
-                    for (int corner = 0; corner < cornerDepths.length; corner++)
-                        cornerDepths[corner] = face.points[corner * 3 + 2] * depthScale + .15;
-                    for (int[] edge : EDGES) {
-                        int a = edge[0] * 3, b = edge[1] * 3;
-                        if (streamedLines) previewLineStream.line(
-                            face.points[a],
-                            face.points[a + 1],
-                            cornerDepths[edge[0]],
-                            face.points[b],
-                            face.points[b + 1],
-                            cornerDepths[edge[1]]);
+                    ScreenLineStream activeStream = streamedLines ? previewLineStream : null;
+                    emitPreviewOutline((ax, ay, az, bx, by, bz) -> {
+                        if (activeStream != null) activeStream.line(ax, ay, az, bx, by, bz);
                         else {
-                            t.addVertex(face.points[a], face.points[a + 1], cornerDepths[edge[0]]);
-                            t.addVertex(face.points[b], face.points[b + 1], cornerDepths[edge[1]]);
+                            t.addVertex(ax, ay, az);
+                            t.addVertex(bx, by, bz);
                         }
-                    }
+                    }, state, face.cell, face.empty, completeMaterial, chosen, face.points, depthScale, currentView);
                     if (lineLimit == 0)
                         lineLimit = streamedLines ? ScreenLineStream.MAX_VERTICES : previewLineBatchLimit(t);
                     lineVertices += 24;
@@ -1075,7 +1071,10 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
             lineVertices = 0;
             t.startDrawing(GL11.GL_LINES);
             String hoveredStructure = pickStructure(mouseX, mouseY);
+            Set<String> missingSourceOutlines = currentView ? java.util.Collections.emptySet() : missingStructures;
             if (!cleanCapture) for (Map.Entry<String, double[][]> entry : structureBoxes.entrySet()) {
+                if (!entry.getKey()
+                    .equals(selectedStructureId) && !missingSourceOutlines.contains(entry.getKey())) continue;
                 if (lineLimit > 0 && lineVertices + 24 > lineLimit) {
                     t.draw();
                     t.startDrawing(GL11.GL_LINES);
@@ -1085,38 +1084,13 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
                     .equals(hoveredStructure)) t.setColorRGBA_F(1, 1, .8f, 1);
                 else if (entry.getKey()
                     .equals(selectedStructureId)) t.setColorRGBA_F(1, .78f, .3f, .95f);
-                else if (missingStructures.contains(entry.getKey())) t.setColorRGBA_F(.65f, .65f, .65f, .72f);
-                else if (com.miaokatze.gtmb.hologram.HologramTextBox.isAttachmentId(entry.getKey()))
-                    t.setColorRGBA_F(.78f, .52f, 1, .85f);
-                else t.setColorRGBA_F(.45f, .85f, 1, .72f);
-                for (int[] edge : EDGES) {
-                    double[] a = entry.getValue()[edge[0]], b = entry.getValue()[edge[1]];
-                    t.addVertex(a[0], a[1], 1);
-                    t.addVertex(b[0], b[1], 1);
-                }
+                else t.setColorRGBA_F(.65f, .65f, .65f, .72f);
+                emitStructureOutline(t, entry.getValue(), entry.getKey(), selectedStructureId, missingSourceOutlines);
                 if (lineLimit == 0) lineLimit = previewLineBatchLimit(t);
                 lineVertices += 24;
             }
             t.draw();
-            GL11.glLineWidth(1.5f);
-            lineVertices = 0;
-            t.startDrawing(GL11.GL_LINES);
-            if (!cleanCapture) for (double[][] box : hintBoxes.values()) {
-                if (lineLimit > 0 && lineVertices + 24 > lineLimit) {
-                    t.draw();
-                    t.startDrawing(GL11.GL_LINES);
-                    lineVertices = 0;
-                }
-                t.setColorRGBA_F(.95f, .77f, .39f, .48f);
-                for (int[] edge : EDGES) {
-                    double[] a = box[edge[0]], b = box[edge[1]];
-                    t.addVertex(a[0], a[1], 1);
-                    t.addVertex(b[0], b[1], 1);
-                }
-                if (lineLimit == 0) lineLimit = previewLineBatchLimit(t);
-                lineVertices += 24;
-            }
-            t.draw();
+            // Hint bounds remain available to hover/picking; a hint alone is not a rendering failure.
             GL11.glEnable(GL11.GL_TEXTURE_2D);
             GL11.glColor4f(1, 1, 1, 1);
             if (!cleanCapture) for (RoleMarker marker : markers) {
@@ -1510,9 +1484,8 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         projectedFrame.projectVoxel(cell.dx, cell.dy, cell.dz, outline.points, 0);
         outline.updateDepth();
         boolean renderedCurrent = current || cell.anchor || cell.status.equals("protected") && cell.actualStack != null;
-        outline.fadeDefault = !cell.sourceMissing
-            && (outline.nativeModel ? !HologramBlockRender.missingTexture(cell, renderedCurrent)
-                : input.completeMaterial());
+        outline.fadeDefault = outline.nativeModel ? !HologramBlockRender.missingTexture(cell, renderedCurrent)
+            : input.completeMaterial();
     }
 
     private static void projectPreviewSurface(Face face, double[] projected) {
@@ -1990,7 +1963,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
             frame.projectVoxel(cell.dx, cell.dy, cell.dz, points, 0);
             input.outline = new Face(input, points, 0, null);
             input.outline.updateDepth();
-            input.outline.fadeDefault = !cell.sourceMissing && appearance.completeMaterial;
+            input.outline.fadeDefault = appearance.completeMaterial;
             List<HologramGeometry.Surface> surfaces = appearance.material.geometry;
             input.faces = new Face[surfaces.size()];
             input.browseExposed = facingSurfaces;
@@ -3382,20 +3355,14 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
             GL11.glPopMatrix();
         }
         GL11.glDisable(GL11.GL_TEXTURE_2D);
-        boolean lines = false;
+        t.startDrawing(GL11.GL_LINES);
         for (HologramState.Cell c : cells) {
             if (!removal && !worldGhostCell(c)) continue;
-            if (!worldProblemOutline(worldState, c, removal)) continue;
-            if (!lines) {
-                t.startDrawing(GL11.GL_LINES);
-                lines = true;
-            }
             int color = HologramJobVisuals.color(worldState, c);
             t.setColorRGBA_F(((color >> 16) & 255) / 255f, ((color >> 8) & 255) / 255f, (color & 255) / 255f, .65f);
-            emitWorldOutline(t, c);
-            lastWorldGeometry++;
+            if (emitWorldProblemOutline(t, worldState, c, removal) != 0) lastWorldGeometry++;
         }
-        if (lines) t.draw();
+        t.draw();
     }
 
     private static final class WorldGroup {
@@ -3549,11 +3516,20 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         if (cell.sourceMissing || cell.missingBlock) return true;
         String status = HologramJobVisuals.status(state, cell);
         return switch (status) {
-            case "occupied", "blocked", "unsupported", "unknown", "failed", "invalid", "conflict" -> true;
+            case "occupied", "blocked", "failed", "invalid", "conflict" -> true;
+            // Unsupported also covers unread chunks and unresolved native candidates. Only a failed
+            // execution receipt proves failure; resource/model evidence is checked independently below.
+            case "unsupported", "unknown" -> HologramJobVisuals.failed(state, cell);
             case "protected" -> !cell.anchor;
             case "missing" -> HologramJobVisuals.failed(state, cell) || !"missing".equals(cell.status);
             default -> false;
         };
+    }
+
+    private static boolean problemOutline(HologramState state, HologramState.Cell cell, boolean current) {
+        // Site rendering describes the actual block. A mismatching/unresolved planned target or
+        // unavailable template source cannot turn an otherwise valid installed model into a failure.
+        return current ? HologramJobVisuals.failed(state, cell) : problemOutline(state, cell);
     }
 
     private static boolean worldProblemOutline(HologramState state, HologramState.Cell cell, boolean current) {
@@ -3564,7 +3540,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
             HologramProjectionIdentity.Target target = worldTransform.target(cell);
             if (target != null && target.conflicts(world, at[0], at[1], at[2])) return true;
         }
-        if (problemOutline(state, cell)) {
+        if (problemOutline(state, cell, current)) {
             // A later block event can outlive the captured "occupied" status. An emptied position is
             // once again an ordinary unbuilt target; source/resource failures still remain problems.
             boolean siteConflict = !current && !cell.sourceMissing
@@ -3585,8 +3561,58 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
 
     /** Material fallback is not evidence of failure when its actual submitted icon samples are valid. */
     static boolean previewProblemOutline(HologramState state, HologramState.Cell cell, boolean empty,
-        boolean completeMaterial) {
-        return problemOutline(state, cell) || !empty && !completeMaterial;
+        Boolean completeMaterial) {
+        return previewProblemOutline(state, cell, empty, completeMaterial, false);
+    }
+
+    static boolean previewProblemOutline(HologramState state, HologramState.Cell cell, boolean empty,
+        Boolean completeMaterial, boolean current) {
+        // null means preparation has not supplied a model/material result, not a failed resource lookup.
+        return problemOutline(state, cell, current) || !empty && Boolean.FALSE.equals(completeMaterial);
+    }
+
+    @FunctionalInterface
+    interface OutlineLines {
+
+        void line(double ax, double ay, double az, double bx, double by, double bz);
+    }
+
+    /** The actual UI submission boundary, shared by streamed and ordinary tessellation. */
+    static int emitPreviewOutline(OutlineLines lines, HologramState state, HologramState.Cell cell, boolean empty,
+        Boolean completeMaterial, boolean chosen, double[] points, double depthScale) {
+        return emitPreviewOutline(lines, state, cell, empty, completeMaterial, chosen, points, depthScale, false);
+    }
+
+    static int emitPreviewOutline(OutlineLines lines, HologramState state, HologramState.Cell cell, boolean empty,
+        Boolean completeMaterial, boolean chosen, double[] points, double depthScale, boolean current) {
+        if (!chosen && !previewProblemOutline(state, cell, empty, completeMaterial, current)) return 0;
+        for (int[] edge : EDGES) {
+            int a = edge[0] * 3, b = edge[1] * 3;
+            lines.line(
+                points[a],
+                points[a + 1],
+                points[a + 2] * depthScale + .15,
+                points[b],
+                points[b + 1],
+                points[b + 2] * depthScale + .15);
+        }
+        return 24;
+    }
+
+    /** Projected bounds still serve picking even when their ordinary decoration is suppressed. */
+    static int emitStructureOutline(Tessellator tess, double[][] box, String id, String selected, Set<String> missing) {
+        if (!id.equals(selected) && !missing.contains(id)) return 0;
+        for (int[] edge : EDGES) {
+            double[] a = box[edge[0]], b = box[edge[1]];
+            tess.addVertex(a[0], a[1], 1);
+            tess.addVertex(b[0], b[1], 1);
+        }
+        return 24;
+    }
+
+    static int emitWorldProblemOutline(Tessellator tess, HologramState state, HologramState.Cell cell,
+        boolean current) {
+        return worldProblemOutline(state, cell, current) ? emitWorldOutline(tess, cell) : 0;
     }
 
     static int emitWorldOutline(Tessellator tess, HologramState.Cell cell) {

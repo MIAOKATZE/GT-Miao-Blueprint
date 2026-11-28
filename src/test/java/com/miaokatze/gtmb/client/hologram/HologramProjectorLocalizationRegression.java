@@ -52,15 +52,11 @@ public final class HologramProjectorLocalizationRegression {
         expect("Upgrade All Legacy Blueprints", "library.upgrade");
         expect("Controller Projection", "editor.controller");
         var site = new net.minecraft.nbt.NBTTagCompound();
-        SimpleAssert
-            .eq("Confirm Construction", HologramUiBuildReview.buildLabel(site), "uncertain native site uses English");
+        SimpleAssert.eq("Confirm Build", HologramUiBuildReview.buildLabel(site), "uncertain native site uses English");
         site.setInteger("siteOccupied", 0);
-        SimpleAssert.eq("Confirm New Build", HologramUiBuildReview.buildLabel(site), "empty native site uses English");
+        SimpleAssert.eq("Confirm Build", HologramUiBuildReview.buildLabel(site), "empty native site uses English");
         site.setInteger("siteMatchingSolid", 1);
-        SimpleAssert.eq(
-            "Confirm Fill Missing Blocks",
-            HologramUiBuildReview.buildLabel(site),
-            "matching native site uses English");
+        SimpleAssert.eq("Confirm Build", HologramUiBuildReview.buildLabel(site), "matching native site uses English");
         var data = new net.minecraft.nbt.NBTTagCompound();
         data.setBoolean("localStandardController", true);
         data.setLong("nativeTargetRevision", 1);
@@ -99,7 +95,7 @@ public final class HologramProjectorLocalizationRegression {
 
     private static void nativeWorkflowLabels() {
         var operations = com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.values();
-        String[] labels = { "Build", "Repair", "Replace", "Demolish" };
+        String[] labels = { "Build", "Replace", "Demolish" };
         for (int i = 0; i < operations.length; i++) {
             SimpleAssert.eq(labels[i], HologramNativeControllerState.label(operations[i]), "native action label");
             SimpleAssert.eq(
@@ -137,7 +133,7 @@ public final class HologramProjectorLocalizationRegression {
             progress,
             HologramUiBuildReview.nativeCompletionCaption(progress, "Earlier notice", state.statusCaption()),
             "live native Flow progress takes precedence over an earlier notice and observed stage");
-        String complete = HologramUiText.projector("stock.done_changes", "Repair", 33);
+        String complete = HologramUiText.projector("stock.done_changes", "Replace", 33);
         SimpleAssert.eq(
             complete,
             HologramUiBuildReview.nativeCompletionCaption("", complete, state.statusCaption()),
@@ -188,7 +184,9 @@ public final class HologramProjectorLocalizationRegression {
                 + " The server verifies payment, recovery and protection.",
             estimate.status(),
             "material delta summary is actually English");
-        config.setInteger("nativeAction", operations[3].ordinal());
+        config.setInteger(
+            "nativeAction",
+            com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.DEMOLISH.uiIndex());
         var removal = new HologramNativeTargetReview(new HologramState(config), new net.minecraft.nbt.NBTTagCompound());
         SimpleAssert.eq(
             "Whole structure demolition preview: 0 world blocks."
@@ -276,6 +274,14 @@ public final class HologramProjectorLocalizationRegression {
     }
 
     private static void constructionDiagnostics() {
+        SimpleAssert.eq(
+            "The build site changed. Read the site again before building.",
+            HologramNativeUiText.reason("新建范围已出现方块，请重新读取后补建。"),
+            "an old server diagnostic retains its lookup but displays the current build wording");
+        SimpleAssert.eq(
+            "The build site changed. Read the site again before building.",
+            HologramNativeUiText.reason("建造范围已有变化，请重新读取后建造。"),
+            "the current build diagnostic uses the same translated meaning");
         SimpleAssert.eq(
             "Claim or mod protection cancelled placement. This cell was restored.",
             HologramNativeUiText.reason("领地或模组保护取消放置，本格已还原。"),

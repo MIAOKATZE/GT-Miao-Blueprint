@@ -81,14 +81,7 @@ final class HologramUiBuildReview implements LocalView {
 
     boolean nativeMaterialInspectionReady() {
         HologramState state = ui.session.state();
-        if (state.data.getBoolean("localStandardController")) return state.data.getBoolean("nativeTargetReady")
-            || state.data.getInteger("nativeAction") == 3 && ui.host != null
-                && ui.host.parent()
-                    .nativeActionBlocker(
-                        ui.host.parent()
-                            .nativeControllerState()
-                            .action())
-                    .isEmpty();
+        if (state.data.getBoolean("localStandardController")) return state.data.getBoolean("nativeTargetReady");
         int job = state.data.getInteger("job");
         if (state.nativeViewport != null) return ui.session.localDocument() && state.nativeViewport.currentProviders()
             && !HologramBackgroundTasks.busy();
@@ -271,17 +264,19 @@ final class HologramUiBuildReview implements LocalView {
             // Saved file placement does not carry replacement/demolition authority. Never convert a different
             // requested operation into a build just because the material panel displays a native viewport.
             if (settings.getInteger("mode") != 0 || ui.session.state().data.getInteger("mode") != 0)
-                return projectorOr("stock.saved_mode_unsupported", "已保存蓝图的施工入口暂不支持换装或拆除。");
+                return projectorOr("stock.saved_mode_unsupported", "蓝图仅支持建造，请重新进入建造确认。");
             return ui.library.savedNativePlacementReady() ? "" : projectorOr("stock.save_first_reason", "请先保存蓝图。");
         }
         HologramScreen root = ui.host == null ? null : ui.host.parent();
         if (localStockSite != null && root != null && root.stockNativePending())
             return projectorOr("stock.await_result", "正在等候本次施工结果。");
-        if (ui.session.state().data.getBoolean("localStandardController"))
-            return root == null ? projectorOr("native.ui.the_controller_session_expired", "控制器会话已失效。")
+        if (ui.session.state().data.getBoolean("localStandardController")) {
+            String blocker = root == null ? projectorOr("native.ui.the_controller_session_expired", "控制器会话已失效。")
                 : root.nativeActionBlocker(
                     root.nativeControllerState()
                         .action());
+            return !blocker.isEmpty() ? blocker : localHatchDelta() ? localMaterials.hatchDelta.blocker : "";
+        }
         String blocker = HologramPlacementConfirmation
             .localStructureReviewBlocker(ui.session.state(), settings, root == null || root.hasLocalNativeChoices());
         if (!blocker.isEmpty()) return blocker;
@@ -318,22 +313,11 @@ final class HologramUiBuildReview implements LocalView {
                 ui.host.parent()
                     .nativeControllerState()
                     .action());
-        if (reviewedNativeMode(2)) return projectorOr("stock.confirm_remove", "确认拆除");
-        if (reviewedNativeMode(1)) return projectorOr("stock.confirm_replace", "确认换装");
         return buildLabel(ui.session.state().data);
     }
 
     static String buildLabel(NBTTagCompound site) {
-        if (site.getInteger("siteMatchingSolid") > 0 || site.getInteger("siteHatches") > 0)
-            return projectorOr("stock.confirm_fill", "确认补建");
-        if (!site.hasKey("siteOccupied", 3) || site.getInteger("siteUnknown") > 0)
-            return projectorOr("stock.confirm_build", "确认施工");
-        return projectorOr("stock.confirm_new", "确认新建");
-    }
-
-    private boolean reviewedNativeMode(int mode) {
-        return localMaterials != null && ui.session.state().data.getBoolean("localStandardController")
-            && ui.session.state().data.getInteger("mode") == mode;
+        return projectorOr("stock.confirm_build", "确认建造");
     }
 
     @Override
@@ -348,7 +332,7 @@ final class HologramUiBuildReview implements LocalView {
         int action = ui.session.state().data.getInteger("nativeAction");
         return localMaterials != null && ui.session.state().data.getBoolean("localStandardController")
             && action >= 1
-            && action <= 3;
+            && action <= 2;
     }
 
     @Override
@@ -742,7 +726,6 @@ final class HologramUiBuildReview implements LocalView {
                             || control.id == 168
                             || control.id == 196
                             || control.id == 211
-                            || control.id == 215
                             || control.id == 184
                             || control.id == 169)) ui.router.activate(control.id);
                         return true;

@@ -78,6 +78,11 @@ public final class HologramConstructionJobsRegression {
                 updates(session);
                 HologramNativeSavedWorldRegression.withOfflineRegistries(() -> {
                     capturedSource(unsafe);
+                    try {
+                        legacyFormationBoundary(unsafe);
+                    } catch (IOException | ReflectiveOperationException failure) {
+                        throw new AssertionError("legacy native formation boundary", failure);
+                    }
                     controllerCallbacks(unsafe);
                     admissionClose(unsafe);
                 });
@@ -272,17 +277,18 @@ public final class HologramConstructionJobsRegression {
                     "reviewed source uses the native writer once after switching hands, preserving the selected slot");
                 player.inventory.currentItem = 0;
                 var clear = savedAir(player, 2, 1);
+                int beforeRetiredMode = world.writes()
+                    .size();
                 HologramPlacementJobs.begin(clear, new net.minecraft.nbt.NBTTagCompound());
-                var clearing = HologramConstructionJobs.find(player);
-                SimpleAssert.that(clearing != null, "explicit saved air is admitted as a discrete replacement target");
-                player.inventory.currentItem = 2;
-                HologramConstructionJobs.tick(Long.MAX_VALUE);
                 SimpleAssert.that(
-                    clearing.end == HologramConstructionJobs.End.COMPLETE && clearing.completed == 1
-                        && world.getBlock(2, 64, 0) == net.minecraft.init.Blocks.air
+                    HologramConstructionJobs.find(player) == null && clear.job == 0
+                        && clear.status.contains("蓝图仅支持建造")
+                        && world.writes()
+                            .size() == beforeRetiredMode
+                        && world.getBlock(2, 64, 0) instanceof ClearingBlock
                         && world.getBlock(3, 64, 0) == net.minecraft.init.Blocks.dirt
-                        && player.inventory.currentItem == 2,
-                    "explicit air clears only its coordinate by native harvest after changing hands, without deleting adjacent cells");
+                        && player.inventory.mainInventory[1].stackSize == 2,
+                    "saved blueprint replacement mode is refused without world writes or payment");
                 player.inventory.currentItem = 0;
                 var ignored = savedAir(player, 3, 0);
                 int writes = world.writes()
@@ -320,20 +326,20 @@ public final class HologramConstructionJobsRegression {
                 required.unknown = false;
                 HologramResourcePlanner.refreshPlan(nativeAir);
                 SimpleAssert.eq(
-                    "pending",
+                    "blocked",
                     nativeAir.planStatus.get(0),
-                    "real planning classifies an occupied native required-air target as executable work");
+                    "native required-air build conflicts with an occupied coordinate");
+                int beforeRequiredAir = world.writes()
+                    .size();
                 HologramPlacementJobs.start(nativeAir, new net.minecraft.nbt.NBTTagCompound());
-                var nativeClearing = HologramConstructionJobs.find(player);
                 SimpleAssert.that(
-                    nativeClearing != null && nativeAir.work.size() == 1,
-                    "classify through start admits required-air cleanup to the common source");
-                HologramConstructionJobs.tick(Long.MAX_VALUE);
-                SimpleAssert.that(
-                    nativeClearing.end == HologramConstructionJobs.End.COMPLETE
-                        && world.getBlock(4, 64, 0) == net.minecraft.init.Blocks.air
-                        && world.getBlock(3, 64, 0) == net.minecraft.init.Blocks.dirt,
-                    "planned required-air cleanup uses native harvest only at its discrete coordinate");
+                    HologramConstructionJobs.find(player) == null && nativeAir.job == 0
+                        && world.getBlock(4, 64, 0) instanceof ClearingBlock
+                        && world.getBlock(3, 64, 0) == net.minecraft.init.Blocks.dirt
+                        && world.writes()
+                            .size() == beforeRequiredAir
+                        && player.inventory.mainInventory[1].stackSize == 2,
+                    "required-air build refuses clearing and preserves world blocks and payment");
             } finally {
                 var job = HologramConstructionJobs.find(player);
                 if (job != null) HologramConstructionJobs.cancel(player, job.request);
@@ -342,6 +348,105 @@ public final class HologramConstructionJobsRegression {
             }
         } catch (Exception failure) {
             throw new AssertionError("reviewed capture source", failure);
+        }
+    }
+
+    private static void legacyFormationBoundary(sun.misc.Unsafe unsafe)
+        throws IOException, ReflectiveOperationException {
+        var world = HologramPlacementFixtureWorld.create(unsafe);
+        var player = HologramLibraryServiceRegression.placementPlayer(unsafe, world, "LegacyFormationGate");
+        player.posY = 64;
+        player.capabilities.allowEdit = true;
+        player.inventory.mainInventory[1] = new net.minecraft.item.ItemStack(net.minecraft.init.Blocks.stone, 3);
+        var session = controllerSession(unsafe, world, player);
+        try {
+            for (boolean formed : new boolean[] { false, true }) {
+                session.machine.mMachine = formed;
+                for (int mode : new int[] { 0, 1, 2 }) {
+                    session.mode = mode;
+                    boolean allowed = mode == 0 ? !formed : formed;
+                    SimpleAssert.eq(
+                        allowed,
+                        HologramPlanPolicy.legacyOperationRefusal(session)
+                            .isEmpty(),
+                        "legacy capture follows native cached formation: " + formed + "/" + mode);
+                    if (allowed) continue;
+                    int writes = world.writes()
+                        .size();
+                    HologramBuildPreparation.directBuild(session, true);
+                    SimpleAssert.that(
+                        !session.status.isEmpty() && !session.buildAfterCapture,
+                        "direct legacy entry refuses before scanning");
+                    HologramBuildPreparation.reviewedBuild(session, new net.minecraft.nbt.NBTTagCompound());
+                    SimpleAssert.that(
+                        !HologramPlanPolicy.constructionAllowed(session),
+                        "legacy final admission cannot bypass native formation");
+                    HologramPlacementJobs.begin(session, new net.minecraft.nbt.NBTTagCompound());
+                    SimpleAssert.that(
+                        HologramConstructionJobs.find(player) == null && session.job == 0
+                            && world.writes()
+                                .size() == writes
+                            && player.inventory.mainInventory[1].stackSize == 3,
+                        "legacy job begin refuses without writing or payment: formed=" + formed
+                            + ", mode="
+                            + mode
+                            + ", status="
+                            + session.status);
+                }
+            }
+            var machine = session.machine;
+            session.machine = null;
+            for (int mode : new int[] { 0, 1, 2 }) {
+                session.mode = mode;
+                SimpleAssert.eq(
+                    mode == 0,
+                    HologramPlanPolicy.legacyOperationRefusal(session)
+                        .isEmpty(),
+                    "missing native machine state authorizes only build");
+            }
+            session.machine = machine;
+            var sourceType = Class.forName("com.miaokatze.gtmb.hologram.HologramPlacementJobs$CapturedSource");
+            var constructor = sourceType.getDeclaredConstructor(HologramSession.class);
+            constructor.setAccessible(true);
+            var cell = new HologramConstructionJobs.Target(1, 64, 0, null, true, false);
+            for (int mode : new int[] { 0, 1, 2 }) {
+                session.mode = mode;
+                boolean admittedFormation = mode != 0;
+                machine.mMachine = admittedFormation;
+                var source = (HologramConstructionJobs.Source) constructor.newInstance(session);
+                source.before(cell);
+                source.committed(cell, false);
+                machine.mMachine = !admittedFormation;
+                try {
+                    source.before(cell);
+                    throw new AssertionError("matched rows consumed the formation gate for mode " + mode);
+                } catch (IOException expected) {}
+                machine.mMachine = admittedFormation;
+                source.before(cell);
+                source.committed(cell, true);
+                machine.mMachine = !admittedFormation;
+                source.before(cell);
+                SimpleAssert.that(
+                    source.current(),
+                    "own committed changes may alter formation while identity and permissions remain checked: mode="
+                        + mode
+                        + ", formed="
+                        + machine.mMachine
+                        + ", status="
+                        + session.status);
+            }
+            session.virtual = true;
+            session.mode = 0;
+            machine.mMachine = true;
+            SimpleAssert.that(
+                HologramPlanPolicy.legacyOperationRefusal(session)
+                    .isEmpty(),
+                "blueprint build never inherits controller formation gating");
+        } finally {
+            var live = HologramConstructionJobs.find(player);
+            if (live != null) HologramConstructionJobs.cancel(player, live.request);
+            player.playerNetServerHandler.netManager.channel()
+                .close();
         }
     }
 
@@ -438,7 +543,7 @@ public final class HologramConstructionJobsRegression {
     }
 
     private static HologramSession controllerSession(sun.misc.Unsafe unsafe, HologramPlacementFixtureWorld world,
-        net.minecraft.entity.player.EntityPlayerMP player) throws Exception {
+        net.minecraft.entity.player.EntityPlayerMP player) throws ReflectiveOperationException {
         var tileType = Class
             .forName("com.miaokatze.gtmb.hologram.HologramNativeControllerAccessRegression$PrivateController");
         var machineType = Class

@@ -22,8 +22,8 @@ final class HologramNativeTargetReview {
 
     final NBTTagCompound theory = new NBTTagCompound();
     final boolean removal;
-    final String blocker = "";
-    int exchanges, turns, unchanged, removals, unknown;
+    final String blocker;
+    int exchanges, turns, unchanged, removals, unknown, conflicts;
 
     private static final class Group {
 
@@ -49,7 +49,8 @@ final class HologramNativeTargetReview {
     }
 
     HologramNativeTargetReview(HologramState source, NBTTagCompound settings) {
-        removal = source.data.getInteger("nativeAction") == Operation.DEMOLISH.ordinal();
+        removal = source.data.getInteger("nativeAction") == Operation.DEMOLISH.uiIndex();
+        boolean build = source.data.getInteger("nativeAction") == Operation.BUILD.uiIndex();
         var groups = new LinkedHashMap<Key, Group>();
         // An installed declaration can contain cells outside a newly resized desired target.
         HologramState observed = removal ? source.controllerView(1) : source;
@@ -71,15 +72,24 @@ final class HologramNativeTargetReview {
             var target = cell.targetStack;
             if (target == null) {
                 if (occupied && "minecraft:air".equals(cell.wantId)) {
-                    removals++;
-                    if (old != null) group(groups, old).recovered++;
+                    if (build) conflicts++;
+                    else {
+                        removals++;
+                        if (old != null) group(groups, old).recovered++;
+                    }
                 } else if (!"minecraft:air".equals(cell.wantId)) unknown++;
                 continue;
             }
             boolean same = old != null && old.isItemEqual(target) && ItemStack.areItemStackTagsEqual(old, target);
             if (same) {
-                if (cell.targetFacing >= 0 && cell.actualFacing >= 0 && cell.targetFacing != cell.actualFacing) turns++;
-                else unchanged++;
+                if (cell.targetFacing >= 0 && cell.actualFacing >= 0 && cell.targetFacing != cell.actualFacing) {
+                    if (build) conflicts++;
+                    else turns++;
+                } else unchanged++;
+                continue;
+            }
+            if (build && occupied) {
+                conflicts++;
                 continue;
             }
             exchanges++;
@@ -96,6 +106,9 @@ final class HologramNativeTargetReview {
                     : projectorOr("native.ui.calculated_from_the_complete_target", "按当前完整目标核算"));
             rows.appendTag(row);
         }
+        blocker = conflicts > 0
+            ? projectorOr("native.ui.build_conflicts", "建造目标与现场有 %1$s 格冲突；建造不会拆除或替换已有方块。", conflicts)
+            : "";
         theory.setTag("rows", rows);
         theory.setInteger("unaccounted", unknown);
         theory.setBoolean("nativeTargetDelta", true);
@@ -117,6 +130,7 @@ final class HologramNativeTargetReview {
                 + (" " + projectorOr("native.ui.matching_cells_unchanged", "格不动。"));
         if (unknown > 0)
             summary += " " + unknown + (" " + projectorOr("native.ui.cells_have_not_been_calculated", "格尚未核算。"));
+        if (!blocker.isEmpty()) summary += " " + blocker;
         return summary
             + (" " + projectorOr("native.ui.the_server_verifies_payment_recovery_and_protection", "实际扣料、回收与保护由服务器核验。"));
     }

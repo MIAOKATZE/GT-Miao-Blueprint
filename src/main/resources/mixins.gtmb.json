@@ -5,7 +5,7 @@
   "refmap": "mixins.gtmb.refmap.json",
   "target": "@env(DEFAULT)",
   "compatibilityLevel": "JAVA_8",
-  "mixins": [],
+  "mixins": ["hologram.MixinHologramConstructionSounds"],
   "client": ["hologram.MixinHologramChunkNotifications", "hologram.MixinHologramMachineNotifications"],
   "server": []
 }

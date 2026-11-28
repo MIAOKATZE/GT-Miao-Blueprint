@@ -19,6 +19,8 @@ import net.minecraft.tileentity.TileEntity;
 import net.minecraft.world.IBlockAccess;
 import net.minecraft.world.World;
 
+import com.miaokatze.gtmb.testutil.SimpleAssert;
+
 import cpw.mods.fml.client.registry.ISimpleBlockRenderingHandler;
 import cpw.mods.fml.client.registry.RenderingRegistry;
 
@@ -28,6 +30,7 @@ public final class HologramCutRawPreviewRegression {
     private HologramCutRawPreviewRegression() {}
 
     public static void run() throws ReflectiveOperationException {
+        outlineSubmissions();
         registeredHandlerRouting();
         boundedNeighborHydration();
         AtomicInteger failures = new AtomicInteger();
@@ -113,6 +116,59 @@ public final class HologramCutRawPreviewRegression {
             "failed native factory is not retried every frame");
         check(cell.raw.equals(failingOriginal) && row.equals(original), "failed reader retains the complete raw cache");
         world.release();
+    }
+
+    private static void outlineSubmissions() throws ReflectiveOperationException {
+        NBTTagCompound row = new NBTTagCompound();
+        row.setString("block", "minecraft:stone");
+        row.setInteger("x", 2);
+        row.setInteger("y", 3);
+        row.setInteger("z", 4);
+        HologramCutRawPreviewWorld.Cell cell = new HologramCutRawPreviewWorld.Cell(row);
+        Field block = HologramCutRawPreviewWorld.Cell.class.getDeclaredField("block");
+        block.setAccessible(true);
+        block.set(cell, net.minecraft.init.Blocks.stone);
+        java.util.List<double[]> vertices = new java.util.ArrayList<>();
+        HologramCutRawPreviewSession.OutlineVertices sink = (x, y, z) -> vertices.add(new double[] { x, y, z });
+        SimpleAssert.eq(
+            0,
+            HologramCutRawPreviewSession.emitProblemOutline(cell, sink),
+            "the cut submission boundary emits no unread/model-compilation placeholder");
+        SimpleAssert.eq(0, vertices.size(), "ordinary cut outlines do not reach the actual vertex sink");
+        cell.attempted = true;
+        cell.tile = new ProbeTile();
+        SimpleAssert.eq(
+            0,
+            HologramCutRawPreviewSession.emitProblemOutline(cell, sink),
+            "a successfully decoded native tile does not receive a decoration outline");
+        cell.tile = null;
+        cell.attempted = true;
+        cell.loading = true;
+        SimpleAssert.eq(
+            0,
+            HologramCutRawPreviewSession.emitProblemOutline(cell, sink),
+            "an incomplete native reader is not yet a failed tile");
+        cell.loading = false;
+        for (String failure : new String[] { "native tile unavailable", "static render failure", "TESR failure",
+            "unregistered block" }) {
+            cell.attempted = failure.equals("native tile unavailable");
+            cell.staticFailed = failure.equals("static render failure");
+            cell.dynamicFailed = failure.equals("TESR failure");
+            block.set(cell, failure.equals("unregistered block") ? null : net.minecraft.init.Blocks.stone);
+            SimpleAssert.eq(
+                24,
+                HologramCutRawPreviewSession.emitProblemOutline(cell, sink),
+                "a proven native failure submits twelve actual cut edges: " + failure);
+            SimpleAssert.eq(24, vertices.size(), "failed cut vertices reach the real submission sink");
+            for (double[] point : vertices) SimpleAssert.that(
+                point[0] >= 1.99 && point[0] <= 3.01
+                    && point[1] >= 2.99
+                    && point[1] <= 4.01
+                    && point[2] >= 3.99
+                    && point[2] <= 5.01,
+                "cut diagnostic stays around the failed source voxel");
+            vertices.clear();
+        }
     }
 
     private static void boundedNeighborHydration() throws ReflectiveOperationException {

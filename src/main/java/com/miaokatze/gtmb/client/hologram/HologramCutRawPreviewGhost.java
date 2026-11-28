@@ -33,7 +33,7 @@ final class HologramCutRawPreviewGhost {
         Minecraft mc = Minecraft.getMinecraft();
         destination = -1;
         if (!OpenGlHelper.isFramebufferEnabled() || !MiaoVisonLiteTarget.supportsDepthCopy()) {
-            failure = "Cut ghost requires framebuffer depth-copy support; showing outlines only";
+            failure = "Cut ghost requires framebuffer depth-copy support; preview unavailable";
             return false;
         }
         destination = GL11.glGetInteger(0x8ca6);
@@ -41,7 +41,7 @@ final class HologramCutRawPreviewGhost {
         priorGlError = GL11.glGetError();
         if (priorGlError != GL11.GL_NO_ERROR) {
             inheritedGlErrors++;
-            failure = "Inherited GL error before cut ghost: " + priorGlError + "; showing outlines only";
+            failure = "Inherited GL error before cut ghost: " + priorGlError + "; preview unavailable";
             return false;
         }
         failure = "";
@@ -75,7 +75,7 @@ final class HologramCutRawPreviewGhost {
         copyGlError = GL11.glGetError();
         if (copyGlError != GL11.GL_NO_ERROR) {
             depthCopyGlErrors++;
-            failure = "Cut ghost depth-copy GL error: " + copyGlError + "; showing outlines only";
+            failure = "Cut ghost depth-copy GL error: " + copyGlError + "; preview unavailable";
             bindDestination();
             return false;
         }

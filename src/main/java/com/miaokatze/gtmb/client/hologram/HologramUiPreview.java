@@ -48,6 +48,9 @@ final class HologramUiPreview {
     void chooseControllerSiteView(NBTTagCompound metadata) {
         if (controllerViewChosen || !metadata.getBoolean("localStandardController")
             || !metadata.hasKey("siteOccupied", 3)) return;
+        // A handful of installed/matching cells is not a complete machine. Keep the planning view
+        // until the server has proved the whole site, without consuming the later settled choice.
+        if (!metadata.getBoolean("siteKnown") || metadata.getInteger("siteUnknown") != 0) return;
         controllerViewChosen = true;
         // Terrain crossing a declared cell is a conflict, not evidence of an installed machine.
         view = metadata.getInteger("siteMatchingSolid") > 0 || metadata.getInteger("siteHatches") > 0
@@ -1076,7 +1079,7 @@ final class HologramUiPreview {
     static String statusName(String status) {
         switch (status) {
             case "blocked":
-                return projectorOr("native_common.status.blocked", "被遮挡：请清空占位后补建");
+                return projectorOr("native_common.status.blocked", "被遮挡：请清空占位后建造");
             case "protected":
                 return projectorOr("native_common.status.protected", "受保护：控制器 / 未适配设备保留");
             case "unsupported":

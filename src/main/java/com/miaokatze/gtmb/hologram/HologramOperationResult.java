@@ -59,7 +59,8 @@ public final class HologramOperationResult {
     private static net.minecraft.util.IChatComponent reason(String detail) {
         if ("装饰抵用券不足，本格未施工。".equals(detail))
             return new ChatComponentTranslation("gtmb.hologram.projector.native.reason.construction.voucher_missing");
-        String limited = HologramNativeProjectionJob.LIMITED_SCOPE_DETAIL;
+        // Decode historical receipts only; current actions require a freshly proved complete scope.
+        String limited = "按本次原生已知范围处理；更早参数丢失的范围外残留无法识别。";
         if (detail.endsWith(limited)) {
             var warning = new ChatComponentTranslation("gtmb.hologram.projector.native.reason.job.scope_limited");
             String cause = detail.substring(0, detail.length() - limited.length())

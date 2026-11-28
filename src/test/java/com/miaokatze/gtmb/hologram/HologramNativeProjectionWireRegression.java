@@ -104,6 +104,16 @@ final class HologramNativeProjectionWireRegression {
                     // Reading a stage is deliberately weaker than confirming a mutation.
                 }
             }
+            SimpleAssert.eq(
+                operation.wireId(),
+                packet.getInteger("projectionOperation"),
+                "wire action IDs remain stable independently of the UI index");
+            SimpleAssert.eq(operation, Operation.fromUiIndex(operation.uiIndex()), "UI action mapping is explicit");
+            var retiredRepair = (NBTTagCompound) packet.copy();
+            retiredRepair.setInteger("projectionOperation", 1);
+            SimpleAssert.that(
+                HologramStockNativeWire.readRequest(retiredRepair) == null,
+                "retired repair ID is rejected even when a packet claims the current version");
             var oldVersion = (NBTTagCompound) packet.copy();
             oldVersion.setInteger("nativeStockVersion", HologramStockNativeWire.VERSION - 1);
             SimpleAssert.that(
@@ -155,11 +165,54 @@ final class HologramNativeProjectionWireRegression {
         }
         var forged = new Projection(
             1000,
-            Operation.REPAIR,
+            Operation.BUILD,
             Collections.emptyMap(),
             Arrays.asList(new HatchChoice(1, 0, 0, 44, 2), new HatchChoice(1, 0, 0, 45, 3)),
             0,
             1);
         SimpleAssert.that(!forged.valid(), "duplicate positions are rejected before any server work");
+        blueprintLegacyModesRejected();
+    }
+
+    private static void blueprintLegacyModesRejected() {
+        try {
+            var field = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+            field.setAccessible(true);
+            var unsafe = (sun.misc.Unsafe) field.get(null);
+            // No world or player is installed: rejection must precede scanning, material checks or writing.
+            for (int mode : new int[] { 1, 2 }) {
+                var session = (HologramSession) unsafe.allocateInstance(HologramSession.class);
+                session.virtual = true;
+                session.virtualPlacement = true;
+                session.virtualLocked = true;
+                session.mode = mode;
+                session.forcePlacementReady = true;
+                session.buildAfterCapture = true;
+                HologramBuildPreparation.directBuild(session, true);
+                SimpleAssert.that(
+                    session.status.contains("蓝图仅支持建造") && session.job == 0
+                        && !session.forcePlacementReady
+                        && !session.buildAfterCapture,
+                    "legacy blueprint mode is rejected before direct-build side effects: " + mode);
+                session.status = "";
+                HologramBuildPreparation.reviewedBuild(session, new NBTTagCompound());
+                SimpleAssert.that(
+                    session.status.contains("蓝图仅支持建造") && session.job == 0,
+                    "old reviewed blueprint requests cannot acquire destructive mode authority: " + mode);
+                HologramPlacementJobs.begin(session, new NBTTagCompound());
+                SimpleAssert.that(
+                    session.status.contains("蓝图仅支持建造") && session.job == 0,
+                    "the authoritative captured-job adapter refuses legacy blueprint mode: " + mode);
+                SimpleAssert.that(
+                    !HologramPlanPolicy.constructionAllowed(session),
+                    "final blueprint admission rejects legacy mode: " + mode);
+                SimpleAssert.eq(
+                    "protected",
+                    HologramPlanPolicy.classify(session, null, 0, false, null, 0, null),
+                    "blueprint differential classification cannot prepare destructive work: " + mode);
+            }
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError("blueprint legacy operation fixture", failure);
+        }
     }
 }

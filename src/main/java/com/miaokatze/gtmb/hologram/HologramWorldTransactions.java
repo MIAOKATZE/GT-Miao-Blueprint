@@ -8,7 +8,7 @@ import net.minecraft.tileentity.TileEntity;
 import net.minecraft.world.World;
 import net.minecraftforge.common.util.BlockSnapshot;
 
-/** Read-only world facts and the reviewed obstruction-cleanup adapter to the common native job. */
+/** Read-only world facts for the native construction transaction. */
 final class HologramWorldTransactions {
 
     private HologramWorldTransactions() {}
@@ -17,10 +17,6 @@ final class HologramWorldTransactions {
         return world.blockExists(cell.x, cell.y, cell.z) && world.getBlock(cell.x, cell.y, cell.z) == block
             && world.getBlockMetadata(cell.x, cell.y, cell.z) == meta
             && world.getTileEntity(cell.x, cell.y, cell.z) == tile;
-    }
-
-    static void removeBlueprintObstructions(HologramSession s, NBTTagCompound action) throws java.io.IOException {
-        HologramPlacementJobs.clearObstructions(s, action);
     }
 
     static BlockSnapshot readOnlyBlockSnapshot(World world, int x, int y, int z) {

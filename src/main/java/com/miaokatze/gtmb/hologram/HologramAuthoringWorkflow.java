@@ -324,17 +324,6 @@ final class HologramAuthoringWorkflow {
     /** Repeated review controls reuse the published result; they do not authorize another planning pass. */
     static boolean unchangedBlueprintAction(HologramSession s, NBTTagCompound action, String op) {
         if (!s.virtual || s.virtualPreset == null || s.capture == null || s.localPlanPending) return false;
-        if ("removeBlueprintObstructions".equals(op)) {
-            if (!s.virtualPlacement || !s.virtualLocked
-                || !s.blueprintAwaitingConfirmation
-                || !s.placementReviewIssued
-                || !s.id.equals(action.getString("session"))
-                || action.getLong("planRevision") != s.planRevision
-                || action.getLong("placementReviewNonce") != s.placementReviewNonce
-                || !s.localEdits.knownNoBlockers(s)) return false;
-            s.status = "当前已审核范围没有需要移除的占位方块";
-            return true;
-        }
         if ("configurePlacementDeidentification".equals(op) || "deidentifyBlueprint".equals(op)) {
             int requested = action.getInteger("level");
             if (requested < 0 || requested > 10
@@ -368,6 +357,10 @@ final class HologramAuthoringWorkflow {
     }
 
     static boolean blueprintAction(HologramSession s, NBTTagCompound action, String op) {
+        if ("removeBlueprintObstructions".equals(op)) {
+            s.status = "蓝图仅支持建造，不再受理移除阻塞物请求";
+            return true;
+        }
         if (unchangedBlueprintAction(s, action, op)) return true;
         String dependency = blueprintEditDependency(op);
         boolean indexedAnnotations = false;
@@ -396,8 +389,6 @@ final class HologramAuthoringWorkflow {
                     s.placementDeidentificationLevel = HologramDeidentification.level(s.virtualPreset);
                 }
                 s.status = "去标识等级 " + HologramDeidentification.level(s.virtualPreset) + " 已应用；物品类型、子类型、数量与配方数据保留";
-            } else if ("removeBlueprintObstructions".equals(op)) {
-                HologramWorldTransactions.removeBlueprintObstructions(s, action);
             } else if ("excludeBlueprintBlockers".equals(op)) {
                 HologramBlueprintEditor.excludeBlueprintBlockers(s, action);
             } else if ("openNetworkBindings".equals(op)) {
