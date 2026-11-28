@@ -151,8 +151,8 @@ final class HologramEditorIdentityDialog {
                     .widthRel(1f)
                     .height(28));
             body.child(
-                HologramEditorNativeTheme
-                    .label(() -> ui.identity.placement() ? "修正保存数据或清理阻塞物后，仍需重新核对材料并确认放置。" : "保存仍会检查全部数据；合并提示可展开查看每个位置。")
+                HologramEditorNativeTheme.label(
+                    () -> ui.identity.placement() ? "修正保存数据、调整目标或自行清理占位后，重新核对材料并确认建造。" : "保存仍会检查全部数据；合并提示可展开查看每个位置。")
                     .widthRel(1f)
                     .height(28));
             Flow tools = Flow.row()
@@ -167,17 +167,6 @@ final class HologramEditorIdentityDialog {
                     () -> false,
                     false,
                     "沿用现有处理与服务端校验").widthRel(1f)
-                        .expanded()
-                        .height(24));
-            tools.child(
-                action(
-                    215,
-                    () -> "移除放置阻塞物",
-                    () -> ui.session.editable() && ui.review.placementReviewActive()
-                        && ui.review.materialBlockers() > 0,
-                    () -> false,
-                    false,
-                    "沿用现有阻塞物移除请求；不会确认施工").widthRel(1f)
                         .expanded()
                         .height(24));
             body.child(tools);

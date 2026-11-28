@@ -105,16 +105,25 @@ final class HologramUiConfiguration {
             0xef172f36);
         ui.canvas.skin("panel", HologramUiCanvas.panelX, HologramUiCanvas.panelY, HologramScreenLayout.PANEL_WIDTH, 17);
         ui.canvas.text(projectorOr("native.ui.target_properties", "目标属性"), 286, 65, 220, 0xf5e4b9);
-        String[] modes = { projectorOr("native.ui.repair", "补建"), projectorOr("native.ui.replace", "替换"),
-            projectorOr("native.ui.demolish", "拆除") };
-        for (int i = 0; i < 3; i++) ui.canvas.button(
-            70 + i,
-            284 + i * 58,
+        boolean nativeController = ui.session.state().data.getBoolean("localStandardController");
+        var actions = nativeController
+            ? new com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation[] {
+                com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.BUILD,
+                com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.REPLACE,
+                com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.DEMOLISH }
+            : new com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation[] {
+                com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.BUILD };
+        for (var action : actions) ui.canvas.button(
+            nativeController ? 1720 + action.uiIndex() : 70,
+            284 + action.uiIndex() * 58,
             80,
             55,
             17,
-            (ui.session.state().data.getInteger("mode") == i ? "›" : "") + modes[i],
-            ui.session.editable(),
+            (ui.session.state().data.getInteger(nativeController ? "nativeAction" : "mode") == action.uiIndex() ? "›"
+                : "") + HologramNativeControllerState.label(action),
+            nativeController ? ui.host.parent()
+                .nativeActionBlocker(action)
+                .isEmpty() : ui.session.configurationEditable(),
             mx,
             my);
         ui.canvas.text(
@@ -399,6 +408,15 @@ final class HologramUiConfiguration {
             my);
     }
 
+    private String nativeControllerConfirmationLabel() {
+        if (ui.session.state().data.getBoolean("localStandardController") && ui.host != null)
+            return HologramNativeControllerState.confirmationLabel(
+                ui.host.parent()
+                    .nativeControllerState()
+                    .action());
+        return projectorOr("native.ui.confirm_build", "确认建造");
+    }
+
     void drawFooter(int mx, int my) {
         ui.canvas.drawLocalPlanProgress(38, 260, 398, mx, my);
         int job = ui.session.state().data.getInteger("job");
@@ -415,10 +433,7 @@ final class HologramUiConfiguration {
                         : ui.session.state().data.getBoolean("virtual")
                             && !ui.session.state().data.getBoolean("virtualLocked")
                                 ? projectorOr("native.ui.right_click_in_the_world_to_position", "世界右键确定位置")
-                                : new String[] { projectorOr("native.ui.confirm_build", "确认构建"),
-                                    projectorOr("native.ui.confirm_replacement", "确认替换"),
-                                    projectorOr("native.ui.confirm_demolition", "确认拆除") }[Math
-                                        .floorMod(ui.session.state().data.getInteger("mode"), 3)],
+                                : nativeControllerConfirmationLabel(),
             ui.session.editable()
                 && (!ui.session.state().data.getBoolean("virtual")
                     || ui.session.state().data.getBoolean("virtualPlacement")
@@ -1471,6 +1486,7 @@ final class HologramUiConfiguration {
                     ui.session.state().data.getTag(key)
                         .copy());
         }
+        if (!ui.session.state().data.getBoolean("localStandardController")) n.setInteger("mode", 0);
         return n;
     }
 
@@ -1536,7 +1552,7 @@ final class HologramUiConfiguration {
     }
 
     boolean selectModeControl(int id) {
-        if (id >= 1720 && id <= 1723 && ui.session.state().data.getBoolean("localStandardController")) {
+        if (id >= 1720 && id <= 1722 && ui.session.state().data.getBoolean("localStandardController")) {
             HologramScreen root = ui.host == null ? null : ui.host.parent();
             if (root != null) root.selectNativeAction(id - 1720);
             return true;
@@ -1545,10 +1561,8 @@ final class HologramUiConfiguration {
             if (ui.session.state().data.getBoolean("localStandardController")) return true;
             if (!ui.session.configurationEditable()) return true;
             NBTTagCompound modeConfig = ui.config.configuration();
-            modeConfig.setInteger("mode", id - 70);
-            if (id == 72) {
-                modeConfig.setBoolean("keepController", true);
-            }
+            if (id != 70) return true;
+            modeConfig.setInteger("mode", 0);
             ui.session.send("configure", modeConfig, true);
             return true;
         }

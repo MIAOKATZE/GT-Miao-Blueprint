@@ -680,7 +680,7 @@ public final class HologramUiModuleRegression {
                 "an explicit complete target enables the material-review data path");
             for (var action : com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.values()) {
                 NBTTagCompound selected = new NBTTagCompound();
-                selected.setInteger("nativeAction", action.ordinal());
+                selected.setInteger("nativeAction", action.uiIndex());
                 selected.setInteger("mode", HologramNativeControllerState.legacyMode(action));
                 setUiField(ui.session, "state", published.withMetadata(selected));
                 var config = ui.config.configuration();

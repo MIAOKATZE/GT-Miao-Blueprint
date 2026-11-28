@@ -108,6 +108,7 @@ final class HologramProjectorSimulation implements AutoCloseable {
 
     void configure(NBTTagCompound settings) {
         config = (NBTTagCompound) settings.copy();
+        world.rangeOnly(option("rangeOnly"));
     }
 
     boolean option(String name) {
@@ -120,6 +121,7 @@ final class HologramProjectorSimulation implements AutoCloseable {
         constructable = nativeConstructable;
         baseWorld = tile.getWorldObj();
         world = HologramNativePreviewWorld.open(tile);
+        world.rangeOnly(option("rangeOnly"));
         items.bind(world);
         actor = null;
         environment = null;
@@ -162,7 +164,7 @@ final class HologramProjectorSimulation implements AutoCloseable {
             do {
                 switch (stage) {
                     case BUILD -> {
-                        if (buildRound()) stage = Stage.PROBE;
+                        if (buildRound()) stage = option("rangeOnly") ? Stage.COLLECT : Stage.PROBE;
                     }
                     case REQUIRED -> {
                         if (probe.fillRequiredSpots(deadline)) {
@@ -299,7 +301,7 @@ final class HologramProjectorSimulation implements AutoCloseable {
             IStructureDefinition<?> supplied = constructable.getStructureDefinition();
             if (supplied != null) definition = supplied;
         } catch (RuntimeException | LinkageError ignored) {}
-        try {
+        if (!option("rangeOnly")) try {
             String[] lines = constructable.getStructureDescription(trigger.copy());
             if (lines != null) for (int n = 0; n < Math.min(32, lines.length); n++) if (lines[n] != null)
                 description.appendTag(new NBTTagString(lines[n].substring(0, Math.min(512, lines[n].length()))));
@@ -362,7 +364,6 @@ final class HologramProjectorSimulation implements AutoCloseable {
     }
 
     static void visited(StructureElementVisitedEvent event) {
-        HologramNativeSitePlan.visited(event);
         HologramProjectorSimulation active = ACTIVE.get();
         if (active == null || active.world != event.getWorld()
             || active.owner != Thread.currentThread()
@@ -375,7 +376,7 @@ final class HologramProjectorSimulation implements AutoCloseable {
         IStructureElement<?> previousElement = active.elements.put(p, event.getElement());
         // Signals are owned immutable declarations; readers receive copies via signalAt. A large
         // repeated native walk must not allocate one compound/NBT tree per visit and round.
-        active.signals.put(p, active.piecePublishedSignal);
+        if (!active.option("rangeOnly")) active.signals.put(p, active.piecePublishedSignal);
         // Compare channel payloads once per native piece above, not once per coordinate and round.
         if (previousElement != event.getElement()) active.requiredCheckPending = true;
         active.items.position(

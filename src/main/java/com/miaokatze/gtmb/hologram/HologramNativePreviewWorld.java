@@ -40,6 +40,7 @@ final class HologramNativePreviewWorld extends HologramResourceWorld {
     private final int controllerMeta;
     private boolean recording = true;
     private boolean hintsOnly;
+    private boolean rangeOnly;
     // The browser counts creation of the detached controller as the first world write.
     private boolean changed = true;
 
@@ -103,12 +104,22 @@ final class HologramNativePreviewWorld extends HologramResourceWorld {
         } else {
             // StructureLib pays after placement. Bind only writes made during that exact selected item
             // operation, rather than the last visited element (custom constructors need no visits).
-            if (selected != null && ItemStack.areItemStacksEqual(selected, copy))
+            if (!rangeOnly && selected != null && ItemStack.areItemStacksEqual(selected, copy))
                 for (long position : selectedWrites) materials.put(position, copy.copy());
             selected = null;
             selectedWrites.clear();
             writeVersion++;
         }
+    }
+
+    void rangeOnly(boolean value) {
+        if (Thread.currentThread() != owner) throw new IllegalStateException("LOCAL_NATIVE_PREVIEW_SCOPE");
+        rangeOnly = value;
+        if (value) materials.clear();
+    }
+
+    int retainedMaterialCount() {
+        return materials.size();
     }
 
     java.util.Map<Integer, Integer> installedHatches() {

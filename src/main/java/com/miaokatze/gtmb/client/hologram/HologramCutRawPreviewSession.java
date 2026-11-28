@@ -198,15 +198,10 @@ final class HologramCutRawPreviewSession {
                     }
                     if (model == null) {
                         pending++;
-                        placeholder(cell, false);
                         continue;
                     }
                     if (model.draw != null) draw(model, cell);
                     renderTile(cell, partialTicks);
-                    if (cell.block == null || cell.staticFailed
-                        || cell.dynamicFailed
-                        || cell.attempted && cell.tile == null) placeholder(cell, true);
-                    else if (model.vertices == 0 && !model.hasTesr) placeholder(cell, false);
                 }
             }
             java.nio.IntBuffer viewport = BufferUtils.createIntBuffer(4);
@@ -235,7 +230,7 @@ final class HologramCutRawPreviewSession {
         }
     }
 
-    /** Cell edges remain independent of native mesh colors, opacity, alpha tests and TESR state changes. */
+    /** Only established per-cell failures survive normal rendering, FBO unavailability and recovery alike. */
     private void outlines(List<Region> visible, MiaoVisonLiteRenderScope scope) {
         scope.useProgram(0);
         scope.cleanTextureUnits();
@@ -251,25 +246,11 @@ final class HologramCutRawPreviewSession {
         GL11.glEnable(GL11.GL_BLEND);
         GL14.glBlendEquation(GL14.GL_FUNC_ADD);
         GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
-        GL11.glLineWidth(1);
-        GL11.glColor4f(.30f, .65f, .72f, .38f);
+        GL11.glLineWidth(2);
+        GL11.glColor4f(1, .1f, 1, .8f);
         GL11.glBegin(GL11.GL_LINES);
         for (Region region : visible) for (HologramCutRawPreviewWorld.Cell cell : region.cells) {
-            if (cell.block == Blocks.air) continue;
-            outlineCells++;
-            double x = cell.x - .003, y = cell.y - .003, z = cell.z - .003, d = 1.006;
-            for (int axis = 0; axis < 3; axis++) for (int a = 0; a < 2; a++) for (int b = 0; b < 2; b++) {
-                if (axis == 0) {
-                    GL11.glVertex3d(x, y + a * d, z + b * d);
-                    GL11.glVertex3d(x + d, y + a * d, z + b * d);
-                } else if (axis == 1) {
-                    GL11.glVertex3d(x + a * d, y, z + b * d);
-                    GL11.glVertex3d(x + a * d, y + d, z + b * d);
-                } else {
-                    GL11.glVertex3d(x + a * d, y + b * d, z);
-                    GL11.glVertex3d(x + a * d, y + b * d, z + d);
-                }
-            }
+            if (emitProblemOutline(cell, GL11::glVertex3d) != 0) outlineCells++;
         }
         GL11.glEnd();
     }
@@ -290,7 +271,7 @@ final class HologramCutRawPreviewSession {
     }
 
     private Model compile(HologramCutRawPreviewWorld.Cell cell) {
-        if (cell.block == null) return new Model(null, 0, false);
+        if (cell.block == null) return new Model(null);
         TileEntitySpecialRenderer tesr = null;
         MiaoVisonLiteDisplayList list = null;
         int vertices = 0;
@@ -335,10 +316,12 @@ final class HologramCutRawPreviewSession {
             list.finish();
             opened = false;
             if (vertices != 0) staticRendered++;
-            if (vertices == 0 && tesr == null && block.getRenderType() < 0)
+            if (vertices == 0 && tesr == null && block.getRenderType() < 0) {
+                cell.staticFailed = true;
                 fail(cell, "static", new IllegalStateException("No native block geometry or TESR"));
+            }
             retained = vertices != 0;
-            return new Model(retained ? list : null, vertices, tesr != null);
+            return new Model(retained ? list : null);
         } catch (Throwable failure) {
             requireRecoverable(failure);
             cell.staticFailed = true;
@@ -350,7 +333,7 @@ final class HologramCutRawPreviewSession {
                     requireRecoverable(cleanupFailure);
                 }
             }
-            return new Model(null, 0, tesr != null);
+            return new Model(null);
         } finally {
             if (!retained && list != null) list.close();
             try {
@@ -465,29 +448,33 @@ final class HologramCutRawPreviewSession {
         }
     }
 
-    private void placeholder(HologramCutRawPreviewWorld.Cell cell, boolean failed) {
-        GL11.glDisable(GL11.GL_TEXTURE_2D);
-        GL11.glDisable(GL11.GL_LIGHTING);
-        GL11.glLineWidth(failed ? 2 : 1);
-        GL11.glColor4f(failed ? 1 : .25f, failed ? .1f : .8f, 1, 1);
-        double x = cell.x + .04, y = cell.y + .04, z = cell.z + .04, d = .92;
-        GL11.glBegin(GL11.GL_LINES);
+    @FunctionalInterface
+    interface OutlineVertices {
+
+        void vertex(double x, double y, double z);
+    }
+
+    /** The same submission boundary is used for GUI/world previews and every FBO outcome. */
+    static int emitProblemOutline(HologramCutRawPreviewWorld.Cell cell, OutlineVertices vertices) {
+        if (cell.block == Blocks.air || cell.block != null && !cell.staticFailed
+            && !cell.dynamicFailed
+            && !(cell.attempted && !cell.loading && cell.tile == null)) return 0;
+        double x = cell.x - .003, y = cell.y - .003, z = cell.z - .003, d = 1.006;
         for (int axis = 0; axis < 3; axis++) for (int a = 0; a < 2; a++) for (int b = 0; b < 2; b++) {
             if (axis == 0) {
-                GL11.glVertex3d(x, y + a * d, z + b * d);
-                GL11.glVertex3d(x + d, y + a * d, z + b * d);
+                vertices.vertex(x, y + a * d, z + b * d);
+                vertices.vertex(x + d, y + a * d, z + b * d);
             }
             if (axis == 1) {
-                GL11.glVertex3d(x + a * d, y, z + b * d);
-                GL11.glVertex3d(x + a * d, y + d, z + b * d);
+                vertices.vertex(x + a * d, y, z + b * d);
+                vertices.vertex(x + a * d, y + d, z + b * d);
             }
             if (axis == 2) {
-                GL11.glVertex3d(x + a * d, y + b * d, z);
-                GL11.glVertex3d(x + a * d, y + b * d, z + d);
+                vertices.vertex(x + a * d, y + b * d, z);
+                vertices.vertex(x + a * d, y + b * d, z + d);
             }
         }
-        GL11.glEnd();
-        GL11.glEnable(GL11.GL_TEXTURE_2D);
+        return 24;
     }
 
     private void fail(HologramCutRawPreviewWorld.Cell cell, String stage, Throwable failure) {
@@ -718,13 +705,9 @@ final class HologramCutRawPreviewSession {
     private static final class Model {
 
         final MiaoVisonLiteDisplayList draw;
-        final int vertices;
-        final boolean hasTesr;
 
-        Model(MiaoVisonLiteDisplayList draw, int vertices, boolean hasTesr) {
+        Model(MiaoVisonLiteDisplayList draw) {
             this.draw = draw;
-            this.vertices = vertices;
-            this.hasTesr = hasTesr;
         }
     }
 }

@@ -13,6 +13,11 @@ import cpw.mods.fml.common.gameevent.TickEvent;
 /** Drives construction exclusively on the server thread. */
 public final class HologramLifecycle {
 
+    @SubscribeEvent
+    public void worldUnloaded(net.minecraftforge.event.world.WorldEvent.Unload event) {
+        if (!event.world.isRemote) HologramNativeProjectionJob.worldUnloaded(event.world);
+    }
+
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public void onServerTickStart(TickEvent.ServerTickEvent event) {
         if (event.phase == TickEvent.Phase.START) HologramWorkBudget.startServerTick();

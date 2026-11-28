@@ -50,7 +50,7 @@ public final class HologramCompactNativeRequest {
         return Collections.unmodifiableSet(fields);
     }
 
-    static final String HATCH_PRESET_REVIEW_REQUIRED = "当前投影仪有仓室等级信道。请先在仓室预设明确应用目标等级，再核对施工；普通补建不会猜测等级。";
+    static final String HATCH_PRESET_REVIEW_REQUIRED = "当前投影仪有仓室等级信道。请先在仓室预设明确应用目标等级，再核对施工；建造不会猜测等级。";
 
     private HologramCompactNativeRequest() {}
 

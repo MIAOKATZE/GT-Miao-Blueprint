@@ -17,7 +17,7 @@ import com.github.bsideup.jabel.Desugar;
 /** Authenticated native-projector intent only. The server rebuilds the complete target independently. */
 public final class HologramStockNativeWire {
 
-    public static final int VERSION = 7;
+    public static final int VERSION = 9;
     private static final String VERSION_KEY = "nativeStockVersion", REQUEST = "nativeStockRequest",
         INTENT = "nativeStockIntent", COMMAND = "nativeStockCommand";
 
@@ -35,10 +35,45 @@ public final class HologramStockNativeWire {
 
     /** Native structure actions are independent from the blueprint editor's legacy mode. */
     public enum Operation {
-        BUILD,
-        REPAIR,
-        REPLACE,
-        DEMOLISH
+
+        BUILD(0, 0),
+        REPLACE(2, 1),
+        DEMOLISH(3, 2);
+
+        private final int wireId;
+        private final int uiIndex;
+
+        Operation(int wireId, int uiIndex) {
+            this.wireId = wireId;
+            this.uiIndex = uiIndex;
+        }
+
+        public int wireId() {
+            return wireId;
+        }
+
+        public int uiIndex() {
+            return uiIndex;
+        }
+
+        public static Operation fromUiIndex(int index) {
+            return switch (index) {
+                case 0 -> BUILD;
+                case 1 -> REPLACE;
+                case 2 -> DEMOLISH;
+                default -> null;
+            };
+        }
+
+        static Operation fromWireId(int id) {
+            // Retired REPAIR id 1 must never acquire replacement authority.
+            return switch (id) {
+                case 0 -> BUILD;
+                case 2 -> REPLACE;
+                case 3 -> DEMOLISH;
+                default -> null;
+            };
+        }
     }
 
     public enum Stage {
@@ -256,7 +291,12 @@ public final class HologramStockNativeWire {
     record Request(Command command, Key key, Confirmation confirmation) {}
 
     @Desugar
-    public record Reply(Key key, Phase phase, int placed, String reason, ServerObservation observation) {
+    public record Reply(Key key, Phase phase, int placed, String reason, ServerObservation observation,
+        NBTTagCompound siteSnapshot) {
+
+        public Reply(Key key, Phase phase, int placed, String reason, ServerObservation observation) {
+            this(key, phase, placed, reason, observation, null);
+        }
 
         public Reply(Key key, Phase phase, int placed, String reason) {
             this(key, phase, placed, reason, null);
@@ -312,7 +352,7 @@ public final class HologramStockNativeWire {
         tag.setInteger(
             "projectionOperation",
             target.operation()
-                .ordinal());
+                .wireId());
         tag.setLong("targetRevision", target.targetRevision());
         tag.setInteger("destination", target.destination());
         var channels = new NBTTagCompound();
@@ -372,8 +412,8 @@ public final class HologramStockNativeWire {
             if (!tag.hasKey(field, 3)) return null;
         if (!tag.hasKey("targetRevision", 4) || !tag.hasKey("projectionChannels", 10)
             || !tag.hasKey("projectionHatches", 11)) return null;
-        int operation = tag.getInteger("projectionOperation");
-        if (operation < 0 || operation >= Operation.values().length) return null;
+        Operation operation = Operation.fromWireId(tag.getInteger("projectionOperation"));
+        if (operation == null) return null;
         var channels = tag.getCompoundTag("projectionChannels");
         if (!HologramSessionPolicy.validChannels(channels)) return null;
         var named = new LinkedHashMap<String, Integer>();
@@ -385,7 +425,7 @@ public final class HologramStockNativeWire {
             choices.add(new HatchChoice(edits[i], edits[i + 1], edits[i + 2], edits[i + 3], edits[i + 4]));
         var target = new Projection(
             tag.getInteger("projectionController"),
-            Operation.values()[operation],
+            operation,
             named,
             choices,
             tag.getInteger("destination"),

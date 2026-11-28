@@ -65,6 +65,155 @@ final class HologramNativeTargetPlanRegression {
             : HologramNativeTargetPlan.compile(ID, ExtendedFacing.DEFAULT, trigger, new NBTTagCompound());
     }
 
+    static void verifyAdoptedSiteMaterial() throws IOException {
+        Block previousBlock = GregTechAPI.sBlockMachines;
+        IMetaTileEntity previous = GregTechAPI.METATILEENTITIES[ID];
+        try {
+            GregTechAPI.sBlockMachines = Blocks.iron_block;
+            prototype(ID, new Controller(13));
+            var shellChannel = new NBTTagCompound();
+            shellChannel.setInteger("shell", 1);
+            var signal = HologramNativeTargetPlan.canonicalTrigger(1, shellChannel);
+            var initial = HologramNativeTargetPlan.compile(ID, ExtendedFacing.DEFAULT, signal, new NBTTagCompound());
+            var original = initial.cells()
+                .stream()
+                .filter(cell -> cell.block() == Blocks.wool)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("native wool declaration missing from target"));
+            SimpleAssert.that(original.element() != null, "adopted material fixture recorded a real native element");
+            SimpleAssert.eq(Blocks.wool, Block.getBlockFromName("minecraft:wool"), "native wool registry identity");
+            var adopted = new NBTTagCompound();
+            var choices = new net.minecraft.nbt.NBTTagList();
+            var row = new NBTTagCompound();
+            row.setInteger("x", original.dx());
+            row.setInteger("y", original.dy());
+            row.setInteger("z", original.dz());
+            row.setString("block", "minecraft:wool");
+            row.setInteger("meta", 7);
+            choices.appendTag(row);
+            adopted.setTag("siteActualBlocks", choices);
+            var target = HologramNativeTargetPlan.compile(ID, ExtendedFacing.DEFAULT, signal, adopted);
+            var material = target.cells()
+                .stream()
+                .filter(cell -> cell.block() == Blocks.wool)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("adopted wool missing from target"));
+            SimpleAssert.eq(7, material.metadata(), "native any-meta cell adopts the installed material");
+            SimpleAssert.eq(
+                7,
+                material.material()
+                    .getItemDamage(),
+                "actual material reaches payment identity");
+            SimpleAssert.that(
+                !initial.targetDigest()
+                    .equals(target.targetDigest()),
+                "adopted material changes execution digest");
+            verifyTypedSiteMaterial(original, signal);
+            row.setString("block", "minecraft:stone");
+            try {
+                HologramNativeTargetPlan.compile(ID, ExtendedFacing.DEFAULT, signal, adopted);
+                throw new AssertionError("native wool declaration must reject unrelated site block");
+            } catch (IOException expected) {
+                SimpleAssert.that(expected.getMessage() != null, "invalid site material fails explicitly");
+            }
+        } finally {
+            GregTechAPI.METATILEENTITIES[ID] = previous;
+            GregTechAPI.sBlockMachines = previousBlock;
+        }
+    }
+
+    private static void verifyTypedSiteMaterial(HologramNativeTargetPlan.Cell original, ItemStack signal)
+        throws IOException {
+        var actual = new HologramNativeTargetPlan.Cell(
+            original.dx(),
+            original.dy(),
+            original.dz(),
+            Blocks.wool,
+            7,
+            new ItemStack(Blocks.wool, 1, 7),
+            -1,
+            null,
+            null,
+            original.element(),
+            signal,
+            false);
+        var site = new NBTTagCompound();
+        site.setBoolean("siteKnown", true);
+        site.setBoolean("siteMainRecovered", true);
+        site.setInteger("main", 1);
+        var originalChannels = new NBTTagCompound();
+        originalChannels.setInteger("shell", 1);
+        site.setTag("channels", originalChannels);
+        site.setBoolean("mainExplicit", true); // An old preference is not a new size edit.
+        for (boolean recovered : new boolean[] { true, false }) {
+            site.setBoolean("siteMainRecovered", recovered);
+            for (String channel : new String[] { "", "unrelated", "shell" }) {
+                var requested = (NBTTagCompound) site.copy();
+                var channels = (NBTTagCompound) originalChannels.copy();
+                if (!channel.isEmpty()) channels.setInteger(channel, 2);
+                requested.setTag("channels", channels);
+                try (var retained = HologramNativeTargetPlan.begin(
+                    ID,
+                    ExtendedFacing.DEFAULT,
+                    HologramNativeTargetPlan.canonicalTrigger(1, channels),
+                    requested,
+                    java.util.Collections.singletonList(actual),
+                    site)) {
+                    SimpleAssert.that(retained.advance(Long.MAX_VALUE), "typed actual material edit completes");
+                    SimpleAssert.eq(
+                        1,
+                        retained.cells()
+                            .size(),
+                        "typed baseline keeps exact footprint");
+                    var material = retained.cells()
+                        .get(0);
+                    int expected = channel.equals("shell") ? 0 : 7;
+                    SimpleAssert
+                        .eq(expected, material.metadata(), "only the explicitly edited native material domain changes");
+                    SimpleAssert.eq(
+                        expected,
+                        material.material()
+                            .getItemDamage(),
+                        "retained material reaches exact payment identity");
+                }
+            }
+        }
+        var outsideDefaultShape = new HologramNativeTargetPlan.Cell(
+            actual.dx() + 1,
+            actual.dy(),
+            actual.dz(),
+            Blocks.wool,
+            7,
+            actual.material(),
+            -1,
+            null,
+            null,
+            actual.element(),
+            signal,
+            false);
+        var requested = (NBTTagCompound) site.copy();
+        var channels = (NBTTagCompound) originalChannels.copy();
+        channels.setInteger("unrelated", 2);
+        requested.setTag("channels", channels);
+        try (var guarded = HologramNativeTargetPlan.begin(
+            ID,
+            ExtendedFacing.DEFAULT,
+            HologramNativeTargetPlan.canonicalTrigger(1, channels),
+            requested,
+            java.util.Arrays.asList(actual, outsideDefaultShape),
+            site)) {
+            try {
+                guarded.advance(Long.MAX_VALUE);
+                throw new AssertionError("unknown main must not silently shrink an actual larger shape");
+            } catch (IOException expected) {
+                SimpleAssert.that(
+                    expected.getMessage()
+                        .contains("主尺寸"),
+                    "shape guard reports the missing main evidence");
+            }
+        }
+    }
+
     private static void verify() throws IOException {
         Block previousBlock = GregTechAPI.sBlockMachines;
         IMetaTileEntity previous = GregTechAPI.METATILEENTITIES[ID];
@@ -472,6 +621,7 @@ final class HologramNativeTargetPlanRegression {
                 !unformed.nativeFormed() && !unformed.cells()
                     .isEmpty(),
                 "unformed diagnostics do not erase valid target geometry");
+            verifyFrozenCasingChoices(block);
         } finally {
             GregTechAPI.sBlockMachines = oldBlock;
             GregTechAPI.METATILEENTITIES[ID] = oldId;
@@ -483,6 +633,189 @@ final class HologramNativeTargetPlanRegression {
                 nativeNames.remove(BaseMetaTileEntity.class);
                 nativeClasses.remove(fixtureName);
             }
+        }
+    }
+
+    private static void verifyFrozenCasingChoices(Block machines) throws IOException {
+        prototype(RAW_ID, new Controller(14));
+        prototype(
+            REJECT_ID,
+            new gregtech.api.metatileentity.implementations.MTEHatchOutput(
+                "frozen_upgraded_output",
+                2,
+                new String[0],
+                new ITexture[0][][]));
+        ItemStack signal = HologramNativeTargetPlan.canonicalTrigger(1, new NBTTagCompound());
+        java.util.List<HologramNativeTargetPlan.Cell> actual = new java.util.ArrayList<>();
+        try (var generated = HologramNativeTargetPlan
+            .compile(RAW_ID, ExtendedFacing.DEFAULT, signal, new NBTTagCompound())) {
+            SimpleAssert.eq(
+                2,
+                generated.cells()
+                    .size(),
+                "native optional-hatch fixture has two casing positions");
+            for (var cell : generated.cells()) {
+                int meta = actual.isEmpty() ? 7 : 11;
+                SimpleAssert.eq(Blocks.wool, cell.block(), "native default optional position is a casing");
+                actual.add(
+                    new HologramNativeTargetPlan.Cell(
+                        cell.dx(),
+                        cell.dy(),
+                        cell.dz(),
+                        Blocks.wool,
+                        meta,
+                        new ItemStack(Blocks.wool, 1, meta),
+                        -1,
+                        null,
+                        null,
+                        cell.element(),
+                        signal,
+                        false));
+            }
+        }
+        var site = new NBTTagCompound();
+        site.setBoolean("siteKnown", true);
+        site.setInteger("main", 1);
+        var at = actual.get(0);
+        try (var target = frozenTarget(actual, site, new net.minecraft.nbt.NBTTagList())) {
+            var offers = target.offers(
+                target.cells()
+                    .get(0));
+            SimpleAssert.that(
+                offers.stream()
+                    .anyMatch(stack -> stack.getItemDamage() == PORT_ID),
+                "ordinary frozen casing exposes its native hatch offers");
+            var world = (HologramNativePreviewWorld) target.controller()
+                .getWorldObj();
+            int x = target.controller().xCoord + at.dx(), y = target.controller().yCoord + at.dy(),
+                z = target.controller().zCoord + at.dz();
+            ItemStack material = world.materialAt(x, y, z)
+                .copy();
+            SimpleAssert.that(
+                target.facingMask(at.dx(), at.dy(), at.dz(), new ItemStack(machines, 1, PORT_ID)) != 0,
+                "ordinary frozen casing proves candidate hatch directions before selection");
+            SimpleAssert.eq(Blocks.wool, world.getBlock(x, y, z), "candidate proof restores casing block");
+            SimpleAssert.eq(7, world.getBlockMetadata(x, y, z), "candidate proof restores casing metadata");
+            SimpleAssert.eq(null, world.getTileEntity(x, y, z), "candidate proof removes its temporary hatch");
+            SimpleAssert.that(
+                ItemStack.areItemStacksEqual(material, world.materialAt(x, y, z)),
+                "candidate proof restores exact paid material");
+        }
+        var choice = new NBTTagCompound();
+        choice.setInteger("x", at.dx());
+        choice.setInteger("y", at.dy());
+        choice.setInteger("z", at.dz());
+        choice.setInteger("id", PORT_ID);
+        choice.setInteger("facing", -1);
+        var choices = new net.minecraft.nbt.NBTTagList();
+        choices.appendTag(choice);
+        java.util.List<HologramNativeTargetPlan.Cell> installed;
+        int originalFacing;
+        try (var added = frozenTarget(actual, site, choices)) {
+            var hatch = added.cells()
+                .get(0);
+            SimpleAssert.eq(
+                PORT_ID,
+                hatch.material()
+                    .getItemDamage(),
+                "frozen casing accepts a native placed hatch");
+            SimpleAssert.that(
+                hatch.facing() >= 0 && hatch.facing() < 6,
+                "automatic casing-to-hatch uses the native placed facing");
+            SimpleAssert.eq(
+                11,
+                added.cells()
+                    .get(1)
+                    .metadata(),
+                "adding a hatch preserves the other mixed casing");
+            installed = new java.util.ArrayList<>(added.cells());
+            originalFacing = hatch.facing();
+        }
+        var installedSite = (NBTTagCompound) site.copy();
+        installedSite.setTag("nativeHatchChoices", choices.copy());
+        choice.setInteger("id", REJECT_ID);
+        try (var upgraded = frozenTarget(installed, installedSite, choices)) {
+            SimpleAssert.eq(
+                REJECT_ID,
+                upgraded.cells()
+                    .get(0)
+                    .material()
+                    .getItemDamage(),
+                "frozen installed hatch accepts a native new model");
+            SimpleAssert.eq(
+                11,
+                upgraded.cells()
+                    .get(1)
+                    .metadata(),
+                "model replacement preserves unrelated casing");
+        }
+        choice.setInteger("id", PORT_ID);
+        choice.setInteger("facing", (originalFacing + 1) % 6);
+        try (var rotated = frozenTarget(installed, installedSite, choices)) {
+            SimpleAssert.eq(
+                (originalFacing + 1) % 6,
+                rotated.cells()
+                    .get(0)
+                    .facing(),
+                "frozen native hatch rotates without changing its model");
+            SimpleAssert.eq(
+                PORT_ID,
+                rotated.cells()
+                    .get(0)
+                    .material()
+                    .getItemDamage(),
+                "rotation keeps exact native model");
+            SimpleAssert.eq(
+                11,
+                rotated.cells()
+                    .get(1)
+                    .metadata(),
+                "rotation preserves unrelated casing");
+        }
+        try (var returned = frozenTarget(actual, site, new net.minecraft.nbt.NBTTagList())) {
+            SimpleAssert.eq(
+                Blocks.wool,
+                returned.cells()
+                    .get(0)
+                    .block(),
+                "removing an added choice returns the original casing");
+            SimpleAssert.eq(
+                7,
+                returned.cells()
+                    .get(0)
+                    .metadata(),
+                "return retains the actual mixed casing material");
+            SimpleAssert.eq(
+                11,
+                returned.cells()
+                    .get(1)
+                    .metadata(),
+                "return preserves the other actual casing");
+        }
+        SimpleAssert.eq(
+            Blocks.wool,
+            actual.get(0)
+                .block(),
+            "native edits never mutate the adopted source cells");
+    }
+
+    private static HologramNativeTargetPlan frozenTarget(java.util.List<HologramNativeTargetPlan.Cell> cells,
+        NBTTagCompound site, net.minecraft.nbt.NBTTagList choices) throws IOException {
+        var config = (NBTTagCompound) site.copy();
+        config.setTag("nativeHatchChoices", choices.copy());
+        HologramNativeTargetPlan target = HologramNativeTargetPlan.begin(
+            RAW_ID,
+            ExtendedFacing.DEFAULT,
+            HologramNativeTargetPlan.canonicalTrigger(1, config.getCompoundTag("channels")),
+            config,
+            cells,
+            site);
+        try {
+            target.advance(Long.MAX_VALUE);
+            return target;
+        } catch (IOException | RuntimeException | LinkageError failure) {
+            target.close();
+            throw failure;
         }
     }
 
@@ -501,11 +834,17 @@ final class HologramNativeTargetPlanRegression {
 
         @Override
         public IStructureDefinition<Controller> getStructureDefinition() {
-            if (mode != 8) return null;
+            if (mode != 8 && mode != 13) return null;
             if (mufflerDefinition == null)
                 mufflerDefinition = com.gtnewhorizon.structurelib.structure.StructureDefinition.<Controller>builder()
                     .addShape("required_muffler", new String[][] { { "m" } })
-                    .addElement('m', gregtech.api.enums.HatchElement.Muffler.<Controller>newAny(11, 2))
+                    .addElement(
+                        'm',
+                        mode == 13
+                            ? com.gtnewhorizon.structurelib.structure.StructureUtility.withChannel(
+                                "shell",
+                                com.gtnewhorizon.structurelib.structure.StructureUtility.ofBlockAnyMeta(Blocks.wool))
+                            : gregtech.api.enums.HatchElement.Muffler.<Controller>newAny(11, 2))
                     .build();
             return mufflerDefinition;
         }
@@ -516,7 +855,17 @@ final class HologramNativeTargetPlanRegression {
             nativeCalls++;
             if (started > 0) return 0;
             World world = getBaseMetaTileEntity().getWorld();
-            if (mode == 8) {
+            if (mode == 14) {
+                var element = com.gtnewhorizon.structurelib.structure.StructureUtility.ofChain(
+                    gregtech.api.enums.HatchElement.OutputHatch.<Controller>newAny(11, 2),
+                    com.gtnewhorizon.structurelib.structure.StructureUtility.<Controller>ofBlockAnyMeta(Blocks.wool));
+                for (int x : new int[] { 1, 2 }) {
+                    if (world.isAirBlock(x, 128, 0)) world.setBlock(x, 128, 0, Blocks.wool, 0, 2);
+                    visited(world, x, element);
+                }
+                return -1;
+            }
+            if (mode == 8 || mode == 13) {
                 // Use StructureLib's actual V2 walker: it owns definition/piece/offset/facing in the element env.
                 return getStructureDefinition().survivalBuild(
                     this,
@@ -633,7 +982,7 @@ final class HologramNativeTargetPlanRegression {
                 if (world.getTileEntity(1, 128, 0) == null) world.setBlock(1, 128, 0, Blocks.stone, 0, 2);
                 return;
             }
-            if (mode == 6 || mode == 7 || mode == 8 || mode == 9) return;
+            if (mode == 6 || mode == 7 || mode == 8 || mode == 9 || mode == 13 || mode == 14) return;
             getBaseMetaTileEntity().getWorld()
                 .setBlock(hints ? 7 : 3, 128, 0, hints ? Blocks.glass : Blocks.gold_block, 0, 3);
         }

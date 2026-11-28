@@ -78,7 +78,7 @@ final class HologramNativeControllerState {
     }
 
     String blocker(Operation next) {
-        if (!targetReady && next != Operation.DEMOLISH)
+        if (!targetReady)
             return targetReason.isEmpty() ? projectorOr("native.ui.updating_the_complete_target", "正在更新当前完整目标。")
                 : HologramNativeUiText.reason(targetReason);
         if (!observed || stage == Stage.UNKNOWN) return reason.isEmpty()
@@ -90,7 +90,7 @@ final class HologramNativeControllerState {
             case CONTROLLER_ONLY -> projectorOr(
                 "native.ui.only_the_controller_is_present_build_the",
                 "当前只有控制器，请先建造结构。");
-            case UNFORMED -> projectorOr("native.ui.the_structure_is_incomplete_use_repair", "结构尚未成型，请使用补建。");
+            case UNFORMED -> projectorOr("native.ui.the_structure_is_incomplete_use_build", "结构尚未成型，请使用建造。");
             case FORMED -> projectorOr("native.ui.the_structure_is_formed_use_replace", "结构已成型，请使用替换。");
             default -> projectorOr("native.ui.server_structure_state_has_not_been_received", "尚未取得服务器结构状态。");
         };
@@ -98,21 +98,19 @@ final class HologramNativeControllerState {
 
     static boolean allowed(Stage stage, Operation action) {
         return switch (stage) {
-            case CONTROLLER_ONLY -> action == Operation.BUILD;
-            case UNFORMED -> action == Operation.REPAIR || action == Operation.DEMOLISH;
+            case CONTROLLER_ONLY, UNFORMED -> action == Operation.BUILD;
             case FORMED -> action == Operation.REPLACE || action == Operation.DEMOLISH;
             default -> false;
         };
     }
 
     private static Operation defaultAction(Stage stage) {
-        return stage == Stage.FORMED ? Operation.REPLACE : stage == Stage.UNFORMED ? Operation.REPAIR : Operation.BUILD;
+        return stage == Stage.FORMED ? Operation.REPLACE : Operation.BUILD;
     }
 
     static String label(Operation action) {
         return switch (action) {
             case BUILD -> projectorOr("native.ui.build", "建造");
-            case REPAIR -> projectorOr("native.ui.repair", "补建");
             case REPLACE -> projectorOr("native.ui.replace", "替换");
             case DEMOLISH -> projectorOr("native.ui.demolish", "拆除");
         };
@@ -146,7 +144,7 @@ final class HologramNativeControllerState {
 
     NBTTagCompound metadata() {
         NBTTagCompound result = new NBTTagCompound();
-        result.setInteger("nativeAction", action.ordinal());
+        result.setInteger("nativeAction", action.uiIndex());
         result.setInteger("mode", legacyMode(action));
         result.setString("nativeStage", stage.name());
         result.setLong("nativeTargetRevision", targetRevision);

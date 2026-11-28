@@ -28,6 +28,8 @@ public final class HologramLiveControllerSiteRegression {
         int rc = 0;
         try {
             if (!MinecraftTestBootstrap.enter(HologramLiveControllerSiteRegression.class, args)) return;
+            net.minecraft.launchwrapper.Launch.classLoader
+                .registerTransformer(HologramNativeSiteEventFixtureTransformer.class.getName());
             verify();
             System.out.println(
                 "LiveControllerSite PASS: actual client-world capture; installed/empty/partial/unknown, channel evidence and preview default");
@@ -157,6 +159,16 @@ public final class HologramLiveControllerSiteRegression {
                 tool,
                 settings,
                 "")) {
+                var declared = HologramLocalControllerCapture.class.getDeclaredField("declared");
+                declared.setAccessible(true);
+                var nativeTarget = HologramLocalControllerCapture.class.getDeclaredField("nativeTarget");
+                nativeTarget.setAccessible(true);
+                SimpleAssert.that(
+                    declared.get(capture) == null && nativeTarget.get(capture) == null,
+                    "opening a capture for a frozen UI does not prepare declaration geometry");
+                SimpleAssert.that(
+                    capture.selectedOffersByOffset(1, 0, 0) == null,
+                    "an unprepared option query stays lazy until explicit stepTarget");
                 HologramControllerTarget.Projection target = null;
                 for (int i = 0; i < 100 && target == null; i++) target = capture.stepTarget(128, 1000000000L);
                 SimpleAssert.that(target != null, "formal target phase publishes");
@@ -166,7 +178,7 @@ public final class HologramLiveControllerSiteRegression {
                 SimpleAssert.eq(populated ? 1 : 0, metadata.getInteger("siteDifferent"), "wrong installed metadata");
                 SimpleAssert.eq(populated ? 1 : 3, metadata.getInteger("siteMissing"), "loaded empty sites");
                 SimpleAssert.eq(1, metadata.getInteger("siteUnknown"), "unloaded site, never marked empty");
-                SimpleAssert.eq(populated ? 1 : 0, view(metadata, false), "first view of right-clicked site");
+                SimpleAssert.eq(0, view(metadata, false), "unloaded/unknown site keeps the complete planning view");
                 SimpleAssert.eq(2, view(metadata, true), "never clobber an already selected difference view");
                 SimpleAssert.that(
                     metadata.getBoolean("projectionDataComplete") && !metadata.getBoolean("capturePending"),
@@ -178,8 +190,29 @@ public final class HologramLiveControllerSiteRegression {
                             .anchor() ? 1 : 0)
                         != null,
                     "selected cell can lazily browse its declaration");
+                var selected = target.cells()
+                    .stream()
+                    .filter(cell -> !cell.anchor())
+                    .findFirst()
+                    .get();
+                var before = capture.selectedOffersByOffset(selected.dx(), selected.dy(), selected.dz());
+                SimpleAssert.that(before != null, "selected frozen coordinates resolve their declaration");
+                var targetRows = HologramLocalControllerCapture.class.getDeclaredField("targetCells");
+                targetRows.setAccessible(true);
+                var reordered = new java.util.ArrayList<>(target.cells());
+                java.util.Collections.reverse(reordered);
+                targetRows.set(capture, reordered);
+                var after = capture.selectedOffersByOffset(selected.dx(), selected.dy(), selected.dz());
+                SimpleAssert
+                    .eq(before.role(), after.role(), "anchor/row order does not change selected declaration role");
+                SimpleAssert
+                    .eq(before.chosen(), after.chosen(), "anchor/row order does not change selected native offer");
+                SimpleAssert.that(
+                    capture.selectedOffersByOffset(999, 0, 0) == null,
+                    "unrelated coordinates never inherit another row's offers");
             }
         }
+        verifyFrozenHatchProfile();
         verifyCandidateRowIsolation();
         verifyLarge();
         verifyInstalledVariant();
@@ -303,6 +336,70 @@ public final class HologramLiveControllerSiteRegression {
                 observed.getCompoundTag("siteChannels")
                     .getInteger("sample_channel"),
                 "real StructureLib channel tier; inconsistent physical observations never report a value");
+        }
+    }
+
+    private static void verifyFrozenHatchProfile() throws Exception {
+        int id = 32573;
+        var previous = gregtech.api.GregTechAPI.METATILEENTITIES[id];
+        String key = "gtmb:frozen_profile_machines";
+        var machines = (gregtech.common.blocks.ItemMachines) net.minecraft.item.Item.itemRegistry.getObject(key);
+        if (machines == null) {
+            int slot = 3897;
+            while (slot > 3800
+                && (Block.blockRegistry.containsId(slot) || net.minecraft.item.Item.itemRegistry.containsId(slot)))
+                slot--;
+            if (slot <= 3800) throw new AssertionError("No isolated native profile fixture registry slot");
+            Block block = new Block(net.minecraft.block.material.Material.iron) {};
+            machines = new gregtech.common.blocks.ItemMachines(block);
+            Block.blockRegistry.addObject(slot, key, block);
+            net.minecraft.item.Item.itemRegistry.addObject(slot, key, machines);
+        }
+        try {
+            gregtech.api.GregTechAPI.METATILEENTITIES[id] = new gregtech.api.metatileentity.implementations.MTEHatchOutput(
+                "frozen_profile_output",
+                2,
+                new String[0],
+                new gregtech.api.interfaces.ITexture[0][][]);
+            ItemStack actual = new ItemStack(machines, 7, id);
+            NBTTagCompound tag = new NBTTagCompound();
+            tag.setString("callerOwnedState", "unchanged");
+            actual.setTagCompound(tag);
+            ItemStack original = actual.copy();
+            NBTTagCompound options = new NBTTagCompound();
+            options.setInteger("hatchTier", 2);
+            options.setBoolean("hatchDowngrade", true);
+            var profile = HologramLocalControllerCapture.captureNativeHatchProfile(
+                Arrays.asList(actual, null, new ItemStack(Blocks.stone), actual.copy()),
+                options);
+            var entries = profile.getTagList("entries", 10);
+            SimpleAssert.eq(1, entries.tagCount(), "native hatch profile groups only existing hatch items");
+            SimpleAssert.eq(
+                id,
+                entries.getCompoundTagAt(0)
+                    .getInteger("damage"),
+                "profile retains the native hatch identity");
+            SimpleAssert.eq(
+                2,
+                entries.getCompoundTagAt(0)
+                    .getInteger("count"),
+                "frozen profile counts occupied cells, not borrowed stack sizes");
+            SimpleAssert.eq(2, profile.getInteger("tier"), "frozen profile keeps tier option");
+            SimpleAssert.that(profile.getBoolean("downgrade"), "frozen profile keeps allowed downgrade option");
+            SimpleAssert.that(
+                ItemStack.areItemStacksEqual(original, actual),
+                "profile construction never mutates actual item state");
+            entries.getCompoundTagAt(0)
+                .setInteger("count", 99);
+            SimpleAssert.eq(
+                2,
+                HologramLocalControllerCapture.captureNativeHatchProfile(Arrays.asList(actual, actual.copy()), options)
+                    .getTagList("entries", 10)
+                    .getCompoundTagAt(0)
+                    .getInteger("count"),
+                "profiles do not retain mutable rows from a prior UI call");
+        } finally {
+            gregtech.api.GregTechAPI.METATILEENTITIES[id] = previous;
         }
     }
 
@@ -541,7 +638,13 @@ public final class HologramLiveControllerSiteRegression {
                     model.metadata()
                         .getInteger("siteOccupied"),
                     "real non-air sites");
-                SimpleAssert.eq(world.installed ? 1 : 0, view(model.metadata(), false), "terrain does not select LIVE");
+                SimpleAssert.eq(0, view(model.metadata(), false), "unproven observed cells do not select LIVE");
+                NBTTagCompound trusted = (NBTTagCompound) model.metadata()
+                    .copy();
+                trusted.setBoolean("siteKnown", true);
+                trusted.setInteger("siteUnknown", 0);
+                SimpleAssert
+                    .eq(world.installed ? 1 : 0, view(trusted, false), "only a proven complete site selects LIVE");
                 int[] visibility = com.miaokatze.gtmb.client.hologram.HologramLargeControllerViewportChecks
                     .verify(model);
                 SimpleAssert.eq(20001, visibility[0], "target all regions including far edge");

@@ -69,7 +69,7 @@ final class HologramEditorCommands {
         add("cameraRight", "镜头向右平移", "pan", -1, Keyboard.KEY_D, 0, true, "只平移独立编辑器镜头，不移动玩家。");
         add("cameraForward", "镜头向前平移", "pan", -1, Keyboard.KEY_W, 0, true, "只平移独立编辑器镜头，不移动玩家。");
         add("cameraBack", "镜头向后平移", "pan", -1, Keyboard.KEY_S, 0, true, "只平移独立编辑器镜头，不移动玩家。");
-        add("modeBuild", "规划模式：补建", "place", 70, Keyboard.KEY_1, 0, false, "切换原补建规划，不执行施工。");
+        add("modeBuild", "规划模式：建造", "place", 70, Keyboard.KEY_1, 0, false, "切换建造规划，不执行施工。");
         add("modeReplace", "规划模式：替换", "structure", 71, Keyboard.KEY_2, 0, false, "切换原替换规划，不执行施工。");
         add("modeRemove", "规划模式：拆除", "delete", 72, Keyboard.KEY_3, 0, false, "实体控制器规划专用；虚拟蓝图不开放拆除。");
         add("resetView", "复位编辑视角", "reset-view", 14, Keyboard.KEY_HOME, 0, false, "复用编辑器相机复位，不改变玩家或世界。");
@@ -457,11 +457,8 @@ final class HologramEditorCommands {
                 : ui.session.state().data.getString("activeStructure")
                     .isEmpty() ? projectorOr("native.ui.already_at_the_area_overview", "当前已是区域总览") : "";
             case "sources" -> editable ? "" : ui.session.editingReason();
-            case "modeBuild", "modeReplace" -> editable ? "" : ui.session.editingReason();
-            case "modeRemove" -> !editable ? ui.session.editingReason()
-                : ui.session.state().data.getBoolean("virtual") ? projectorOr(
-                    "native.ui.virtual_blueprints_cannot_use_physical_demolition_planning",
-                    "虚拟蓝图不能进入实体拆除规划") : "";
+            case "modeBuild" -> editable ? "" : ui.session.editingReason();
+            case "modeReplace", "modeRemove" -> projectorOr("native.ui.blueprints_build_only", "蓝图仅支持建造；施工须另行核对材料。");
             case "process" -> !editable ? ui.session.editingReason()
                 : HologramGuidance.authorWorkspace(ui.session.state()) ? ""
                     : projectorOr("native.ui.this_is_not_a_processable_author_blueprint", "当前不是可处理的作者蓝图");
@@ -486,7 +483,7 @@ final class HologramEditorCommands {
 
     private static com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation nativeOperation(String name) {
         return switch (name) {
-            case "modeBuild" -> com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.REPAIR;
+            case "modeBuild" -> com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.BUILD;
             case "modeReplace" -> com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.REPLACE;
             case "modeRemove" -> com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.DEMOLISH;
             default -> null;
@@ -504,7 +501,7 @@ final class HologramEditorCommands {
         if (ui.session.state().data.getBoolean("localStandardController")) {
             var action = nativeOperation(name);
             if (action != null) {
-                ui.router.activate(1720 + action.ordinal());
+                ui.router.activate(1720 + action.uiIndex());
                 return true;
             }
         }

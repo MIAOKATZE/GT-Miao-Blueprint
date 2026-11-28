@@ -204,7 +204,13 @@ final class HologramStockNativeServer {
             if (!waiting.slot.active()) return true;
             emit(
                 waiting.endpoint,
-                new Reply(waiting.request.key(), Phase.CAPABLE, 0, "", waiting.observation.result()));
+                new Reply(
+                    waiting.request.key(),
+                    Phase.CAPABLE,
+                    0,
+                    "",
+                    waiting.observation.result(),
+                    waiting.observation.snapshot()));
         } catch (IOException | RuntimeException | LinkageError failure) {
             emit(waiting.endpoint, new Reply(waiting.request.key(), Phase.REFUSED, 0, detail(failure)));
         }

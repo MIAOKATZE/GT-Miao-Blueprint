@@ -267,14 +267,14 @@ public final class HologramMaterialReviewRegression {
                 .getIntArray("selectedIndices").length == 0,
             "the complete reviewed scope stays detached from later local selection changes");
         NBTTagCompound demolition = (NBTTagCompound) source.copy();
-        demolition.setInteger("nativeAction", 3);
-        demolition.setString("nativeStage", "UNFORMED");
-        demolition.setBoolean("nativeTargetReady", false);
-        demolition.setBoolean("localStructureUnavailable", true);
+        demolition.setInteger("nativeAction", 2);
+        demolition.setString("nativeStage", "FORMED");
+        demolition.setBoolean("nativeTargetReady", true);
+        demolition.setBoolean("localStructureUnavailable", false);
         SimpleAssert.that(
             HologramPlacementConfirmation.localStructureReviewBlocker(new HologramState(demolition))
                 .isEmpty(),
-            "demolition reviews the known current structure without new target geometry or an observation token");
+            "formed demolition reviews the complete ready scope without an observation token");
         demolition.setString("nativeStage", "CONTROLLER_ONLY");
         SimpleAssert.that(
             !HologramPlacementConfirmation.nativeDemolitionReview(demolition),
@@ -423,12 +423,12 @@ public final class HologramMaterialReviewRegression {
             "reading the material data does not reopen the pane");
         view.localAction(LocalAction.BACK);
         for (var action : new com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation[] {
-            com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.REPAIR,
+            com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.BUILD,
             com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.REPLACE,
             com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.DEMOLISH }) {
-            var stage = action == com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.REPLACE
-                ? com.miaokatze.gtmb.hologram.HologramStockNativeWire.Stage.FORMED
-                : com.miaokatze.gtmb.hologram.HologramStockNativeWire.Stage.UNFORMED;
+            var stage = action == com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.BUILD
+                ? com.miaokatze.gtmb.hologram.HologramStockNativeWire.Stage.UNFORMED
+                : com.miaokatze.gtmb.hologram.HologramStockNativeWire.Stage.FORMED;
             nativeState.observe(
                 new com.miaokatze.gtmb.hologram.HologramStockNativeWire.ServerObservation(
                     236,

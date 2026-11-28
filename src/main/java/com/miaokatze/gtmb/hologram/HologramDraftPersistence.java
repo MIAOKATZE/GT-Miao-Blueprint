@@ -155,7 +155,7 @@ final class HologramDraftPersistence {
             automatic.appendTag(row);
         }
         draft.setTag("automatic", automatic);
-        draft.setInteger("mode", s.mode);
+        draft.setInteger("mode", s.virtual ? 0 : s.mode);
         draft.setInteger("scope", s.scope);
         draft.setBoolean("materialMain", s.materialSettings.main);
         draft.setBoolean("materialContainers", s.materialSettings.containers);
@@ -306,7 +306,8 @@ final class HologramDraftPersistence {
             if (sample != null && !HologramRecovery.hasSeal(sample))
                 s.frozenAutoTargets.put(key, new ItemStack(sample.getItem(), 1, sample.getItemDamage()));
         }
-        s.mode = HologramValues.clamp(draft.getInteger("mode"), 0, 2);
+        // A saved workspace never carries authority to resume a retired construction mode.
+        s.mode = 0;
         s.scope = 0;
         s.materialSettings.main = draft.getBoolean("materialMain");
         s.materialSettings.containers = draft.getBoolean("materialContainers");

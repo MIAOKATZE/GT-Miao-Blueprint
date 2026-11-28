@@ -94,6 +94,10 @@ tasks.named("check") { dependsOn("runHologramTest", "runBackpackMaterialTest") }
 
 mapOf(
     "runNativeSiteRegression" to "com.miaokatze.gtmb.hologram.HologramNativeSitePlanRegression",
+    "runNativeSiteCaptureRegression" to "com.miaokatze.gtmb.hologram.HologramNativeSiteCaptureRegression",
+    "runConstructionSoundRegression" to "com.miaokatze.gtmb.hologram.HologramConstructionSoundRegression",
+    "runNativeSiteSnapshotRegression" to "com.miaokatze.gtmb.hologram.HologramNativeSiteSnapshotRegression",
+    "runNativeSiteWaterRegression" to "com.miaokatze.gtmb.hologram.HologramNativeSiteWaterRegression",
     "runProjectorLocalizationTest" to "com.miaokatze.gtmb.client.hologram.HologramProjectorLocalizationRegression",
     "runUnsavedPlacementRegression" to "com.miaokatze.gtmb.hologram.HologramUnsavedPlacementRegression",
     "runAttachmentSnapshotRegression" to "com.miaokatze.gtmb.hologram.HologramAttachmentSnapshotRegression",

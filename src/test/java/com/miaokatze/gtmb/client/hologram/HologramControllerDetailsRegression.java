@@ -28,6 +28,7 @@ public final class HologramControllerDetailsRegression {
 
     public static void run() {
         initialSiteConfiguration();
+        observedPresetPins();
         NBTTagCompound target = new NBTTagCompound();
         target.setString("session", "controller");
         target.setString("generation", "read-1");
@@ -197,19 +198,20 @@ public final class HologramControllerDetailsRegression {
                 ""));
         NBTTagCompound unsupportedTarget = new NBTTagCompound();
         unsupportedTarget.setBoolean("nativeExecutionSupported", false);
-        SimpleAssert.eq(
-            "",
-            HologramScreen.nativeTargetBlocker(
-                demolitionState,
-                unsupportedTarget,
-                com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.DEMOLISH),
-            "observed site demolition remains available when the new target failed or has unsupported materials");
         SimpleAssert.that(
             !HologramScreen
                 .nativeTargetBlocker(
                     demolitionState,
                     unsupportedTarget,
-                    com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.REPAIR)
+                    com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.DEMOLISH)
+                .isEmpty(),
+            "unformed structures and incomplete scopes cannot authorize demolition");
+        SimpleAssert.that(
+            !HologramScreen
+                .nativeTargetBlocker(
+                    demolitionState,
+                    unsupportedTarget,
+                    com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.BUILD)
                 .isEmpty(),
             "unsupported target materials still block material placement actions");
         update.setString("generation", "read-2");
@@ -223,6 +225,43 @@ public final class HologramControllerDetailsRegression {
             "interface".equals(new HologramState.Cell(early.cells.get(0), options).role)
                 && "block".equals(early.cells.get(0).role),
             "an option may describe a role without changing the world preview");
+    }
+
+    private static void observedPresetPins() {
+        var site = new NBTTagCompound();
+        var source = new NBTTagList();
+        var observed = new NBTTagCompound();
+        observed.setInteger("x", 1);
+        observed.setInteger("id", 12);
+        observed.setInteger("facing", 2);
+        observed.setBoolean("siteNativeAccepted", true);
+        source.appendTag(observed);
+        site.setTag("nativeHatchChoices", source);
+        var target = new NBTTagCompound();
+        var choices = new NBTTagList();
+        choices.appendTag(observed.copy());
+        var rotated = (NBTTagCompound) observed.copy();
+        rotated.setInteger("facing", 3);
+        choices.appendTag(rotated);
+        var explicit = (NBTTagCompound) observed.copy();
+        explicit.setInteger("id", 15);
+        explicit.removeTag("siteNativeAccepted");
+        choices.appendTag(explicit);
+        target.setTag("nativeHatchChoices", choices);
+        HologramScreen.releaseObservedHatchPins(target, site);
+        var kept = target.getTagList("nativeHatchChoices", 10);
+        SimpleAssert.eq(2, kept.tagCount(), "preset releases only unedited automatic site pins");
+        SimpleAssert.eq(
+            3,
+            kept.getCompoundTagAt(0)
+                .getInteger("facing"),
+            "manual rotation survives a preset change");
+        SimpleAssert.eq(
+            15,
+            kept.getCompoundTagAt(1)
+                .getInteger("id"),
+            "explicit hatch choice survives a preset change");
+        SimpleAssert.eq(1, source.tagCount(), "source proof is not mutated by UI preset changes");
     }
 
     private static void wholeNativeConstructionWhileDetailsPending(HologramControllerTarget.Cell cell) {
@@ -623,8 +662,7 @@ public final class HologramControllerDetailsRegression {
         NBTTagCompound input = (NBTTagCompound) original.copy();
         input.setLong("nativeTargetRevision", 7);
         input.setBoolean("nativeTargetReady", true);
-        input
-            .setInteger("nativeAction", com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.REPAIR.ordinal());
+        input.setInteger("nativeAction", com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.BUILD.uiIndex());
         input.setInteger("main", 3);
         NBTTagCompound channels = new NBTTagCompound();
         channels.setInteger("width", 9);
@@ -674,19 +712,37 @@ public final class HologramControllerDetailsRegression {
             review.ready() && review.hatchDelta != null
                 && review.hatchDelta.exchanges == 1
                 && review.hatchDelta.unchanged == 1,
-            "repair estimates include the missing unselected cell and leave the same installed material unchanged");
+            "build estimates include the missing unselected cell and leave the same installed material unchanged");
         SimpleAssert.eq(
             1L,
             review.hatchDelta.theory.getTagList("rows", 10)
                 .getCompoundTagAt(0)
                 .getLong("required"),
             "matching installed material is excluded from the replacement-material estimate");
+        NBTTagCompound conflict = (NBTTagCompound) input.copy();
+        conflict.getTagList("cells", 10)
+            .getCompoundTagAt(0)
+            .setTag("actualStack", new ItemStack(Blocks.dirt).writeToNBT(new NBTTagCompound()));
+        HologramNativeTargetReview conflictingBuild = new HologramNativeTargetReview(new HologramState(conflict), full);
+        SimpleAssert.that(
+            conflictingBuild.conflicts == 1 && !conflictingBuild.blocker.isEmpty()
+                && conflictingBuild.removals == 0
+                && conflictingBuild.turns == 0,
+            "build conflicts are explicit and never become recovery or demolition estimates");
+        for (int row = 0; row < conflictingBuild.theory.getTagList("rows", 10)
+            .tagCount(); row++)
+            SimpleAssert.that(
+                !conflictingBuild.theory.getTagList("rows", 10)
+                    .getCompoundTagAt(row)
+                    .getString("hatchChange")
+                    .contains("待现场核验回收"),
+                "build never advertises recovered materials");
         NBTTagCompound demolition = new NBTTagCompound();
         demolition.setInteger(
             "nativeAction",
-            com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.DEMOLISH.ordinal());
-        demolition.setBoolean("nativeTargetReady", false);
-        demolition.setString("nativeStage", "UNFORMED");
+            com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.DEMOLISH.uiIndex());
+        demolition.setBoolean("nativeTargetReady", true);
+        demolition.setString("nativeStage", "FORMED");
         HologramState observed = source.withMetadata(demolition);
         NBTTagCompound whole = new NBTTagCompound();
         whole.setInteger("scope", 0);
@@ -695,7 +751,7 @@ public final class HologramControllerDetailsRegression {
             removal.ready() && removal.hatchDelta.removals == 1
                 && removal.hatchDelta.blocker.isEmpty()
                 && removal.current(observed, 0),
-            "whole-machine demolition needs neither a selected hatch nor a successfully generated new target");
+            "formed whole-machine demolition uses its complete ready scope without a selected hatch");
     }
 
     private static HologramState edit(HologramState state, HologramState baseline, String op, String key, int value)

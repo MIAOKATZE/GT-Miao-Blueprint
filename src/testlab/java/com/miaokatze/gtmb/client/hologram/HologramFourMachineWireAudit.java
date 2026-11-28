@@ -4,7 +4,6 @@
 package com.miaokatze.gtmb.client.hologram;
 
 import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -42,6 +41,7 @@ final class HologramFourMachineWireAudit {
 
         final UUID request;
         final int ordinal, operation, sources, destination;
+        final String targetDigest;
 
         Begin(UUID request, int ordinal, NBTTagCompound payload) {
             this.request = request;
@@ -49,6 +49,7 @@ final class HologramFourMachineWireAudit {
             operation = payload.getInteger("projectionOperation");
             sources = payload.getInteger("sources");
             destination = payload.getInteger("destination");
+            targetDigest = payload.getString("nativeTargetDigest");
         }
     }
 
@@ -115,24 +116,40 @@ final class HologramFourMachineWireAudit {
                     "phase",
                     reply.phase()
                         .name());
-                event.put("reply", reply.toString());
+                event.put("placed", reply.placed());
+                event.put("reason", reply.reason());
+                NBTTagCompound snapshot = reply.siteSnapshot();
+                event.put("siteSnapshot", snapshot != null);
+                if (snapshot != null) event.put(
+                    "siteCells",
+                    snapshot.getTagList("cells", 10)
+                        .tagCount());
                 event.put("nanoTime", System.nanoTime());
-                // The new production wire adds this immutable server observation. It is never rewritten here.
-                try {
-                    Method read = reply.getClass()
-                        .getMethod("observation");
-                    Object observation = read.invoke(reply);
-                    event.put("serverObservation", observation == null ? null : observation.toString());
-                } catch (NoSuchMethodException oldCandidate) {
-                    event.put("serverObservation", "MISSING_NEW_WIRE");
-                } catch (ReflectiveOperationException failure) {
-                    throw new IllegalStateException("Production server observation could not be read", failure);
+                var observation = reply.observation();
+                if (observation != null) {
+                    var summary = new LinkedHashMap<String, Object>();
+                    summary.put("controller", observation.controller());
+                    summary.put("x", observation.x());
+                    summary.put("y", observation.y());
+                    summary.put("z", observation.z());
+                    summary.put(
+                        "stage",
+                        observation.stage()
+                            .name());
+                    summary.put("targetRevision", observation.targetRevision());
+                    summary.put("reason", observation.reason());
+                    event.put("serverObservation", summary);
                 }
                 synchronized (events) {
                     latest.put(
                         reply.key()
                             .request(),
-                        reply);
+                        new HologramStockNativeWire.Reply(
+                            reply.key(),
+                            reply.phase(),
+                            reply.placed(),
+                            reply.reason(),
+                            reply.observation()));
                     append(event);
                 }
             }

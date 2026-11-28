@@ -37,9 +37,11 @@ public class CommonProxy {
         HologramNetwork.init();
         net.minecraftforge.common.MinecraftForge.EVENT_BUS
             .register(com.miaokatze.gtmb.hologram.HologramDemolition.DROPS);
+        HologramLifecycle lifecycle = new HologramLifecycle();
         FMLCommonHandler.instance()
             .bus()
-            .register(new HologramLifecycle());
+            .register(lifecycle);
+        net.minecraftforge.common.MinecraftForge.EVENT_BUS.register(lifecycle);
         com.miaokatze.gtmb.main.OptionalTestLab
             .call("com.miaokatze.gtmb.hologram.HologramSmokeTest", "registerIfEnabled");
         com.miaokatze.gtmb.main.OptionalTestLab

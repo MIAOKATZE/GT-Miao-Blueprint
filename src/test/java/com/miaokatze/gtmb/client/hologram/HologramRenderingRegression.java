@@ -38,6 +38,9 @@ public final class HologramRenderingRegression {
     public static void run() {
         previewOutlineDensity();
         problemOutlines();
+        outlineSubmissions();
+        currentSiteOutlines();
+        trustedSiteView();
         completePreviewMaterial();
         try {
             HologramWorldProjectionMatchRegression.run();
@@ -134,7 +137,8 @@ public final class HologramRenderingRegression {
     }
 
     private static void problemOutlines() {
-        for (String status : new String[] { "", "pending", "missing", "satisfied", "placed", "replaced", "removed" }) {
+        for (String status : new String[] { "", "pending", "unknown", "unsupported", "missing", "satisfied", "placed",
+            "replaced", "removed" }) {
             NBTTagCompound row = boundaryCell(0, 0, 0, "minecraft:stone");
             row.setString("status", status);
             HologramState.Cell cell = new HologramState.Cell(0, row);
@@ -149,8 +153,7 @@ public final class HologramRenderingRegression {
                 MiaoVisonLiteRenderer.previewOutlineVertices(true, problem),
                 "selecting an ordinary cell retains all twelve edges: " + status);
         }
-        for (String status : new String[] { "occupied", "blocked", "unsupported", "unknown", "failed", "invalid",
-            "conflict", "protected" }) {
+        for (String status : new String[] { "occupied", "blocked", "failed", "invalid", "conflict", "protected" }) {
             NBTTagCompound row = boundaryCell(0, 0, 0, "minecraft:stone");
             row.setString("status", status);
             SimpleAssert.that(
@@ -199,6 +202,21 @@ public final class HologramRenderingRegression {
             SimpleAssert.that(
                 MiaoVisonLiteRenderer.problemOutline(state, state.cells.get(0)),
                 "failed placement receipts update the outline without changing material geometry");
+            int[] actualFailureVertices = { 0 };
+            SimpleAssert.eq(
+                24,
+                MiaoVisonLiteRenderer.emitPreviewOutline(
+                    (ax, ay, az, bx, by, bz) -> actualFailureVertices[0] += 2,
+                    state,
+                    state.cells.get(0),
+                    false,
+                    true,
+                    false,
+                    new double[24],
+                    1,
+                    true),
+                "a proven failed execution receipt still highlights the current-site view");
+            SimpleAssert.eq(24, actualFailureVertices[0], "real receipt failure reaches the current-site vertex sink");
             receipt.setLong("sequence", 2);
             receipt.setIntArray("ackIndices", new int[] { 1 });
             NBTTagList missingStatuses = new NBTTagList();
@@ -228,6 +246,154 @@ public final class HologramRenderingRegression {
                 "problem lines retain exact world-space voxel bounds");
         } finally {
             HologramJobVisuals.bind(null);
+        }
+    }
+
+    /** Exercise the adapters' actual submission boundaries rather than merely rechecking their booleans. */
+    private static void outlineSubmissions() {
+        double[] points = new double[24];
+        for (int i = 0; i < 8; i++) {
+            points[i * 3] = i & 1;
+            points[i * 3 + 1] = i >> 1 & 1;
+            points[i * 3 + 2] = i >> 2;
+        }
+        LineTessellator tess = new LineTessellator();
+        MiaoVisonLiteRenderer.OutlineLines lines = (ax, ay, az, bx, by, bz) -> {
+            tess.addVertex(ax, ay, az);
+            tess.addVertex(bx, by, bz);
+        };
+        for (String status : new String[] { "pending", "unknown", "unsupported", "missing", "satisfied" }) {
+            NBTTagCompound row = boundaryCell(0, 0, 0, "minecraft:stone");
+            row.setString("status", status);
+            HologramState.Cell cell = new HologramState.Cell(0, row);
+            SimpleAssert.eq(
+                0,
+                MiaoVisonLiteRenderer.emitPreviewOutline(lines, null, cell, false, true, false, points, 2),
+                "ordinary and unresolved UI cells submit no edges: " + status);
+            SimpleAssert.eq(0, tess.vertices.size(), "no hidden vertices reach the UI sink: " + status);
+            SimpleAssert.eq(
+                24,
+                MiaoVisonLiteRenderer.emitPreviewOutline(lines, null, cell, false, true, true, points, 2),
+                "selection submits the actual UI outline: " + status);
+            SimpleAssert.eq(24, tess.vertices.size(), "selection reaches the real UI vertex sink");
+            tess.vertices.clear();
+        }
+        for (String status : new String[] { "occupied", "blocked", "conflict", "protected", "failed" }) {
+            NBTTagCompound row = boundaryCell(0, 0, 0, "minecraft:stone");
+            row.setString("status", status);
+            SimpleAssert.eq(
+                24,
+                MiaoVisonLiteRenderer
+                    .emitPreviewOutline(lines, null, new HologramState.Cell(0, row), false, true, false, points, 2),
+                "established conflicts and permission/execution failures submit UI edges: " + status);
+            SimpleAssert.eq(24, tess.vertices.size(), "diagnostic edges reach the real UI vertex sink");
+            tess.vertices.clear();
+        }
+        HologramState.Cell ordinary = new HologramState.Cell(0, boundaryCell(0, 0, 0, "minecraft:stone"));
+        SimpleAssert.eq(
+            0,
+            MiaoVisonLiteRenderer.emitPreviewOutline(lines, null, ordinary, false, null, false, points, 2),
+            "no model/material result means preparation is pending, not a proved rendering failure");
+        SimpleAssert.eq(0, tess.vertices.size(), "pending model inputs do not submit any actual UI edges");
+        SimpleAssert.eq(
+            24,
+            MiaoVisonLiteRenderer.emitPreviewOutline(lines, null, ordinary, false, false, false, points, 2),
+            "resolved missing material submits the actual UI diagnostic");
+        tess.vertices.clear();
+        double[][] box = new double[8][3];
+        for (int i = 0; i < 8; i++) System.arraycopy(points, i * 3, box[i], 0, 3);
+        for (String id : new String[] { "body", "attachment:test", "hatch" }) {
+            SimpleAssert.eq(
+                0,
+                MiaoVisonLiteRenderer.emitStructureOutline(tess, box, id, "", Collections.emptySet()),
+                "ordinary group decoration submits no edges: " + id);
+            SimpleAssert.eq(0, tess.vertices.size(), "ordinary group leaves the actual vertex sink empty");
+            SimpleAssert.eq(
+                24,
+                MiaoVisonLiteRenderer.emitStructureOutline(tess, box, id, id, Collections.emptySet()),
+                "explicit group selection keeps its actual outline");
+            tess.vertices.clear();
+        }
+        SimpleAssert.eq(
+            24,
+            MiaoVisonLiteRenderer.emitStructureOutline(tess, box, "body", "", Collections.singleton("body")),
+            "proven missing group sources keep their actual diagnostic edges");
+        SimpleAssert.eq(24, tess.vertices.size(), "source diagnostic reaches the actual group sink");
+        MiaoVisonLiteRenderer renderer = new MiaoVisonLiteRenderer(
+            HologramPreviewAssets.EDITOR,
+            MiaoVisonLiteRenderer.View.INTERACTIVE);
+        try {
+            @SuppressWarnings("unchecked")
+            java.util.Map<String, double[][]> structures = (java.util.Map<String, double[][]>) field(
+                MiaoVisonLiteRenderer.class,
+                "structureBoxes").get(renderer);
+            @SuppressWarnings("unchecked")
+            java.util.Map<String, double[][]> hints = (java.util.Map<String, double[][]>) field(
+                MiaoVisonLiteRenderer.class,
+                "hintBoxes").get(renderer);
+            structures.put("body", box);
+            hints.put("retained hint", box);
+            SimpleAssert.eq("body", renderer.pickStructure(0, 0), "ordinary structure bounds still support picking");
+            SimpleAssert
+                .eq("retained hint", renderer.hintAt(0, 0), "suppressed hint bounds still support hover labels");
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError("outline-independent picking", failure);
+        }
+    }
+
+    private static void currentSiteOutlines() {
+        int[] vertices = { 0 };
+        MiaoVisonLiteRenderer.OutlineLines lines = (ax, ay, az, bx, by, bz) -> vertices[0] += 2;
+        for (String status : new String[] { "unknown", "unsupported", "occupied", "blocked", "conflict", "protected",
+            "failed" }) {
+            NBTTagCompound row = boundaryCell(0, 0, 0, "minecraft:stone");
+            row.setString("status", status);
+            row.setBoolean("sourceMissing", true);
+            HologramState.Cell cell = new HologramState.Cell(0, row);
+            SimpleAssert.eq(
+                0,
+                MiaoVisonLiteRenderer
+                    .emitPreviewOutline(lines, null, cell, false, true, false, new double[24], 1, true),
+                "wrong target/source status cannot frame a valid installed model: " + status);
+            SimpleAssert.eq(0, vertices[0], "current-site ordinary sink stays empty");
+            SimpleAssert.eq(
+                24,
+                MiaoVisonLiteRenderer.emitPreviewOutline(lines, null, cell, false, true, true, new double[24], 1, true),
+                "selection still emits the actual current-site edges");
+            vertices[0] = 0;
+        }
+        HologramState.Cell normal = new HologramState.Cell(0, boundaryCell(0, 0, 0, "minecraft:stone"));
+        SimpleAssert.eq(
+            24,
+            MiaoVisonLiteRenderer.emitPreviewOutline(lines, null, normal, false, false, false, new double[24], 1, true),
+            "a resolved missing resource on the actual site remains a real problem");
+        SimpleAssert.eq(24, vertices[0], "actual-site resource failure reaches the vertex sink");
+    }
+
+    private static void trustedSiteView() {
+        HologramUiPreview preview = new HologramUiPreview(null);
+        NBTTagCompound metadata = new NBTTagCompound();
+        metadata.setBoolean("localStandardController", true);
+        metadata.setInteger("siteOccupied", 20);
+        metadata.setInteger("siteMatchingSolid", 10);
+        metadata.setInteger("siteHatches", 2);
+        try {
+            Field view = field(HologramUiPreview.class, "view");
+            preview.chooseControllerSiteView(metadata);
+            SimpleAssert.eq(0, view.getInt(preview), "partial installed evidence keeps planning view");
+            metadata.setBoolean("siteKnown", true);
+            metadata.setInteger("siteUnknown", 1);
+            preview.chooseControllerSiteView(metadata);
+            SimpleAssert.eq(0, view.getInt(preview), "contradictory known/unknown evidence does not select fragments");
+            metadata.setInteger("siteUnknown", 0);
+            preview.chooseControllerSiteView(metadata);
+            SimpleAssert.eq(1, view.getInt(preview), "later complete proof may select the installed view once");
+            HologramUiPreview manual = new HologramUiPreview(null);
+            manual.view(2);
+            manual.chooseControllerSiteView(metadata);
+            SimpleAssert.eq(2, view.getInt(manual), "a complete site still respects the player's explicit view");
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError("trusted site-view selection", failure);
         }
     }
 
@@ -1947,6 +2113,13 @@ public final class HologramRenderingRegression {
             false);
         boolean problem = MiaoVisonLiteRenderer
             .previewProblemOutline(null, cell, false, MiaoVisonLiteRenderer.completePreviewMaterial(fallback));
+        LineTessellator fallbackLines = new LineTessellator();
+        SimpleAssert.eq(0, MiaoVisonLiteRenderer.emitPreviewOutline((ax, ay, az, bx, by, bz) -> {
+            fallbackLines.addVertex(ax, ay, az);
+            fallbackLines.addVertex(bx, by, bz);
+        }, null, cell, false, MiaoVisonLiteRenderer.completePreviewMaterial(fallback), false, new double[24], 1),
+            "valid fallback samples pass through the actual UI submission boundary without lines");
+        SimpleAssert.eq(0, fallbackLines.vertices.size(), "valid icon fallback submits no hidden vertices");
         SimpleAssert.eq(
             0,
             MiaoVisonLiteRenderer.previewOutlineVertices(false, problem),

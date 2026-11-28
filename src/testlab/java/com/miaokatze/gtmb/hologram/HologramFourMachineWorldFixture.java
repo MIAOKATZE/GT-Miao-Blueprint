@@ -30,12 +30,19 @@ import gregtech.api.metatileentity.BaseMetaTileEntity;
 import gregtech.common.blocks.ItemMachines;
 
 /**
- * Server-thread fixture administration and passive audits. Body construction/replacement/removal is never done here.
+ * Server-thread fixture administration and passive audits. Business construction/replacement/removal is never done
+ * here;
+ * explicit owned-body vacating is separately journaled scenario preparation.
  */
 public final class HologramFourMachineWorldFixture {
 
     private final WorldServer world;
     private final EntityPlayerMP actor;
+
+    public NBTTagCompound constructionSoundAudit() throws Exception {
+        return HologramConstructionSoundProbe.run(world, actor, x + 16, y, z);
+    }
+
     private final ConcurrentLinkedQueue<Runnable> commands = new ConcurrentLinkedQueue<>();
     private final NBTTagList originalInventory;
     private final int originalSlot, toolSlot;
@@ -375,7 +382,7 @@ public final class HologramFourMachineWorldFixture {
         return result;
     }
 
-    /** Deliberate owned fixture damage. Never counted as BUILD/REPAIR/REPLACE/DEMOLISH work. */
+    /** Deliberate owned fixture damage. Never counted as BUILD/REPLACE/DEMOLISH work. */
     public NBTTagCompound damage(int[] missing, int[] wrong) {
         for (int[] p : new int[][] { missing, wrong }) {
             require(
@@ -397,6 +404,37 @@ public final class HologramFourMachineWorldFixture {
         before.setTag("fixtureSuppliedMismatch", new ItemStack(Blocks.cobblestone).writeToNBT(new NBTTagCompound()));
         before.setString("purpose", "fixture-only damage; original native drops remain in the real world ledger");
         return before;
+    }
+
+    /** Explicit scenario preparation only: vacate audited owned body cells before an UNFORMED BUILD. */
+    public NBTTagCompound vacateBuildDifferences(int[][] positions) throws Exception {
+        require(
+            prepared && !closed && positions.length <= HologramFourMachineSpec.MAX_TARGET_CELLS,
+            "Owned build preparation unavailable or unbounded");
+        for (int[] p : positions) require(
+            p.length == 3 && Math.abs(p[0] - x) <= 12
+                && Math.abs(p[1] - y) <= 10
+                && Math.abs(p[2] - z) <= 12
+                && (p[0] != x || p[1] != y || p[2] != z),
+            "Build preparation escaped the explicit owned body or targeted its controller");
+        NBTTagCompound receipt = new NBTTagCompound();
+        receipt.setString("purpose", "fixture-only vacating of explicit changed body cells; never credited as BUILD");
+        receipt.setTag("before", cells(positions));
+        Path ledger = recoveryFile.resolveSibling(recoveryFile.getFileName() + ".build-preparations.snbt");
+        Files.write(
+            ledger,
+            (receipt.toString() + System.lineSeparator()).getBytes(java.nio.charset.StandardCharsets.UTF_8),
+            StandardOpenOption.CREATE,
+            StandardOpenOption.APPEND);
+        for (int[] p : positions) if (!world.isAirBlock(p[0], p[1], p[2]))
+            require(world.func_147480_a(p[0], p[1], p[2], true), "Owned build-preparation break failed");
+        receipt.setTag("after", cells(positions));
+        receipt.setBoolean("complete", true);
+        Files.write(
+            ledger,
+            (receipt.toString() + System.lineSeparator()).getBytes(java.nio.charset.StandardCharsets.UTF_8),
+            StandardOpenOption.APPEND);
+        return receipt;
     }
 
     public NBTTagCompound restore() throws Exception {

@@ -14,6 +14,7 @@ import net.minecraft.block.Block;
 import net.minecraft.block.material.Material;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.WorldClient;
+import net.minecraft.client.renderer.Tessellator;
 import net.minecraft.init.Blocks;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
@@ -109,10 +110,11 @@ public final class HologramWorldProjectionMatchRegression {
         MiaoVisonLiteRenderer.worldBlockChanged(15, 64, 0);
         ready(state, first);
         check(ghosts().size() == 3, "a wrong replacement stays visible");
+        OutlineTessellator outlines = new OutlineTessellator();
         check(
-            (Boolean) method("worldProblemOutline", HologramState.class, HologramState.Cell.class, boolean.class)
-                .invoke(null, state, state.cells.get(0), false),
-            "a new wrong replacement reaches the real line decision despite stale satisfied status");
+            MiaoVisonLiteRenderer.emitWorldProblemOutline(outlines, state, state.cells.get(0), false) == 24
+                && outlines.vertices == 24,
+            "a new wrong replacement submits actual world edges despite stale satisfied status");
         world.put(15, 64, 0, Blocks.stone, 0);
         MiaoVisonLiteRenderer.worldChunkChanged(0, 0, 1 << 4);
         MiaoVisonLiteRenderer.worldChunkChanged(0, 0, 1 << 4);
@@ -437,6 +439,16 @@ public final class HologramWorldProjectionMatchRegression {
         public void writeToNBT(NBTTagCompound tag) {
             tag.setString("id", "gtmb.projection_fixture");
             tag.setInteger("config", config);
+        }
+    }
+
+    private static final class OutlineTessellator extends Tessellator {
+
+        int vertices;
+
+        @Override
+        public void addVertex(double x, double y, double z) {
+            vertices++;
         }
     }
 }

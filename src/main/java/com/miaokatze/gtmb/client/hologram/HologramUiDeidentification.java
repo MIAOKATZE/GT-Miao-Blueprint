@@ -130,7 +130,7 @@ final class HologramUiDeidentification {
         ui.canvas.text("7 监控身份 / 图表缓存 · 8 私人界面页 · 9 停机诊断 · 10 瞬时运行状态；配方数据保留", 54, 172, 580, 0xa9d6cf);
         ui.canvas.text("记住你对这份蓝图的选择（含 0）；下次放置及 Alt 快捷预览沿用。", 54, 190, 580, 0x94afb4);
         ui.canvas.text(
-            this.deidentificationPlacement ? "请先修正保存数据或清理阻塞物，再重新核对材料并确认放置。" : "保存仍会检查全部数据；同类相邻提示合并展示，可展开查看每个位置。",
+            this.deidentificationPlacement ? "请先修正保存数据、调整目标或自行清理占位，再重新核对材料并确认建造。" : "保存仍会检查全部数据；同类相邻提示合并展示，可展开查看每个位置。",
             54,
             208,
             580,
@@ -143,16 +143,6 @@ final class HologramUiDeidentification {
             20,
             "一键去标识处理 · 等级 " + Math.max(1, this.deidentificationLevel),
             ui.session.editable() && ui.session.state().data.getBoolean("virtual"),
-            mx,
-            my);
-        ui.canvas.button(
-            215,
-            342,
-            233,
-            290,
-            20,
-            "一键移除放置阻塞物",
-            ui.session.editable() && ui.review.placementReviewActive() && ui.review.materialBlockers() > 0,
             mx,
             my);
         ui.canvas.button(212, 54, 274, 278, 20, this.deidentificationPlacement ? "无需去标识" : "取消", true, mx, my);
@@ -175,7 +165,7 @@ final class HologramUiDeidentification {
                     || ui.nbt.nbtDrawer() && ui.nbt.nbtPlacement());
             return true;
         }
-        if (!this.deidentificationDrawer && id != 214 && id != 215 && id != 216) return false;
+        if (!this.deidentificationDrawer && id != 214 && id != 216) return false;
         if (id >= 22000 && id <= 22010) {
             int level = id - 22000;
             if (level >= HologramDeidentificationMemory.minimum(ui.session.state().data))
@@ -190,7 +180,7 @@ final class HologramUiDeidentification {
             this.deidentificationLevel = 0;
             id = 213;
         }
-        if (id != 213 && id != 214 && id != 215 && id != 216) return false;
+        if (id != 213 && id != 214 && id != 216) return false;
         if (!ui.session.editable()) return true;
         NBTTagCompound request = new NBTTagCompound();
         request.setLong("planRevision", ui.session.revision());
@@ -200,12 +190,6 @@ final class HologramUiDeidentification {
             if (ui.ae.aeReview().review) ui.ae.activateAeReview(182);
             request.setBoolean("confirmDiscard", true);
             ui.session.send("excludeBlueprintBlockers", request, true);
-            return true;
-        }
-        if (id == 215) {
-            if (!ui.review.placementReviewActive() || ui.review.materialBlockers() == 0) return true;
-            ui.session.send("removeBlueprintObstructions", request, true);
-            this.deidentificationDrawer = false;
             return true;
         }
         int level = id == 214 ? Math.max(1, this.deidentificationLevel) : this.deidentificationLevel;

@@ -46,8 +46,10 @@ final class HologramPlacementConfirmation {
 
     static boolean nativeDemolitionReview(NBTTagCompound data) {
         return data.getInteger("nativeAction")
-            == com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.DEMOLISH.ordinal()
-            && ("UNFORMED".equals(data.getString("nativeStage")) || "FORMED".equals(data.getString("nativeStage")));
+            == com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.DEMOLISH.uiIndex()
+            && "FORMED".equals(data.getString("nativeStage"))
+            && data.getBoolean("nativeTargetReady")
+            && !data.getBoolean("localStructureUnavailable");
     }
 
     static boolean finishedWholeNativePlacement(HologramState state, NBTTagCompound settings, boolean localEdits) {

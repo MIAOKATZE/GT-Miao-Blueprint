@@ -127,7 +127,7 @@ public final class HologramMaterialNamesRegression {
         data.setInteger("mode", 1);
         data.setInteger(
             "nativeAction",
-            com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.REPLACE.ordinal());
+            com.miaokatze.gtmb.hologram.HologramStockNativeWire.Operation.REPLACE.uiIndex());
         data.setLong("nativeTargetRevision", 1);
         data.setBoolean("nativeTargetReady", true);
         for (int i = 0; i < 6; i++) {

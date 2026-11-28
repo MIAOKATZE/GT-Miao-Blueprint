@@ -5,20 +5,19 @@ package com.miaokatze.gtmb.hologram;
 import java.lang.reflect.Constructor;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.List;
+import java.util.LinkedHashSet;
 import java.util.Map;
 
 import net.minecraft.block.Block;
+import net.minecraft.init.Blocks;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
-import net.minecraft.nbt.NBTTagList;
 import net.minecraft.tileentity.TileEntity;
-import net.minecraftforge.common.util.ForgeDirection;
+import net.minecraft.world.ChunkPosition;
+import net.minecraft.world.chunk.Chunk;
 
 import com.gtnewhorizon.structurelib.alignment.constructable.IConstructable;
-import com.gtnewhorizon.structurelib.alignment.constructable.ISurvivalConstructable;
 import com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing;
-import com.gtnewhorizon.structurelib.structure.ISurvivalBuildEnvironment;
 
 import gregtech.api.GregTechAPI;
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
@@ -27,9 +26,8 @@ import gregtech.api.metatileentity.implementations.MTEMultiBlockBase;
 import gregtech.api.threads.RunnableMachineUpdate;
 
 /**
- * Opt-in GTSR 2.1.86 bytecode fixture. Uses the real center constructor and native creative/survival methods.
- * The palette and registry bootstrap are isolated offline stand-ins; this is not an in-game formation proof.
- * Launch only with the explicitly MCP-member-remapped 2.1.86 runtime jar, never install that fixture jar.
+ * Explicit actual GTSR 2.1.90-dev fixture (source 1e05c63907b7bf70f1dc2a73ef5591a03b8e0021).
+ * Real constructor, native ticks/checks and public operationStatus; detached registries, no game started.
  */
 public final class HologramOreCenterSiteRegression {
 
@@ -45,7 +43,6 @@ public final class HologramOreCenterSiteRegression {
                 .setName("Server thread");
             net.minecraft.launchwrapper.Launch.classLoader
                 .registerTransformer("com.miaokatze.gtmb.hologram.HologramNativeSiteEventFixtureTransformer");
-            // Offline bootstrap has no Mixin loader: install only the exact production placement-entry callback.
             net.minecraft.launchwrapper.Launch.classLoader
                 .registerTransformer("com.miaokatze.gtmb.hologram.HologramNativeSiteFixtureTransformer");
             Class.forName("com.miaokatze.gtmb.hologram.HologramNativeSavedWorldRegression")
@@ -66,317 +63,424 @@ public final class HologramOreCenterSiteRegression {
 
     static void run(String[] args) throws Exception {
         HologramOreCenterStallInvestigation.registry();
+        initializeNativeStatusMaterials();
         Class<?> type = Class.forName("com.miaokatze.gtsr.common.machine.orecenter.MTEMineralIntegrationCenter");
+        // Detached fixture factory only. Runtime production access remains public operationStatus.
         Constructor<?> ctor = type.getDeclaredConstructor(String.class);
         ctor.setAccessible(true);
         HologramOreCenterStallInvestigation.prototype(ctor);
         System.out.println(
-            "FIXTURE_SCOPE GTSR=2.1.86 realConstructor=true nativeMethods=true isolatedPalette=true placementSeam=true game=false");
-        System.out.println(
-            "COST_SCOPE continuousNoSleep=true advanceBudgetMs=2 diagnosticSlicesOnly=true productionTickBudgetsMs=40_idle_5_busy cpuBudgetEstimatesBasedOnAdvanceWallTime=true estimatesExcludeSchedulingAndSharedWork=true measuredGameTps=false");
-        if (args.length == 2) {
-            verify(ctor, Integer.parseInt(args[0]), Integer.parseInt(args[1]));
-            System.out.println("CENTER_SITE_SINGLE_CONTRACT_PASSED");
+            "FIXTURE_SCOPE GTSR=2.1.90 source=1e05c63907b7bf70f1dc2a73ef5591a03b8e0021" + " sourceJar="
+                + type.getProtectionDomain()
+                    .getCodeSource()
+                    .getLocation()
+                + " nativeChecks=true forcedFormedFlag=false game=false");
+        if (args.length == 1 && args[0].equals("gapped")) {
+            verify(ctor, 1, 0b101101, false);
             return;
         }
-        if (args.length != 0) throw new IllegalArgumentException("Expected no arguments, or tier and sector count");
-        for (int tier : new int[] { 1, 4 }) for (int sectors : new int[] { 1, 5, 6 }) verify(ctor, tier, sectors);
-        System.out.println(
-            "CENTER_SITE_CONTRACTS_PASSED: six cold and six confirmed-configuration default-tool reopens; native hatches/directions; zero live writes/state changes");
+        if (args.length == 2) {
+            int tier = Integer.parseInt(args[0]), sectors = Integer.parseInt(args[1]);
+            verify(ctor, tier, (1 << sectors) - 1, true);
+            return;
+        }
+        if (args.length != 0)
+            throw new IllegalArgumentException("Expected no arguments, gapped, or tier and sector count");
+        for (int tier : new int[] { 1, 4 })
+            for (int sectors : new int[] { 1, 5, 6 }) verify(ctor, tier, (1 << sectors) - 1, true);
+        verify(ctor, 1, 0b101101, false);
+        System.out.println("CENTER_PUBLIC_STATUS_CONTRACTS_PASSED samplesOnly=true jointModLayouts=NOT_COVERED");
     }
 
-    private static void verify(Constructor<?> ctor, int tier, int sectors) throws Exception {
-        BaseMetaTileEntity live = new BaseMetaTileEntity();
-        Object center = HologramOreCenterStallInvestigation.center(ctor, live);
-        HologramResourceWorld initial = HologramResourceWorld.declarations(GregTechAPI.sBlockMachines, 0);
-        live.yCoord = 128;
-        live.setWorldObj(initial);
-        initial.tile = live;
-        HologramNativePreviewWorld scene = HologramNativePreviewWorld.open(live);
-        live.setWorldObj(scene);
-        ItemStack signal = HologramOreCenterStallInvestigation.signal(tier, sectors);
+    private static void initializeNativeStatusMaterials() throws Exception {
+        // Public operationStatus resolves an optional BW booster fluid. As in existing isolated
+        // material fixtures, supply its actual mod-owner context while native declarations initialize.
+        var loader = cpw.mods.fml.common.Loader.instance();
+        var field = cpw.mods.fml.common.Loader.class.getDeclaredField("modController");
+        field.setAccessible(true);
+        Object previous = field.get(loader);
+        var controller = new cpw.mods.fml.common.LoadController(loader);
+        var active = cpw.mods.fml.common.LoadController.class.getDeclaredField("activeContainer");
+        active.setAccessible(true);
+        var metadata = new cpw.mods.fml.common.ModMetadata();
+        metadata.modId = "bartworks";
+        metadata.name = "BartWorks";
+        active.set(controller, new cpw.mods.fml.common.DummyModContainer(metadata));
+        field.set(loader, controller);
+        try {
+            Class.forName("bartworks.system.material.WerkstoffLoader");
+        } finally {
+            field.set(loader, previous);
+        }
+    }
+
+    private static HologramNativePreviewWorld geometry(Constructor<?> ctor, int tier, int sectors) throws Exception {
+        var base = new BaseMetaTileEntity();
+        Object machine = HologramOreCenterStallInvestigation.center(ctor, base);
+        var initial = HologramResourceWorld.declarations(GregTechAPI.sBlockMachines, 0);
+        base.yCoord = 128;
+        base.setWorldObj(initial);
+        initial.tile = base;
+        var result = HologramNativePreviewWorld.open(base);
+        base.setWorldObj(result);
         boolean updates = RunnableMachineUpdate.isCurrentThreadEnabled();
         try {
             RunnableMachineUpdate.setCurrentThreadEnabled(false);
-            ((IConstructable) center).construct(signal, false);
-            center.getClass()
+            ItemStack signal = HologramOreCenterStallInvestigation.signal(tier, sectors);
+            ((IConstructable) machine).construct(signal, false);
+            machine.getClass()
                 .getMethod("onPreviewStructureComplete", ItemStack.class)
-                .invoke(center, signal);
+                .invoke(machine, signal);
         } finally {
             RunnableMachineUpdate.setCurrentThreadEnabled(updates);
         }
-        Map<HologramNativeTargetPlan.Offset, NBTTagCompound> hatches = new LinkedHashMap<>();
-        for (var it = scene.currentPlacements(); it.hasNext();) {
-            var cell = it.next();
-            if (cell.tile() instanceof IGregTechTileEntity hatch) {
-                ForgeDirection direction = hatches.size() % 2 == 0 ? ForgeDirection.EAST : ForgeDirection.WEST;
-                hatch.setFrontFacing(direction);
-                hatches.put(
-                    new HologramNativeTargetPlan.Offset(cell.x(), cell.y() - 128, cell.z()),
-                    HologramNativeCapture.capture(cell.tile()));
+        return result;
+    }
+
+    private static void formNatively(BaseMetaTileEntity base, int tier, int mask) throws Exception {
+        base.disableWorking();
+        var machine = (MTEMultiBlockBase) base.getMetaTileEntity();
+        var method = machine.getClass()
+            .getMethod("operationStatus");
+        for (int tick = 1; tick <= 10000; tick++) {
+            base.getWorld()
+                .getWorldInfo()
+                .incrementTotalWorldTime(tick);
+            machine.onPostTick(base, tick);
+            NBTTagCompound status = (NBTTagCompound) method.invoke(machine);
+            if (status.getInteger("Tier") == tier - 1 && status.getInteger("Sectors") == mask
+                && status.getBoolean("Formed")
+                && !status.getBoolean("CheckingFormation")) {
+                if (!machine.checkStructure(true, base) || !machine.mMachine)
+                    throw new AssertionError("Public status was not accepted by the actual native formation check");
+                System.out.println("CENTER_NATIVE_FORMATION tier=" + tier + " mask=" + mask + " nativeTicks=" + tick);
+                return;
             }
         }
-        if (hatches.size() != 7) throw new AssertionError("Native preview ports missing: " + hatches.size());
-        ((MTEMultiBlockBase) center).mMachine = true;
-        NBTTagCompound before = HologramNativeCapture.capture(live);
-        long writes = (Long) HologramOreCenterStallInvestigation.get(scene, "writeVersion");
-        long signature = scene.contentSignature();
-        int placements = scene.recordedPlacementCount();
+        throw new AssertionError(
+            "Native center did not establish the requested public formation status: " + method.invoke(machine));
+    }
+
+    private static void verify(Constructor<?> ctor, int tier, int mask, boolean prefix) throws Exception {
+        HologramNativeProjectionJob.clearBaselines();
+        HologramNativePreviewWorld generated;
+        BaseMetaTileEntity live;
+        if (prefix) {
+            generated = geometry(ctor, tier, Integer.bitCount(mask));
+            live = (BaseMetaTileEntity) generated.getTileEntity(0, 128, 0);
+        } else {
+            live = new BaseMetaTileEntity();
+            HologramOreCenterStallInvestigation.center(ctor, live);
+            var initial = HologramResourceWorld.declarations(GregTechAPI.sBlockMachines, 0);
+            live.yCoord = 128;
+            live.setWorldObj(initial);
+            initial.tile = live;
+            generated = HologramNativePreviewWorld.open(live);
+            live.setWorldObj(generated);
+            Object shape = Class.forName("com.miaokatze.gtsr.common.machine.orecenter.CenterStructure")
+                .getConstructor()
+                .newInstance();
+            if (!(Boolean) shape.getClass()
+                .getMethod("construct", IGregTechTileEntity.class, int.class, int.class, boolean.class)
+                .invoke(shape, live, tier - 1, mask, false)) throw new AssertionError("Native gapped geometry failed");
+            // Port positions come from the public native preview, not private center fields.
+            var template = geometry(ctor, tier, 1);
+            for (var cursor = template.currentPlacements(); cursor.hasNext();) {
+                var cell = cursor.next();
+                if (!(cell.tile() instanceof IGregTechTileEntity)) continue;
+                generated.setBlock(cell.x(), cell.y(), cell.z(), cell.block(), cell.meta(), 2);
+                TileEntity placed = generated.getTileEntity(cell.x(), cell.y(), cell.z());
+                placed.readFromNBT(HologramNativeCapture.capture(cell.tile()));
+                placed.setWorldObj(generated);
+            }
+        }
+        Scene scene = HologramResourceWorld.create(() -> new Scene(generated));
+        formNatively(live, tier, mask);
+        var expected = new LinkedHashSet<HologramNativeTargetPlan.Offset>();
+        for (var cursor = scene.currentPlacements(); cursor.hasNext();) {
+            var p = cursor.next();
+            expected.add(new HologramNativeTargetPlan.Offset(p.x(), p.y() - 128, p.z()));
+        }
+        var before = HologramNativeCapture.capture(live);
+        long content = scene.contentSignature();
         scene.freeze();
-        exactNativePreflight(scene, signal, tier, sectors);
-        // The default tool starts with no manually selected structure channel.
-        NBTTagCompound requested = new NBTTagCompound();
-        requested.setInteger("main", 1);
-        requested.setTag("channels", new NBTTagCompound());
-        HologramNativeProjectionJob.clearBaselines();
-        for (boolean reopened : new boolean[] { false, true }) {
+        String firstDigest = null;
+        NBTTagCompound firstMetrics = null;
+        for (int opening = 0; opening < 2; opening++) {
             long start = System.nanoTime();
-            NBTTagCompound selected;
-            int footprint;
-            List<HologramNativeTargetPlan.Offset> siteOffsets;
-            long advanceCalls = 0, advanceNanos = 0, maxAdvanceNanos = 0;
-            try (var site = HologramNativeSitePlan.begin(live, requested)) {
-                for (;;) {
-                    long sliceStart = System.nanoTime();
-                    boolean complete = site.advance(sliceStart + 2_000_000L);
-                    long sliceNanos = System.nanoTime() - sliceStart;
-                    advanceCalls++;
-                    advanceNanos += sliceNanos;
-                    maxAdvanceNanos = Math.max(maxAdvanceNanos, sliceNanos);
-                    if (complete) break;
-                    if (advanceCalls > 200_000)
-                        throw new AssertionError("Site fixture exceeded bounded frame allowance");
+            try (var site = HologramNativeSitePlan.begin(live, HologramOreCenterStallInvestigation.settings(1, 1))) {
+                int slices = 0;
+                while (!site.advance(System.nanoTime() + 2_000_000L))
+                    if (++slices > 200000) throw new AssertionError("Bounded fixed-layout reader did not finish");
+                var found = site.settings();
+                if (!prefix) {
+                    if (found.getBoolean("siteKnown") || !site.siteCells()
+                        .isEmpty()
+                        || !site.footprint()
+                            .isEmpty())
+                        throw new AssertionError("Gapped public status was reduced to a smaller prefix: " + found);
+                    System.out.println("PASS_CENTER_PUBLIC_GAP mask=" + mask + " known=false defaultSmallerSite=false");
+                    continue;
                 }
-                selected = site.settings();
-                footprint = site.footprint()
-                    .size();
-                siteOffsets = new ArrayList<>(site.footprint());
-            }
-            long elapsed = System.nanoTime() - start;
-            if (selected.getInteger("main") != tier || selected.getCompoundTag("channels")
-                .getInteger("ore_center_sectors") != sectors
-                || !selected.getBoolean("siteKnown")
-                || selected.getInteger("siteUnknown") != 0
-                || selected.getBoolean("siteUsedConfirmedConfiguration") != reopened
-                || footprint != placements)
-                throw new AssertionError(
-                    "Default-tool center site mismatch " + tier
-                        + "/"
-                        + sectors
-                        + ": "
-                        + selected
-                        + " footprint="
-                        + footprint
-                        + " live="
-                        + placements);
-            NBTTagList choices = selected.getTagList("nativeHatchChoices", 10);
-            if (choices.tagCount() != hatches.size()) throw new AssertionError("Site hatch count differs");
-            for (int i = 0; i < choices.tagCount(); i++) {
-                NBTTagCompound row = choices.getCompoundTagAt(i);
-                var offset = new HologramNativeTargetPlan.Offset(
-                    row.getInteger("x"),
-                    row.getInteger("y"),
-                    row.getInteger("z"));
-                NBTTagCompound original = hatches.get(offset);
-                if (original == null || original.getShort("mID") != row.getInteger("id")
-                    || scene.getTileEntity(offset.x(), offset.y() + 128, offset.z()) == null
-                    || ((IGregTechTileEntity) scene.getTileEntity(offset.x(), offset.y() + 128, offset.z()))
-                        .getFrontFacing()
-                        .ordinal() != row.getInteger("facing"))
-                    throw new AssertionError("Native site hatch identity/direction lost: " + row);
-            }
-            long replayStart = System.nanoTime();
-            try (var target = HologramNativeTargetPlan.compile(
-                32651,
-                ExtendedFacing.DEFAULT,
-                HologramNativeTargetPlan
-                    .canonicalTrigger(selected.getInteger("main"), selected.getCompoundTag("channels")),
-                selected)) {
-                int restored = 0;
-                for (var cell : target.cells()) {
-                    var offset = new HologramNativeTargetPlan.Offset(cell.dx(), cell.dy(), cell.dz());
-                    NBTTagCompound original = hatches.get(offset);
-                    if (original == null) continue;
-                    IGregTechTileEntity hatch = (IGregTechTileEntity) scene
-                        .getTileEntity(cell.dx(), cell.dy() + 128, cell.dz());
-                    if (cell.material() == null || cell.material()
-                        .getItemDamage() != hatch.getMetaTileID()
-                        || cell.facing() != hatch.getFrontFacing()
-                            .ordinal()
-                        || cell.tileData() == null)
-                        throw new AssertionError("Configured target did not restore native site hatch: " + offset);
-                    restored++;
+                if (!found.getBoolean("siteKnown") || found.getInteger("main") != tier
+                    || found.getCompoundTag("channels")
+                        .getInteger("ore_center_sectors") != Integer.bitCount(mask)
+                    || !expected.equals(site.footprint())
+                    || site.siteCells()
+                        .size() != expected.size())
+                    throw new AssertionError(
+                        "Public center layout does not cover the actual complete structure: " + found);
+                if (found.getInteger("siteMainCandidates") != 0 || found.getInteger("siteSizeSearchCandidates") != 0
+                    || found.getInteger("siteFixedParameterConfigurations") != 1
+                    || found.hasKey("siteRangeAuditRuns"))
+                    throw new AssertionError("Automatic candidate/range search survived the native-read replacement");
+                try (var target = HologramNativeTargetPlan
+                    .fromSite(32651, ExtendedFacing.DEFAULT, site.siteCells(), found)) {
+                    while (!target.advance(System.nanoTime() + 2_000_000L)) {}
+                    String digest = target.targetDigest();
+                    if (firstDigest != null && !firstDigest.equals(digest))
+                        throw new AssertionError("Reopen actual digest changed");
+                    firstDigest = digest;
                 }
-                if (restored != hatches.size()) throw new AssertionError("Configured target lost site hatch offsets");
+                HologramNativeProjectionJob.rememberSite(live, new ArrayList<>(site.footprint()), found);
+                if (firstMetrics == null) firstMetrics = readMetrics(found);
+                else if (!firstMetrics.equals(readMetrics(found)))
+                    throw new AssertionError("Reopen source read counts changed");
+                System.out.println(
+                    "PASS_CENTER_PUBLIC_SITE tier=" + tier
+                        + " sectors="
+                        + Integer.bitCount(mask)
+                        + " opening="
+                        + opening
+                        + " members="
+                        + site.siteCells()
+                            .size()
+                        + " nativeCalls="
+                        + found.getLong("siteNativeCalls")
+                        + " geometryCalls="
+                        + found.getLong("siteGeometryNativeCalls")
+                        + " uniqueCells="
+                        + found.getLong("siteUniqueCells")
+                        + " sourceReads="
+                        + found.getLong("siteCellReads")
+                        + " fullSourceNbt="
+                        + found.getLong("siteTileNbtCaptures")
+                        + " elapsedMs="
+                        + (System.nanoTime() - start) / 1_000_000.0
+                        + " digest="
+                        + firstDigest);
             }
-            long replayElapsed = System.nanoTime() - replayStart;
-            if (!before.equals(HologramNativeCapture.capture(live))
-                || writes != (Long) HologramOreCenterStallInvestigation.get(scene, "writeVersion")
-                || signature != scene.contentSignature()
-                || !((MTEMultiBlockBase) center).mMachine)
-                throw new AssertionError("Site read mutated live controller or blocks");
-            for (var entry : hatches.entrySet()) {
-                var at = entry.getKey();
-                if (!entry.getValue()
-                    .equals(HologramNativeCapture.capture(scene.getTileEntity(at.x(), at.y() + 128, at.z()))))
-                    throw new AssertionError("Site read mutated live hatch state");
-            }
-            System.out.println(
-                "PASS_CENTER_SITE opening=" + (reopened ? "reopen" : "cold")
-                    + " tier="
-                    + tier
-                    + " sectors="
-                    + sectors
-                    + " cells="
-                    + footprint
-                    + " hatches="
-                    + choices.tagCount()
-                    + " nativeCalls="
-                    + selected.getLong("siteNativeCalls")
-                    + " uniqueCells="
-                    + selected.getLong("siteUniqueCells")
-                    + " cellReads="
-                    + selected.getLong("siteCellReads")
-                    + " continuousElapsedMs="
-                    + elapsed / 1_000_000L
-                    + " advanceCalls="
-                    + advanceCalls
-                    + " advanceBudgetMs=2 advanceTotalMs="
-                    + advanceNanos / 1_000_000.0
-                    + " maxAdvanceMs="
-                    + maxAdvanceNanos / 1_000_000.0
-                    + " busyFiveMsPer20TpsTickCpuLowerBoundMs="
-                    + ((advanceNanos + 4_999_999L) / 5_000_000L) * 50
-                    + " idleFortyMsPer20TpsTickCpuLowerBoundMs="
-                    + ((advanceNanos + 39_999_999L) / 40_000_000L) * 50
-                    + " targetReplayMs="
-                    + replayElapsed / 1_000_000L
-                    + " liveWrites=0 liveStateChanges=0");
-            // Match the real Observation's successful publication into the existing in-memory baseline.
-            // The next open still sends the unchanged default tool configuration, not the resolved first-open settings.
-            HologramNativeProjectionJob.rememberSite(live, siteOffsets, selected);
         }
+        if (!before.equals(HologramNativeCapture.capture(live)) || content != scene.contentSignature())
+            throw new AssertionError("Fixed public-status reading modified source controller or blocks");
+        if (prefix && Integer.bitCount(mask) < 6)
+            verifyNeighbors(ctor, scene, live, expected, firstDigest, firstMetrics, tier);
+        if (prefix) verifyConflict(scene, live, expected);
         HologramNativeProjectionJob.clearBaselines();
     }
 
-    /** Native cursor completion must prove the fixture itself before exercising automatic signal selection. */
-    private static void exactNativePreflight(HologramNativePreviewWorld scene, ItemStack signal, int tier, int sectors)
+    private static void verifyNeighbors(Constructor<?> ctor, Scene scene, BaseMetaTileEntity live,
+        LinkedHashSet<HologramNativeTargetPlan.Offset> expected, String digest, NBTTagCompound metrics, int tier)
         throws Exception {
-        BaseMetaTileEntity candidate = HologramNativeTargetPlan.freshController(32651, ExtendedFacing.DEFAULT);
-        GregTechAPI.addDummyWorld(PreflightWorld.class);
-        PreflightWorld mirror = HologramResourceWorld.create(() -> new PreflightWorld(scene, candidate));
-        candidate.setWorldObj(mirror);
-        Object machine = candidate.getMetaTileEntity();
-        Object structure = HologramOreCenterStallInvestigation.get(machine, "structure");
-        var environment = ISurvivalBuildEnvironment.create(
-            (predicate, simulate, count) -> {
-                throw new AssertionError("Exact native fixture needed material at " + mirror.last());
-            },
-            new HologramProjectorSimulation.Actor(mirror));
-        boolean updates = RunnableMachineUpdate.isCurrentThreadEnabled();
-        int previous = -1;
-        try {
-            RunnableMachineUpdate.setCurrentThreadEnabled(false);
-            for (int round = 1; round <= 2000; round++) {
-                int result = ((ISurvivalConstructable) machine).survivalConstruct(signal.copy(), 4096, environment);
-                if (result == -1) {
-                    System.out.println(
-                        "PASS_CENTER_EXACT_PREFLIGHT tier=" + tier + " sectors=" + sectors + " nativeCalls=" + round);
-                    return;
-                }
-                int cursor = (Integer) HologramOreCenterStallInvestigation.get(structure, "survivalCursor");
-                if (result != 0 || cursor == previous) throw new AssertionError(
-                    "Exact native fixture did not match tier=" + tier
-                        + " sectors="
-                        + sectors
-                        + " nativeResult="
-                        + result
-                        + " cursor="
-                        + cursor
-                        + " last="
-                        + mirror.last());
-                previous = cursor;
+        var oldHypothetical = geometry(ctor, 4, 6);
+        HologramNativeTargetPlan.Offset outside = null;
+        for (var cursor = oldHypothetical.currentPlacements(); cursor.hasNext();) {
+            var p = cursor.next();
+            var at = new HologramNativeTargetPlan.Offset(p.x(), p.y() - 128, p.z());
+            if (!expected.contains(at) && scene.isAirBlock(p.x(), p.y(), p.z())) {
+                outside = at;
+                break;
             }
-            throw new AssertionError("Exact native fixture exceeded cursor allowance");
-        } finally {
-            RunnableMachineUpdate.setCurrentThreadEnabled(updates);
+        }
+        if (outside == null) throw new AssertionError("No non-overlapping old hypothetical position found");
+        for (int kind = 0; kind < 2; kind++) {
+            scene.edit(true);
+            scene.setBlock(
+                outside.x(),
+                128 + outside.y(),
+                outside.z(),
+                kind == 0 ? Blocks.diamond_block : GregTechAPI.sBlockMachines,
+                0,
+                2);
+            TileEntity neighbor = scene.getTileEntity(outside.x(), 128 + outside.y(), outside.z());
+            if (neighbor instanceof BaseMetaTileEntity base) base.setInitialValuesAsNBT(null, (short) 32651);
+            NBTTagCompound neighborBefore = neighbor == null ? null : HologramNativeCapture.capture(neighbor);
+            scene.freeze();
+            var forbid = new HologramNativeCapture.Adapter() {
+
+                public boolean supports(TileEntity tile) {
+                    return tile == neighbor;
+                }
+
+                public NBTTagCompound capture(TileEntity tile) {
+                    throw new AssertionError("Unrelated center neighbor serialized");
+                }
+            };
+            HologramNativeCapture.register(forbid);
+            try (var site = HologramNativeSitePlan.begin(live, HologramOreCenterStallInvestigation.settings(1, 1))) {
+                while (!site.advance(System.nanoTime() + 2_000_000L)) {}
+                if (!site.settings()
+                    .getBoolean("siteKnown") || !expected.equals(site.footprint()))
+                    throw new AssertionError("An unrelated object contaminated the publicly known source extent");
+                if (!metrics.equals(readMetrics(site.settings())))
+                    throw new AssertionError("Neighbor changed source read counts");
+                var field = HologramNativeSitePlan.class.getDeclaredField("scene");
+                field.setAccessible(true);
+                if (((Map<?, ?>) field.get(site)).containsKey(
+                    com.gtnewhorizon.gtnhlib.util.CoordinatePacker.pack(outside.x(), 128 + outside.y(), outside.z())))
+                    throw new AssertionError("An unrelated object entered the source readset");
+                try (var target = HologramNativeTargetPlan
+                    .fromSite(32651, ExtendedFacing.DEFAULT, site.siteCells(), site.settings())) {
+                    while (!target.advance(System.nanoTime() + 2_000_000L)) {}
+                    if (!digest.equals(target.targetDigest()))
+                        throw new AssertionError("An unrelated object changed the source digest");
+                }
+            } finally {
+                HologramNativeCapture.unregister(forbid);
+            }
+            if (neighbor != null && !neighborBefore.equals(HologramNativeCapture.capture(neighbor)))
+                throw new AssertionError("Neighbor controller native data changed");
+            scene.edit(true);
+            scene.setBlock(outside.x(), 128 + outside.y(), outside.z(), Blocks.air, 0, 2);
+            scene.freeze();
+            System.out.println(
+                "PASS_CENTER_PUBLIC_NEIGHBOR kind=" + kind
+                    + " outside="
+                    + outside
+                    + " sourceDigest="
+                    + digest
+                    + " neighborSerialized=false sourceTier="
+                    + tier);
         }
     }
 
-    private static final class PreflightWorld extends HologramResourceWorld {
+    private static NBTTagCompound readMetrics(NBTTagCompound found) {
+        var result = new NBTTagCompound();
+        for (String name : new String[] { "siteNativeCalls", "siteNativeCaptureCalls", "siteGeometryNativeCalls",
+            "siteUniqueCells", "siteCellReads", "siteTileNbtCaptures" }) result.setLong(name, found.getLong(name));
+        return result;
+    }
 
-        private final HologramNativePreviewWorld source;
-        private final BaseMetaTileEntity controller;
-        private int x, y, z;
+    private static void verifyConflict(Scene scene, BaseMetaTileEntity live,
+        LinkedHashSet<HologramNativeTargetPlan.Offset> expected) throws Exception {
+        HologramNativeTargetPlan.Offset selected = null;
+        Block original = null;
+        int meta = 0;
+        for (var at : expected) {
+            int py = 128 + at.y();
+            Block block = scene.getBlock(at.x(), py, at.z());
+            if (block != Blocks.air && block != Blocks.diamond_block
+                && scene.getTileEntity(at.x(), py, at.z()) == null) {
+                selected = at;
+                original = block;
+                meta = scene.getBlockMetadata(at.x(), py, at.z());
+                break;
+            }
+        }
+        if (selected == null) throw new AssertionError("No native solid member available for true conflict fixture");
+        scene.edit(true);
+        scene.setBlock(selected.x(), 128 + selected.y(), selected.z(), Blocks.diamond_block, 0, 2);
+        scene.freeze();
+        try (var site = HologramNativeSitePlan.begin(live, HologramOreCenterStallInvestigation.settings(1, 1))) {
+            while (!site.advance(System.nanoTime() + 2_000_000L)) {}
+            if (site.settings()
+                .getBoolean("siteKnown")
+                || !site.siteCells()
+                    .isEmpty()
+                || !site.footprint()
+                    .isEmpty())
+                throw new AssertionError("A true own-member conflict was accepted or reduced to a smaller source");
+            System.out.println("PASS_CENTER_PUBLIC_OWN_CONFLICT at=" + selected + " known=false cells=0");
+        } finally {
+            scene.edit(true);
+            scene.setBlock(selected.x(), 128 + selected.y(), selected.z(), original, meta, 2);
+            scene.freeze();
+        }
+    }
 
-        PreflightWorld(HologramNativePreviewWorld source, BaseMetaTileEntity controller) {
+    /** Native hatch enumeration reads actual chunk TE maps; the old generation world has no chunks. */
+    private static final class Scene extends HologramResourceWorld {
+
+        private final HologramNativePreviewWorld generated;
+        private final Map<Long, Chunk> chunks = new LinkedHashMap<>();
+
+        Scene(HologramNativePreviewWorld generated) {
             super(GregTechAPI.sBlockMachines, 0);
-            this.source = source;
-            this.controller = controller;
-            tile = controller;
-        }
-
-        String last() {
-            return x + ","
-                + y
-                + ","
-                + z
-                + " block="
-                + source.getBlock(x, y, z)
-                + " metadata="
-                + source.getBlockMetadata(x, y, z);
-        }
-
-        @Override
-        boolean previewChunkExists(int x, int z) {
-            return source.previewChunkExists(x, z);
+            this.generated = generated;
+            tile = generated.tile;
+            tile.setWorldObj(this);
+            for (var cursor = generated.currentPlacements(); cursor.hasNext();) {
+                var p = cursor.next();
+                if (p.tile() != null) {
+                    p.tile()
+                        .setWorldObj(this);
+                    getChunkFromChunkCoords(p.x() >> 4, p.z() >> 4).chunkTileEntityMap
+                        .put(new ChunkPosition(p.x() & 15, p.y(), p.z() & 15), p.tile());
+                }
+            }
+            getChunkFromChunkCoords(tile.xCoord >> 4, tile.zCoord >> 4).chunkTileEntityMap
+                .put(new ChunkPosition(tile.xCoord & 15, tile.yCoord, tile.zCoord & 15), tile);
         }
 
         @Override
-        public boolean blockExists(int x, int y, int z) {
-            return source.blockExists(x, y, z);
+        public Chunk getChunkFromChunkCoords(int cx, int cz) {
+            long key = ((long) cx << 32) ^ (cz & 0xffffffffL);
+            return chunks.computeIfAbsent(key, ignored -> new Chunk(this, cx, cz));
         }
 
         @Override
         public Block getBlock(int x, int y, int z) {
-            this.x = x;
-            this.y = y;
-            this.z = z;
-            return source.getBlock(x, y, z);
+            return generated.getBlock(x, y, z);
         }
 
         @Override
         public int getBlockMetadata(int x, int y, int z) {
-            this.x = x;
-            this.y = y;
-            this.z = z;
-            return source.getBlockMetadata(x, y, z);
+            return generated.getBlockMetadata(x, y, z);
         }
 
         @Override
         public TileEntity getTileEntity(int x, int y, int z) {
-            return x == controller.xCoord && y == controller.yCoord && z == controller.zCoord ? controller
-                : source.getTileEntity(x, y, z);
+            return generated.getTileEntity(x, y, z);
+        }
+
+        @Override
+        public boolean blockExists(int x, int y, int z) {
+            return generated.blockExists(x, y, z);
+        }
+
+        @Override
+        boolean previewChunkExists(int x, int z) {
+            return true;
         }
 
         @Override
         public boolean setBlock(int x, int y, int z, Block block, int meta, int flags) {
-            throw new AssertionError("Native preflight attempted write");
+            boolean result = generated.setBlock(x, y, z, block, meta, flags);
+            TileEntity placed = generated.getTileEntity(x, y, z);
+            var chunk = getChunkFromChunkCoords(x >> 4, z >> 4);
+            var at = new ChunkPosition(x & 15, y, z & 15);
+            if (placed == null) chunk.chunkTileEntityMap.remove(at);
+            else {
+                placed.setWorldObj(this);
+                chunk.chunkTileEntityMap.put(at, placed);
+            }
+            return result;
         }
 
-        @Override
-        public boolean setBlockMetadataWithNotify(int x, int y, int z, int meta, int flags) {
-            throw new AssertionError("Native preflight attempted metadata write");
+        boolean edit(boolean value) {
+            return generated.edit(value);
         }
 
-        @Override
-        public void setTileEntity(int x, int y, int z, TileEntity tile) {
-            throw new AssertionError("Native preflight attempted tile write");
+        void freeze() {
+            generated.freeze();
         }
 
-        @Override
-        public void removeTileEntity(int x, int y, int z) {
-            throw new AssertionError("Native preflight attempted tile removal");
+        long contentSignature() {
+            return generated.contentSignature();
+        }
+
+        java.util.Iterator<HologramNativePreviewWorld.Placement> currentPlacements() {
+            return generated.currentPlacements();
         }
     }
 }

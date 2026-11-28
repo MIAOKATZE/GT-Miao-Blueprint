@@ -51,7 +51,7 @@ final class HologramConstructionJobs {
         }
 
         default boolean canReplace() {
-            return operation() == Operation.REPAIR || operation() == Operation.REPLACE;
+            return operation() == Operation.REPLACE;
         }
 
         default boolean removalCurrent(Target cell) {
@@ -306,11 +306,19 @@ final class HologramConstructionJobs {
                 && world.getTileEntity(cell.x, cell.y, cell.z) == null;
             if (cell.air || source.operation() == Operation.DEMOLISH) {
                 if (empty) return HologramNativeConstruction.Outcome.SATISFIED;
+                if (source.operation() == Operation.BUILD) {
+                    session.status = "建造要求此位置为空，未移除已有方块。";
+                    return HologramNativeConstruction.Outcome.OBSTRUCTED;
+                }
                 return remove(cell) ? HologramNativeConstruction.Outcome.PLACED
                     : HologramNativeConstruction.Outcome.FAILED;
             }
             if (HologramNativeConstruction.matches(session, cell.prepared, cell.x, cell.y, cell.z))
                 return HologramNativeConstruction.Outcome.SATISFIED;
+            if (!empty && !source.canReplace()) {
+                session.status = "建造目标被占用，未修改原方块。";
+                return HologramNativeConstruction.Outcome.OBSTRUCTED;
+            }
             if (!empty && HologramNativeConstruction.synchronizable(session, cell.prepared, cell.x, cell.y, cell.z)) {
                 boolean changed = HologramNativeConstruction
                     .synchronize(session, cell.prepared, cell.x, cell.y, cell.z, this::current);

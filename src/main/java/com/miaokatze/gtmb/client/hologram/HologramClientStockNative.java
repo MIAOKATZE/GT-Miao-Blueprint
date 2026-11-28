@@ -124,9 +124,7 @@ public final class HologramClientStockNative {
 
         boolean placing() {
             return original.projection()
-                .operation() == HologramStockNativeWire.Operation.BUILD
-                || original.projection()
-                    .operation() == HologramStockNativeWire.Operation.REPAIR;
+                .operation() == HologramStockNativeWire.Operation.BUILD;
         }
 
         String operationLabel() {
@@ -164,7 +162,7 @@ public final class HologramClientStockNative {
         boolean submit(Confirmation original, Context context, Owner owner, long now) {
             retireChangedContext(context);
             if (active != null) {
-                owner.notice.accept(projectorOr("stock.request_busy", "另一个原生补建请求尚未结束，请先核对现场。"));
+                owner.notice.accept(projectorOr("stock.request_busy", "另一个原生施工请求尚未结束，请先核对现场。"));
                 return false;
             }
             if (context == null || !context.same(context) || !owner.exactBeforeStart.getAsBoolean()) {

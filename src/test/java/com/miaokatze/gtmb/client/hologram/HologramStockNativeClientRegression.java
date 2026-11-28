@@ -421,25 +421,25 @@ public final class HologramStockNativeClientRegression {
         HologramState displayed, RecordingWire recorded, NetHandlerPlayClient connection)
         throws ReflectiveOperationException {
         var state = screen.nativeControllerState();
-        for (var action : new HologramStockNativeWire.Operation[] { HologramStockNativeWire.Operation.REPAIR,
-            HologramStockNativeWire.Operation.REPLACE }) {
-            var stage = action == HologramStockNativeWire.Operation.REPAIR ? HologramStockNativeWire.Stage.UNFORMED
-                : HologramStockNativeWire.Stage.FORMED;
+        for (var action : new HologramStockNativeWire.Operation[] { HologramStockNativeWire.Operation.REPLACE,
+            HologramStockNativeWire.Operation.DEMOLISH }) {
+            var stage = HologramStockNativeWire.Stage.FORMED;
             state.observe(
                 new HologramStockNativeWire.ServerObservation(236, 0, 64, 0, stage, state.targetRevision(), ""));
             SimpleAssert.that(state.select(action), "matching observed stage admits recovery test action");
             field(HologramUiSession.class, "state").set(ui.session, displayed.withMetadata(state.metadata()));
             SimpleAssert.that(
                 ui.review.openNativeLocalMaterials() && ui.review.localRecoveryAvailable(),
-                "repair and replacement expose recovery destination in their own current material pane");
+                "replacement and demolition expose recovery destination in their own current material pane");
             clickExistingRecovery(ui);
             SimpleAssert
                 .eq(1, ui.review.nativeRecoveryDestination(), "real recovery widget chooses AE before confirmation");
             clickExistingSubmit(ui);
-            SimpleAssert.eq(1, recorded.sent.size(), "one repair/replacement footer click sends one confirmed BEGIN");
+            SimpleAssert
+                .eq(1, recorded.sent.size(), "one replacement/demolition footer click sends one confirmed BEGIN");
             var probe = recorded.sent.get(0);
             SimpleAssert.that(
-                probe.getInteger("projectionOperation") == action.ordinal() && probe.getInteger("destination") == 1
+                probe.getInteger("projectionOperation") == action.wireId() && probe.getInteger("destination") == 1
                     && (probe.getInteger("sources") & 32) == 32,
                 "real confirmation freezes AE recovery in projection and source mask bit 5 for " + action);
             SimpleAssert

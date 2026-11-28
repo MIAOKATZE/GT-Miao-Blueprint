@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.function.BooleanSupplier;
 
 import net.minecraft.block.Block;
+import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.init.Blocks;
 import net.minecraft.item.ItemBlock;
 import net.minecraft.item.ItemStack;
@@ -36,6 +37,38 @@ import gregtech.common.blocks.ItemMachines;
 
 /** One prepared target and one paid native placement, shared by structures and saved blueprints. */
 final class HologramNativeConstruction {
+
+    /** Only public method ownership is cached; inherited vanilla use keeps native placeBlockAt overrides. */
+    private static final ClassValue<Boolean> VANILLA_ITEM_USE = new ClassValue<Boolean>() {
+
+        @Override
+        protected Boolean computeValue(Class<?> type) {
+            boolean found = false;
+            for (String name : new String[] { "onItemUse", "func_77648_a" }) try {
+                var method = type.getMethod(
+                    name,
+                    ItemStack.class,
+                    EntityPlayer.class,
+                    World.class,
+                    int.class,
+                    int.class,
+                    int.class,
+                    int.class,
+                    float.class,
+                    float.class,
+                    float.class);
+                found = true;
+                if (method.getDeclaringClass() != ItemBlock.class) return false;
+            } catch (NoSuchMethodException absentAlias) {
+                // Exactly one public MCP/SRG alias normally exists in a given runtime.
+            }
+            return found;
+        }
+    };
+
+    static boolean inheritsVanillaItemUse(Class<? extends ItemBlock> type) {
+        return VANILLA_ITEM_USE.get(type);
+    }
 
     enum Outcome {
         PLACED,
@@ -704,70 +737,72 @@ final class HologramNativeConstruction {
     private static void writeNative(HologramSession session, Prepared target, ItemStack material, int x, int y, int z,
         boolean cachePaid) throws IOException {
         World world = session.player.worldObj;
-        int side = placementSide(target);
-        if (target.nativeTile) {
-            if (!world.setBlock(x, y, z, target.block, target.metadata, 3)) throw new IOException("原生组合方块拒绝施工。");
-        } else if (target.block instanceof ICustomBlockSetting custom) {
-            custom.setBlock(world, x, y, z, target.metadata);
-            target.block.onBlockPlacedBy(world, x, y, z, session.player, material.copy());
-            target.block.onPostBlockPlaced(world, x, y, z, target.metadata);
-        } else if (material.getItem() instanceof ItemBlock item) {
-            if (!world.canPlaceEntityOnSide(item.field_150939_a, x, y, z, false, side, session.player, material))
-                throw new IOException("原生碰撞检查拒绝施工。");
-            boolean placed;
-            if (item instanceof ItemMachines || item.getClass() == ItemBlock.class) {
-                int metadata = item.field_150939_a
-                    .onBlockPlaced(world, x, y, z, side, .5f, .5f, .5f, item.getMetadata(material.getItemDamage()));
-                placed = item
-                    .placeBlockAt(material.copy(), session.player, world, x, y, z, side, .5f, .5f, .5f, metadata);
-            } else {
-                // Custom use semantics (for example slabs) remain native; Forge event ownership stays here.
-                placed = item.onItemUse(material.copy(), session.player, world, x, y, z, side, .5f, .5f, .5f);
-            }
-            if (!placed) throw new IOException("原生物品拒绝放置。");
-            restoreSavedVanillaPose(world, target, x, y, z);
-        } else throw new IOException("该原生目标没有可用的物品放置接口。");
-        TileEntity tile = world.getTileEntity(x, y, z);
-        if (HologramRecovery.hasSeal(material)) {
-            if (tile == null || !HologramRecovery.supported(tile)) throw new IOException("封存设备没有完整恢复能力。");
-            if (!HologramRecovery.restorePlaced(world, x, y, z, placedSeal(session, target, x, y, z)))
-                throw new IOException("付费设备状态恢复失败。");
-            tile = world.getTileEntity(x, y, z);
-        } else if (target.saved) {
-            NBTTagCompound data = payload(target, world, x, y, z, cachePaid);
-            if (data != null && !HologramAeBlueprint.staticBlockShell(target.block, target.metadata)) {
-                HologramNetworkBindings.validate(data, session.player, session.networkBindings);
-                data = HologramBlueprintOwnership
-                    .prepare(tile, HologramBlueprintNbt.nativePayload(data), session.player);
-                HologramCellPolicy.validateGtPayloadIdentity(material, data);
-                if (target.nativeTile) tile = HologramNativePlacement.install(
-                    world,
-                    x,
-                    y,
-                    z,
-                    target.block,
-                    target.metadata,
-                    data,
-                    session.player,
-                    session.networkBindings,
-                    HologramNetworkBindings.node(target.block) && target.cleared);
-                else {
-                    if (tile == null) throw new IOException("原生物品未初始化目标设备。");
-                    // A selected subset must not zero the native item's other defaults or modes.
-                    NBTTagCompound defaults = HologramNativeCapture.capture(tile);
-                    for (Object key : data.func_150296_c()) defaults.setTag(
-                        (String) key,
-                        data.getTag((String) key)
-                            .copy());
-                    tile.readFromNBT(defaults);
+        try (HologramConstructionSounds ignored = HologramConstructionSounds.enter(world, x, y, z)) {
+            int side = placementSide(target);
+            if (target.nativeTile) {
+                if (!world.setBlock(x, y, z, target.block, target.metadata, 3)) throw new IOException("原生组合方块拒绝施工。");
+            } else if (target.block instanceof ICustomBlockSetting custom) {
+                custom.setBlock(world, x, y, z, target.metadata);
+                target.block.onBlockPlacedBy(world, x, y, z, session.player, material.copy());
+                target.block.onPostBlockPlaced(world, x, y, z, target.metadata);
+            } else if (material.getItem() instanceof ItemBlock item) {
+                if (!world.canPlaceEntityOnSide(item.field_150939_a, x, y, z, false, side, session.player, material))
+                    throw new IOException("原生碰撞检查拒绝施工。");
+                boolean placed;
+                if (item instanceof ItemMachines || inheritsVanillaItemUse(item.getClass())) {
+                    int metadata = item.field_150939_a
+                        .onBlockPlaced(world, x, y, z, side, .5f, .5f, .5f, item.getMetadata(material.getItemDamage()));
+                    placed = item
+                        .placeBlockAt(material.copy(), session.player, world, x, y, z, side, .5f, .5f, .5f, metadata);
+                } else {
+                    // Custom use semantics (for example slabs) remain native; Forge event ownership stays here.
+                    placed = item.onItemUse(material.copy(), session.player, world, x, y, z, side, .5f, .5f, .5f);
+                }
+                if (!placed) throw new IOException("原生物品拒绝放置。");
+                restoreSavedVanillaPose(world, target, x, y, z);
+            } else throw new IOException("该原生目标没有可用的物品放置接口。");
+            TileEntity tile = world.getTileEntity(x, y, z);
+            if (HologramRecovery.hasSeal(material)) {
+                if (tile == null || !HologramRecovery.supported(tile)) throw new IOException("封存设备没有完整恢复能力。");
+                if (!HologramRecovery.restorePlaced(world, x, y, z, placedSeal(session, target, x, y, z)))
+                    throw new IOException("付费设备状态恢复失败。");
+                tile = world.getTileEntity(x, y, z);
+            } else if (target.saved) {
+                NBTTagCompound data = payload(target, world, x, y, z, cachePaid);
+                if (data != null && !HologramAeBlueprint.staticBlockShell(target.block, target.metadata)) {
+                    HologramNetworkBindings.validate(data, session.player, session.networkBindings);
+                    data = HologramBlueprintOwnership
+                        .prepare(tile, HologramBlueprintNbt.nativePayload(data), session.player);
+                    HologramCellPolicy.validateGtPayloadIdentity(material, data);
+                    if (target.nativeTile) tile = HologramNativePlacement.install(
+                        world,
+                        x,
+                        y,
+                        z,
+                        target.block,
+                        target.metadata,
+                        data,
+                        session.player,
+                        session.networkBindings,
+                        HologramNetworkBindings.node(target.block) && target.cleared);
+                    else {
+                        if (tile == null) throw new IOException("原生物品未初始化目标设备。");
+                        // A selected subset must not zero the native item's other defaults or modes.
+                        NBTTagCompound defaults = HologramNativeCapture.capture(tile);
+                        for (Object key : data.func_150296_c()) defaults.setTag(
+                            (String) key,
+                            data.getTag((String) key)
+                                .copy());
+                        tile.readFromNBT(defaults);
+                    }
                 }
             }
+            if (tile instanceof IGregTechTileEntity gt) {
+                gt.setOwnerUuid(session.player.getUniqueID());
+                gt.setOwnerName(session.player.getCommandSenderName());
+            }
+            applyNativeState(session, target, tile, x, y, z, cachePaid);
         }
-        if (tile instanceof IGregTechTileEntity gt) {
-            gt.setOwnerUuid(session.player.getUniqueID());
-            gt.setOwnerName(session.player.getCommandSenderName());
-        }
-        applyNativeState(session, target, tile, x, y, z, cachePaid);
     }
 
     /** Reuse the exact persisted vanilla schemas already used for blueprint/CUT rotation. */

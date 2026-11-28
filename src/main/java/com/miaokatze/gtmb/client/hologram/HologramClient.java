@@ -1968,6 +1968,19 @@ public final class HologramClient {
             return;
         }
         NBTTagCompound nbt = result.value;
+        if (nbt.hasKey(HologramNetwork.NATIVE_SITE_REPLY)) {
+            try {
+                Object connection = Minecraft.getMinecraft()
+                    .getNetHandler();
+                if (connection != null && connection == assemblyConnection)
+                    HologramNetwork.dispatchStockNativeSiteSnapshot(nbt, connection);
+            } finally {
+                // This is a typed receipt, not a workspace baseline. Its receiver owns the decoded root even if
+                // the request became stale; consumption still releases the existing FIFO transport.
+                snapshotHandled(result, true);
+            }
+            return;
+        }
         if (!validSnapshotIdentity(nbt)) {
             snapshotHandled(result, true);
             return;

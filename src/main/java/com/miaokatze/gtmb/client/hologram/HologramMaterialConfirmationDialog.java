@@ -240,7 +240,6 @@ final class HologramMaterialConfirmationDialog {
             case 168 -> new int[] { 14, 340, 92 };
             case 196 -> new int[] { 112, 340, 116 };
             case 211 -> new int[] { 14, 369, 102 };
-            case 215 -> new int[] { 122, 369, 102 };
             case 184 -> new int[] { 230, 369, 102 };
             case 245 -> new int[] { 400, 340, 218 };
             case 246 -> new int[] { 476, 369, 142 };
@@ -702,16 +701,6 @@ final class HologramMaterialConfirmationDialog {
                 () -> 0));
         panel.child(
             button(
-                215,
-                () -> projectorOr("native.ui.remove_obstructions", "移除阻塞物"),
-                122,
-                369,
-                102,
-                () -> action(215),
-                () -> editable() && ui.review.materialBlockers() > 0,
-                () -> ui.review.materialBlockers() > 0 ? HologramUiAccent.WARNING : 0));
-        panel.child(
-            button(
                 184,
                 () -> projectorOr("native.ui.validation_details", "数据校验详情"),
                 230,
@@ -883,8 +872,6 @@ final class HologramMaterialConfirmationDialog {
             return projectorOr("native.ui.this_blueprint_has_no_quantum_networks_to", "本图没有需要绑定的量子网络。");
         if (id == 211 && !ui.identity.hasPlacementIdentityChoices())
             return projectorOr("native.ui.this_blueprint_has_no_adjustable_identity_or", "本图没有可调整的身份与外部绑定数据。");
-        if (id == 215 && ui.review.materialBlockers() == 0)
-            return projectorOr("native.ui.there_are_no_obstructions_to_remove_in", "本次范围没有需要移除的阻塞物。");
         if (id == 162 && !orderActive()) {
             if (!materials.ready() || ui.session.materialReviewPending())
                 return projectorOr("native.ui.checking_materials_wait_for_the_quote_update", "正在核对本次材料，请等待报价更新。");
