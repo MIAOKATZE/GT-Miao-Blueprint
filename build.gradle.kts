@@ -472,6 +472,7 @@ tasks.register<JavaExec>("runCutPackRegression") {
 
 // Isolated platform graphs inspect the same production output; none enters compilation.
 apply(from = "gradle/gtnh-compatibility.gradle")
+apply(from = "gradle/gtnh-runtime-mixin.gradle")
 
 tasks.named<JavaExec>("runLittleTilesCompatibilityRegression") {
     classpath += configurations.detachedConfiguration(

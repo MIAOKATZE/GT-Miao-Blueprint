@@ -17,7 +17,12 @@ import gregtech.api.metatileentity.GregTechTileClientEvents;
 @Mixin(targets = "gregtech.api.metatileentity.BaseMetaTileEntity", remap = false)
 public abstract class MixinHologramMachineNotifications {
 
-    @Inject(method = "receiveClientEvent", at = @At("RETURN"), remap = false, require = 1)
+    // This Minecraft override has an MCP name in development and an SRG name in runtime GT jars.
+    @Inject(
+        method = { "receiveClientEvent(II)Z", "func_145842_c(II)Z" },
+        at = @At("RETURN"),
+        remap = false,
+        require = 1)
     private void gtmb$machineChanged(int event, int value, CallbackInfoReturnable<Boolean> callback) {
         if (event == GregTechTileClientEvents.CHANGE_COMMON_DATA || event == GregTechTileClientEvents.CHANGE_CUSTOM_DATA
             || event == GregTechTileClientEvents.CHANGE_COLOR)

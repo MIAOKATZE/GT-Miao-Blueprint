@@ -237,6 +237,8 @@ public final class PlatformLinkageContracts {
                     if ("func_145841_b".equals(name) && alternatives.contains("writeToNBT")) name = "writeToNBT";
                     if ("func_145839_a".equals(name) && alternatives.contains("readFromNBT")) name = "readFromNBT";
                     if ("func_149749_a".equals(name) && alternatives.contains("breakBlock")) name = "breakBlock";
+                    if ("func_145842_c".equals(name) && alternatives.contains("receiveClientEvent(II)Z"))
+                        name = "receiveClientEvent";
                     selectors++;
                     if (member(owner, name, desc, false, new HashSet<>()) == null)
                         failures.add(source + " Mixin selector missing: " + owner + "." + selector);
