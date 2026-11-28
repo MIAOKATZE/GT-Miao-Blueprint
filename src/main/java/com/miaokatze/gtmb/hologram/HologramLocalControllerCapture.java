@@ -273,14 +273,14 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
 
     /** A header has the existing projection shape but no server session identity or receipts. */
     public NBTTagCompound opening() {
-        NBTTagCompound state = header();
+        NBTTagCompound state = header(false);
         state.setBoolean("capturePending", true);
         state.setTag("capabilities", shellCapabilities());
         return state;
     }
 
     public NBTTagCompound unavailable(String status) {
-        NBTTagCompound state = header();
+        NBTTagCompound state = header(false);
         state.setBoolean("supported", false);
         state.setBoolean("localStructureUnavailable", true);
         state.setString("status", status);
@@ -910,6 +910,10 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
     }
 
     private NBTTagCompound header() {
+        return header(true);
+    }
+
+    private NBTTagCompound header(boolean publishTarget) {
         NBTTagCompound state = new NBTTagCompound();
         state.setString("session", session);
         state.setString("generation", generation);
@@ -922,16 +926,22 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
         state.setBoolean("supported", true);
         state.setBoolean("keepController", true);
         state.setBoolean("quotesIncomplete", true);
+        boolean ready = publishTarget && nativeTarget != null
+            && nativeTarget.complete()
+            && nativeTarget.targetDigest() != null
+            && !nativeTarget.targetDigest()
+                .isEmpty();
+        state.setBoolean("nativeTargetReady", ready);
         state.setBoolean(
             "nativeExecutionSupported",
-            nativeWorkflow && (nativeTarget == null || nativeTarget.cells()
-                .stream()
-                .allMatch(
-                    cell -> cell.requiredAir() || cell.material() != null && cell.material()
-                        .getItem() != null)));
-        if (nativeTarget != null) {
+            nativeWorkflow && ready
+                && nativeTarget.cells()
+                    .stream()
+                    .allMatch(
+                        cell -> cell.requiredAir() || cell.material() != null && cell.material()
+                            .getItem() != null));
+        if (ready) {
             state.setString("nativeTargetDigest", nativeTarget.targetDigest());
-            state.setBoolean("nativeTargetReady", true);
             state.setBoolean(
                 "siteFormed",
                 liveContext instanceof gregtech.api.metatileentity.implementations.MTEMultiBlockBase machine

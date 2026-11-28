@@ -80,7 +80,8 @@ final class HologramProjectorSimulation implements AutoCloseable {
     private ItemStack piecePublishedSignal;
     private Actor actor;
     private ISurvivalBuildEnvironment environment;
-    private int stableRounds, replayRounds, replayStableRounds;
+    private int replayRounds;
+    private boolean requiredCheckPending = true;
     private HologramNativePreviewItems replaySource, previousItems;
     private boolean creative, started, instrumented, limitExceeded;
     private NBTTagCompound config = new NBTTagCompound();
@@ -164,7 +165,7 @@ final class HologramProjectorSimulation implements AutoCloseable {
                     }
                     case REQUIRED -> {
                         if (probe.fillRequiredSpots(deadline)) {
-                            if (probe.requiredFilled()) stableRounds = 0;
+                            requiredCheckPending = probe.requiredFilled();
                             stage = Stage.BUILD;
                         }
                     }
@@ -204,11 +205,11 @@ final class HologramProjectorSimulation implements AutoCloseable {
                 && context instanceof INEIPreviewModifier modifier) modifier.onPreviewConstruct(trigger.copy());
         }
         if (!creative && constructable instanceof ISurvivalConstructable survival) {
-            long before = world.contentSignature();
             world.takeChanged();
             nativeResult = survival.survivalConstruct(probeSignal(trigger), 4096, environment());
             boolean changed = world.takeChanged();
-            if (construction && nativeResult == 0 && !changed) stage = Stage.REQUIRED;
+            if (changed) requiredCheckPending = true;
+            if (construction && nativeResult == 0 && !changed && requiredCheckPending) stage = Stage.REQUIRED;
             if (!construction && controller instanceof IGregTechTileEntity
                 && context instanceof INEIPreviewModifier
                 && !changed) {
@@ -234,10 +235,9 @@ final class HologramProjectorSimulation implements AutoCloseable {
                 return true;
             }
             if (nativeResult < -2) throw new IOException("LOCAL_NATIVE_PREVIEW_RESULT:" + nativeResult);
-            // Some custom constructors advance an internal cursor across a few empty rounds. Allow
-            // those, but never spin 2000 times on an impossible element or a self-removing block.
-            stableRounds = world.contentSignature() != before ? 0 : stableRounds + 1;
-            if (stableRounds >= 16) throw new IOException("LOCAL_NATIVE_PREVIEW_NO_PROGRESS");
+            // StructureLib reports placements, not internal progress. A native constructor may
+            // spend many zero-write rounds verifying an already complete target before returning -1.
+            // Only its return code establishes completion; the existing total budget bounds failure.
             return false;
         }
         constructable.construct(trigger.copy(), false);
@@ -253,7 +253,7 @@ final class HologramProjectorSimulation implements AutoCloseable {
         items = source;
         items.bind(world);
         environment = null;
-        replayRounds = replayStableRounds = 0;
+        replayRounds = 0;
         if (context instanceof MTEMultiBlockBase machine) {
             machine.clearHatches();
             machine.mMachine = false;
@@ -265,7 +265,6 @@ final class HologramProjectorSimulation implements AutoCloseable {
         try {
             if (++replayRounds > 2000) throw new IOException("LOCAL_NATIVE_PREVIEW_UNSTABLE");
             if (constructable instanceof ISurvivalConstructable survival && !creative) {
-                long before = world.contentSignature();
                 world.takeChanged();
                 int result = survival.survivalConstruct(trigger.copy(), 4096, environment());
                 world.takeChanged();
@@ -275,8 +274,6 @@ final class HologramProjectorSimulation implements AutoCloseable {
                     return done = true;
                 }
                 if (result < -2) throw new IOException("LOCAL_NATIVE_PREVIEW_RESULT:" + result);
-                replayStableRounds = world.contentSignature() != before ? 0 : replayStableRounds + 1;
-                if (replayStableRounds >= 16) throw new IOException("LOCAL_NATIVE_PREVIEW_NO_PROGRESS");
                 return false;
             }
             constructable.construct(trigger.copy(), false);
@@ -348,7 +345,10 @@ final class HologramProjectorSimulation implements AutoCloseable {
             if (definition != null) simulation.definition = definition;
             if (signal != null) {
                 simulation.pieceSignal = signal.copy();
-                simulation.piecePublishedSignal = simulation.publishedSignal(signal);
+                ItemStack published = simulation.publishedSignal(signal);
+                if (!ItemStack.areItemStacksEqual(simulation.piecePublishedSignal, published))
+                    simulation.requiredCheckPending = true;
+                simulation.piecePublishedSignal = published;
             }
         }
     }
@@ -368,10 +368,12 @@ final class HologramProjectorSimulation implements AutoCloseable {
             active.limitExceeded = true;
             return;
         }
-        active.elements.put(p, event.getElement());
+        IStructureElement<?> previousElement = active.elements.put(p, event.getElement());
         // Signals are owned immutable declarations; readers receive copies via signalAt. A large
         // repeated native walk must not allocate one compound/NBT tree per visit and round.
         active.signals.put(p, active.piecePublishedSignal);
+        // Compare channel payloads once per native piece above, not once per coordinate and round.
+        if (previousElement != event.getElement()) active.requiredCheckPending = true;
         active.items.position(
             HologramNativeTargetPlan.position(
                 p.x() - active.controller.xCoord,

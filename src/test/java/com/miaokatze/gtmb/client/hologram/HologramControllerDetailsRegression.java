@@ -149,6 +149,24 @@ public final class HologramControllerDetailsRegression {
         sector.setInteger("ore_center_sectors", 1);
         publishedSettings.setTag("channels", sector);
         HologramState published = earlyMetadata.withMetadata(publishedSettings);
+        NBTTagCompound sealedMetadata = new NBTTagCompound();
+        sealedMetadata.setBoolean("nativeTargetReady", true);
+        sealedMetadata.setBoolean("nativeExecutionSupported", true);
+        sealedMetadata.setString("nativeTargetDigest", "previous-complete-target");
+        HologramState sealed = published.withMetadata(sealedMetadata);
+        HologramState failed = HologramScreen.failedControllerTarget(sealed, new NBTTagCompound(), "native failed");
+        SimpleAssert.that(
+            !failed.data.getBoolean("nativeTargetReady") && !failed.data.getBoolean("nativeExecutionSupported")
+                && !failed.data.hasKey("nativeTargetDigest")
+                && !failed.data.getBoolean("capturePending"),
+            "failure publication retires stale execution evidence without consulting the broken capture");
+        SimpleAssert.that(
+            failed.cells == sealed.cells && failed.materials == sealed.materials
+                && failed.reusesControllerGeometry(sealed),
+            "failure metadata retains the same renderer geometry and material preparation");
+        SimpleAssert.that(
+            sealed.data.getBoolean("nativeTargetReady") && sealed.data.hasKey("nativeTargetDigest"),
+            "retiring a failed presentation does not mutate the previous immutable publication");
         NBTTagCompound requestedSettings = (NBTTagCompound) publishedSettings.copy();
         requestedSettings.getCompoundTag("channels")
             .setInteger("ore_center_sectors", 5);

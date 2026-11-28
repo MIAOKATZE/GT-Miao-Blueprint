@@ -889,21 +889,36 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             }
             if (localControllerPrevious != null && !localControllerPrevious.cells.isEmpty()) {
                 updateState(
-                    localControllerPrevious
-                        .withMetadata(withNativeControllerState(localControllerPreferences(ui.session.state().data))));
+                    failedControllerTarget(
+                        localControllerPrevious,
+                        withNativeControllerState(localControllerPreferences(ui.session.state().data)),
+                        status));
                 nativeTargetSettings = targetSettings(localControllerPrevious);
                 ui.session.notice(status);
             } else {
                 // Read-only site observation remains possible even when no target has ever been published.
                 if (nativeTargetSettings == null && pendingNativeTargetSettings != null)
                     nativeTargetSettings = (NBTTagCompound) pendingNativeTargetSettings.copy();
-                updateState(
-                    new HologramState(localController.unavailable(status))
-                        .withMetadata(withNativeControllerState(localControllerPreferences(ui.session.state().data))));
+                NBTTagCompound unavailable = withNativeControllerState(
+                    localControllerPreferences(ui.session.state().data));
+                unavailable.setBoolean("supported", false);
+                unavailable.setBoolean("localStructureUnavailable", true);
+                // Failure publication uses only already-owned metadata. Never call back into the
+                // incomplete native target (or its capabilities) while handling its exception.
+                updateState(failedControllerTarget(ui.session.state(), unavailable, status));
             }
         } finally {
             if (retire) retireLocalController();
         }
+    }
+
+    static HologramState failedControllerTarget(HologramState previous, NBTTagCompound metadata, String status) {
+        NBTTagCompound failure = (NBTTagCompound) metadata.copy();
+        failure.setBoolean("capturePending", false);
+        failure.setBoolean("nativeTargetReady", false);
+        failure.setBoolean("nativeExecutionSupported", false);
+        failure.setString("status", status);
+        return previous.withMetadata(failure);
     }
 
     private void advanceLocalControllerTarget(long deadline) throws java.io.IOException {

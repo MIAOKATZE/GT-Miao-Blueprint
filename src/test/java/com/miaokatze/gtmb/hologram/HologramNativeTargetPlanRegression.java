@@ -45,9 +45,10 @@ final class HologramNativeTargetPlanRegression {
             HologramNativeSavedWorldRegression.withOfflineRegistries(() -> {
                 try {
                     verify();
+                    verifyIncompleteCapture();
                     verifyRawChoices();
                     verifyWater();
-                } catch (IOException failure) {
+                } catch (IOException | ReflectiveOperationException failure) {
                     throw new AssertionError("native target generation", failure);
                 }
             });
@@ -78,7 +79,7 @@ final class HologramNativeTargetPlanRegression {
                     .size(),
                 "unvisited real writes form the complete target");
             Controller built = (Controller) target.context();
-            SimpleAssert.eq(6, built.passes, "four empty cursor slices reach -1 without a redundant default replay");
+            SimpleAssert.eq(134, built.passes, "long read-only native verification reaches -1 without default replay");
             SimpleAssert.eq(0, built.started + built.completed, "ordinary targets never run NEI hooks");
             for (var cell : target.cells()) {
                 SimpleAssert.eq(null, cell.element(), "custom targets retain optional element absence");
@@ -119,9 +120,9 @@ final class HologramNativeTargetPlanRegression {
                     throw new AssertionError("accepted incomplete/invalid native mode " + mode);
                 } catch (IOException expected) {
                     if (mode == 2 || mode == 10) SimpleAssert.eq(
-                        16,
+                        2000,
                         Controller.nativeCalls,
-                        "zero-progress and same-round self-removal stop well before the 2000-round safety cap");
+                        "non-completing and self-removing constructors retain the existing total-call limit");
                     SimpleAssert.that(
                         !com.gtnewhorizon.structurelib.StructureLibAPI.isInstrumentEnabled(),
                         "failed generation restores the instrument scope");
@@ -162,6 +163,59 @@ final class HologramNativeTargetPlanRegression {
             GregTechAPI.sBlockMachines = previousBlock;
             GregTechAPI.METATILEENTITIES[ID] = previous;
         }
+    }
+
+    private static void verifyIncompleteCapture() throws IOException, ReflectiveOperationException {
+        Block oldBlock = GregTechAPI.sBlockMachines;
+        IMetaTileEntity old = GregTechAPI.METATILEENTITIES[ID];
+        HologramResourceWorld world = HologramResourceWorld.declarations(Blocks.iron_block, 0);
+        try {
+            GregTechAPI.sBlockMachines = Blocks.iron_block;
+            prototype(ID, new Controller(2));
+            BaseMetaTileEntity tile = new BaseMetaTileEntity();
+            tile.setWorldObj(world);
+            tile.yCoord = 128;
+            world.tile = tile;
+            tile.setInitialValuesAsNBT(null, (short) ID);
+            world.isRemote = true;
+            ItemStack tool = new ItemStack(net.minecraft.init.Items.stick);
+            try (var capture = new HologramLocalControllerCapture(
+                tile,
+                0,
+                2,
+                tool,
+                HologramLocalControllerCapture.toolSettings(tool),
+                "incomplete-target")) {
+                SimpleAssert.eq(null, capture.stepTarget(1, 1), "first native stage remains pending");
+                var field = HologramLocalControllerCapture.class.getDeclaredField("nativeTarget");
+                field.setAccessible(true);
+                var plan = (HologramNativeTargetPlan) field.get(capture);
+                SimpleAssert.that(plan != null && !plan.ready(), "the original null-digest failure phase exists");
+                SimpleAssert.eq(null, plan.targetDigest(), "the incomplete plan has no invented digest");
+                assertUnavailableTarget(capture.opening());
+                assertUnavailableTarget(capture.unavailable("fixture pending failure"));
+                try {
+                    capture.stepTarget(1, Long.MAX_VALUE / 2);
+                    throw new AssertionError("non-completing native target became ready");
+                } catch (IOException expected) {
+                    SimpleAssert.eq("LOCAL_NATIVE_PREVIEW_UNSTABLE", expected.getMessage(), "original total limit");
+                }
+                assertUnavailableTarget(capture.unavailable("fixture native failure"));
+                capture.close();
+                assertUnavailableTarget(capture.unavailable("fixture cancelled target"));
+            }
+        } finally {
+            world.isRemote = false;
+            GregTechAPI.sBlockMachines = oldBlock;
+            GregTechAPI.METATILEENTITIES[ID] = old;
+        }
+    }
+
+    private static void assertUnavailableTarget(NBTTagCompound state) {
+        SimpleAssert.that(!state.getBoolean("nativeTargetReady"), "pending/failed/cancelled target is not ready");
+        SimpleAssert.that(!state.getBoolean("nativeExecutionSupported"), "empty cells never authorize execution");
+        SimpleAssert
+            .that(!state.hasKey("nativeTargetDigest"), "failure metadata never publishes a null or stale digest");
     }
 
     private static void verifyWater() throws IOException {
@@ -535,7 +589,7 @@ final class HologramNativeTargetPlanRegression {
                 place(env, world, 2, "second");
                 return 2;
             }
-            if (passes <= 5) return 0;
+            if (passes <= 133) return 0;
             world.setBlockToAir(1, 128, 0);
             place(env, world, 1, "replacement");
             return -1;
