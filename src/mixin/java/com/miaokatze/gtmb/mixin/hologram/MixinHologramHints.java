@@ -4,6 +4,7 @@
 package com.miaokatze.gtmb.mixin.hologram;
 
 import net.minecraft.block.Block;
+import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.util.IIcon;
 import net.minecraft.world.World;
 
@@ -11,11 +12,22 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import com.miaokatze.gtmb.hologram.HologramCapture;
+import com.miaokatze.gtmb.hologram.HologramNativeTargetPlan;
 
 @Mixin(targets = "com.gtnewhorizon.structurelib.StructureLibAPI", remap = false)
 public abstract class MixinHologramHints {
+
+    @Inject(
+        method = "isBlockTriviallyReplaceable(Lnet/minecraft/world/World;IIILnet/minecraft/entity/player/EntityPlayer;)Z",
+        at = @At("HEAD"),
+        remap = false)
+    private static void gtmb$sitePlacement(World world, int x, int y, int z, EntityPlayer player,
+        CallbackInfoReturnable<Boolean> ci) {
+        HologramNativeTargetPlan.sitePlacementAttempt(world);
+    }
 
     @Inject(
         method = "hintParticle(Lnet/minecraft/world/World;IIILnet/minecraft/block/Block;I)V",

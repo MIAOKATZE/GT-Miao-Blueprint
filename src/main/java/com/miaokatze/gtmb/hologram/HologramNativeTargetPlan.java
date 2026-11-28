@@ -58,6 +58,7 @@ public final class HologramNativeTargetPlan implements AutoCloseable {
     private String targetDigest;
     private final NBTTagCompound configuration;
     private final HologramNativePreviewItems validation;
+    private final java.util.Map<Offset, NBTTagCompound> siteChoices = new java.util.HashMap<>();
     private int phase;
     private boolean closed;
     private java.util.Iterator<HologramNativePreviewWorld.Placement> placementCursor;
@@ -77,18 +78,18 @@ public final class HologramNativeTargetPlan implements AutoCloseable {
             || id >= GregTechAPI.METATILEENTITIES.length
             || GregTechAPI.METATILEENTITIES[id] == null) throw new IOException("原生控制器或投影参数无效。");
         configuration = (NBTTagCompound) config.copy();
+        NBTTagList choices = configuration.getTagList("nativeHatchChoices", 10);
+        for (int index = 0; index < choices.tagCount(); index++) {
+            NBTTagCompound row = choices.getCompoundTagAt(index);
+            siteChoices.put(new Offset(row.getInteger("x"), row.getInteger("y"), row.getInteger("z")), row);
+        }
         validation = new HologramNativePreviewItems(configuration, Collections.emptySet(), Collections::emptyMap);
         facing = orientation;
         NBTTagCompound channelValues = new NBTTagCompound();
         ChannelDataAccessor.iterateChannelData(signal)
             .forEach(entry -> channelValues.setInteger(entry.getKey(), entry.getValue()));
         trigger = canonicalTrigger(signal.stackSize, channelValues);
-        HologramResourceWorld initial = HologramResourceWorld.declarations(GregTechAPI.sBlockMachines, 0);
-        controller = new BaseMetaTileEntity();
-        controller.setWorldObj(initial);
-        controller.yCoord = 128;
-        initial.tile = controller;
-        controller.setInitialValuesAsNBT(null, (short) id);
+        controller = freshController(id, facing, configuration.getCompoundTag("siteControllerConfiguration"));
         context = controller.getMetaTileEntity();
         if (context == null || context == GregTechAPI.METATILEENTITIES[id]) throw new IOException("控制器未提供独立的原生投影实例。");
         IConstructable constructable = HologramStructureDiscovery.localConstructable(controller, context, facing);
@@ -102,14 +103,19 @@ public final class HologramNativeTargetPlan implements AutoCloseable {
             constructable,
             false,
             trigger,
-            () -> freshController(id, facing),
+            () -> freshController(id, facing, configuration.getCompoundTag("siteControllerConfiguration")),
             facing,
             true);
         nativeRun.configure(config);
         world = nativeRun.targetWorld();
     }
 
-    private static BaseMetaTileEntity freshController(int id, ExtendedFacing facing) throws IOException {
+    static BaseMetaTileEntity freshController(int id, ExtendedFacing facing) throws IOException {
+        return freshController(id, facing, null);
+    }
+
+    static BaseMetaTileEntity freshController(int id, ExtendedFacing facing, NBTTagCompound portable)
+        throws IOException {
         HologramResourceWorld initial = HologramResourceWorld.declarations(GregTechAPI.sBlockMachines, 0);
         BaseMetaTileEntity fresh = new BaseMetaTileEntity();
         fresh.setWorldObj(initial);
@@ -120,6 +126,7 @@ public final class HologramNativeTargetPlan implements AutoCloseable {
         if (context == null || context == GregTechAPI.METATILEENTITIES[id]) throw new IOException("原生控制器未提供独立实例。");
         if (context instanceof gregtech.api.metatileentity.implementations.MTEEnhancedMultiBlockBase<?>aligned)
             aligned.setExtendedFacing(facing);
+        if (portable != null && !portable.hasNoTags()) HologramNativeConfiguration.apply(fresh, null, portable);
         if (context instanceof MTEMultiBlockBase machine) machine.mMachine = false;
         return fresh;
     }
@@ -146,6 +153,45 @@ public final class HologramNativeTargetPlan implements AutoCloseable {
             if (channels.hasKey(name, 3) && channels.getInteger(name) > 0)
                 ChannelDataAccessor.setChannelData(result, name, channels.getInteger(name));
         }
+        return result;
+    }
+
+    /** Shared client/server merge. Only requested positions/models inherit the trusted site payload. */
+    public static NBTTagCompound retainSiteChoices(NBTTagCompound targetSettings, NBTTagCompound siteSettings) {
+        NBTTagCompound result = (NBTTagCompound) targetSettings.copy();
+        NBTTagList requested = result.getTagList("nativeHatchChoices", 10);
+        NBTTagList installed = siteSettings == null ? new NBTTagList()
+            : siteSettings.getTagList("nativeHatchChoices", 10);
+        boolean sameParameters = siteSettings != null && result.getInteger("main") == siteSettings.getInteger("main")
+            && result.getCompoundTag("channels")
+                .equals(siteSettings.getCompoundTag("channels"));
+        for (int index = 0; index < requested.tagCount(); index++) {
+            NBTTagCompound row = requested.getCompoundTagAt(index);
+            row.removeTag("item");
+            row.removeTag("display");
+            row.removeTag("siteNativeAccepted");
+            for (int siteIndex = 0; siteIndex < installed.tagCount(); siteIndex++) {
+                NBTTagCompound saved = installed.getCompoundTagAt(siteIndex);
+                if (saved.getInteger("x") != row.getInteger("x") || saved.getInteger("y") != row.getInteger("y")
+                    || saved.getInteger("z") != row.getInteger("z")
+                    || saved.getInteger("id") != row.getInteger("id")) continue;
+                if (saved.hasKey("item", 10)) row.setTag(
+                    "item",
+                    saved.getCompoundTag("item")
+                        .copy());
+                if (sameParameters && saved.hasKey("display", 10)) row.setTag(
+                    "display",
+                    saved.getCompoundTag("display")
+                        .copy());
+                if (saved.getBoolean("siteNativeAccepted")) row.setBoolean("siteNativeAccepted", true);
+                break;
+            }
+        }
+        result.setTag("nativeHatchChoices", requested);
+        if (siteSettings != null && siteSettings.hasKey("siteControllerConfiguration", 10)) result.setTag(
+            "siteControllerConfiguration",
+            siteSettings.getCompoundTag("siteControllerConfiguration")
+                .copy());
         return result;
     }
 
@@ -309,6 +355,17 @@ public final class HologramNativeTargetPlan implements AutoCloseable {
                 && item.getItem() instanceof com.gtnewhorizon.structurelib.structure.ISpecialItemBlock special)
                 item.setItemDamage(special.getItemMetaFromBlockMeta(block, meta));
         }
+        NBTTagCompound site = siteChoices.get(p);
+        if (!footprintOnly && site != null
+            && site.hasKey("display", 10)
+            && tile instanceof IGregTechTileEntity gt
+            && gt.getMetaTileID() == site.getInteger("id")) {
+            display = (NBTTagCompound) site.getCompoundTag("display")
+                .copy();
+            display.setInteger("facing", direction);
+            if (data != null) for (String name : new String[] { "texturePage", "textureIndex", "color" })
+                if (display.hasKey(name, 3)) data.setInteger(name, display.getInteger(name));
+        }
         Cell cell = new Cell(
             p.x(),
             p.y(),
@@ -341,6 +398,11 @@ public final class HologramNativeTargetPlan implements AutoCloseable {
         return HologramNativeStructurePreview.consumesHint(world);
     }
 
+    /** Native placement attempts are evidence for the active read-only site check, never a live-world policy. */
+    public static void sitePlacementAttempt(World world) {
+        HologramNativeSitePlan.placementAttempt(world);
+    }
+
     static String position(int x, int y, int z) {
         return x + "," + y + "," + z;
     }
@@ -369,6 +431,10 @@ public final class HologramNativeTargetPlan implements AutoCloseable {
 
     public String targetDigest() {
         return targetDigest;
+    }
+
+    NBTTagCompound configuration() {
+        return (NBTTagCompound) configuration.copy();
     }
 
     private String digestCell(Cell cell) {

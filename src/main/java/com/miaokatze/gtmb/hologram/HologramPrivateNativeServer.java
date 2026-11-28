@@ -128,8 +128,7 @@ final class HologramPrivateNativeServer implements AutoCloseable {
             && HologramProjectedMainPolicy
                 .savedPlacementKey(HologramMaterials.read(tool), p.capabilities.isCreativeMode) == begin.sources
             && HologramWorldFlow.worldPosition(begin.x, begin.y, begin.z, ep.world.getHeight())
-            && ep.world.blockExists(begin.x, begin.y, begin.z)
-            && HologramSessionPolicy.previewReach(p, begin.x, begin.y, begin.z);
+            && ep.world.blockExists(begin.x, begin.y, begin.z);
     }
 
     private static final class Seen {

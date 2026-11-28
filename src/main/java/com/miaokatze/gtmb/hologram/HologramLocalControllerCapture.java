@@ -935,6 +935,8 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
         state.setBoolean(
             "nativeExecutionSupported",
             nativeWorkflow && ready
+                && (!settings.hasKey("siteKnown") || settings.getBoolean("siteKnown")
+                    || settings.getBoolean("siteExplicitTarget"))
                 && nativeTarget.cells()
                     .stream()
                     .allMatch(
@@ -946,14 +948,39 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
                 "siteFormed",
                 liveContext instanceof gregtech.api.metatileentity.implementations.MTEMultiBlockBase machine
                     && machine.mMachine);
-            int present = 0, unknown = 0;
+            int present = 0, unknown = 0, hatches = 0, missing = 0, different = 0, matching = 0;
             if (targetCells != null) for (var cell : targetCells) if (!cell.anchor()) {
                 if (cell.localObservationMissing()) unknown++;
-                else if (cell.actualBlock() != null && cell.actualBlock() != Blocks.air) present++;
+                else if (cell.actualBlock() != null && cell.actualBlock() != Blocks.air) {
+                    present++;
+                    if (HologramCellPolicy.hatchTier(cell.actualStack()) != Integer.MAX_VALUE) hatches++;
+                }
+                if ("missing".equals(cell.status())) missing++;
+                if ("occupied".equals(cell.status())) different++;
+                if ("satisfied".equals(cell.status())) matching++;
             }
             state.setInteger("siteNonAir", present);
             state.setInteger("siteUnknown", unknown);
+            state.setInteger("siteOccupied", present);
+            state.setInteger("siteHatches", hatches);
+            state.setInteger("siteMissing", missing);
+            state.setInteger("siteDifferent", different);
+            state.setInteger("siteMatching", matching);
+            state.setInteger("siteMatchingSolid", Math.max(0, present - different));
         }
+        for (Object raw : settings.func_150296_c()) {
+            String key = (String) raw;
+            if (key.startsWith("site") && !state.hasKey(key)) state.setTag(
+                key,
+                settings.getTag(key)
+                    .copy());
+        }
+        if (settings.hasKey("siteUnknown", 3)) state
+            .setInteger("siteUnknown", Math.max(state.getInteger("siteUnknown"), settings.getInteger("siteUnknown")));
+        if (settings.getBoolean("siteKnown")) state.setTag(
+            "siteChannels",
+            settings.getCompoundTag("channels")
+                .copy());
         state.setInteger("dimension", dimension);
         state.setInteger("x", x);
         state.setInteger("y", y);

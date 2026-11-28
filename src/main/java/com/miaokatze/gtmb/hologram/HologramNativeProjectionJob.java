@@ -41,6 +41,7 @@ final class HologramNativeProjectionJob implements HologramConstructionJobs.Sour
         final java.lang.ref.WeakReference<World> world;
         final int x, y, z, facing, id;
         final List<HologramNativeTargetPlan.Offset> offsets;
+        NBTTagCompound siteSettings = new NBTTagCompound();
 
         Baseline(BaseMetaTileEntity controller, List<HologramNativeTargetPlan.Offset> offsets) {
             world = new java.lang.ref.WeakReference<>(controller.getWorldObj());
@@ -50,7 +51,7 @@ final class HologramNativeProjectionJob implements HologramConstructionJobs.Sour
             id = controller.getMetaTileID();
             facing = ((MTEEnhancedMultiBlockBase<?>) controller.getMetaTileEntity()).getExtendedFacing()
                 .ordinal();
-            this.offsets = java.util.Collections.unmodifiableList(offsets);
+            this.offsets = java.util.Collections.unmodifiableList(new ArrayList<>(offsets));
         }
 
         boolean matches(BaseMetaTileEntity controller) {
@@ -79,10 +80,12 @@ final class HologramNativeProjectionJob implements HologramConstructionJobs.Sour
     private final MTEEnhancedMultiBlockBase<?> machine;
     private final ExtendedFacing facing;
     private HologramNativeTargetPlan target;
+    private NBTTagCompound completedSettings;
     private final int main;
     private final long started = System.nanoTime();
     static final String LIMITED_SCOPE_DETAIL = "按本次原生已知范围处理；更早参数丢失的范围外残留无法识别。";
     private boolean initialized, scopeFallback;
+    private boolean synchronizesHistory;
     private Baseline previous;
     private List<HologramNativeTargetPlan.Offset> baselineOffsets, operationOffsets;
     private List<HologramNativeTargetPlan.Offset> targetOffsets = new ArrayList<>();
@@ -116,28 +119,51 @@ final class HologramNativeProjectionJob implements HologramConstructionJobs.Sour
         controller = controller(endpoint, intent, session.x, session.y, session.z, encodedFacing);
         machine = (MTEEnhancedMultiBlockBase<?>) controller.getMetaTileEntity();
         facing = machine.getExtendedFacing();
+        requirePortableConfiguration();
         if (!current()) throw new IOException("原生目标准备期间控制器、访问权限或工具已变化。");
     }
 
     /** Preparation uses the existing job budget; native checks remain indivisible server callbacks. */
     private boolean initialize(long deadline) throws IOException {
         while (System.nanoTime() < deadline) {
+            requirePortableConfiguration();
             if (!current()) throw new IOException("施工上下文已变化。");
             switch (preparePhase) {
                 case 0 -> {
                     previous = cachedBaseline(controller);
-                    scopeFallback = previous == null && intent.operation() != Operation.BUILD;
+                    synchronizesHistory = intent.operation() == Operation.REPLACE
+                        || intent.operation() == Operation.DEMOLISH
+                        || intent.operation() == Operation.REPAIR && previous != null
+                            && previous.siteSettings.getBoolean("siteKnown");
+                    if ((intent.operation() == Operation.REPLACE || intent.operation() == Operation.DEMOLISH)
+                        && (previous == null || !previous.siteSettings.hasKey("siteKnown")))
+                        throw new IOException("请先完整读取现场配置，再替换或拆除。");
+                    if (previous != null && previous.siteSettings.hasKey("siteKnown")
+                        && !previous.siteSettings.getBoolean("siteKnown")
+                        && (intent.operation() == Operation.REPLACE || intent.operation() == Operation.DEMOLISH))
+                        throw new IOException("现场范围尚未被原生流程完整证明，不能替换或拆除。");
+                    scopeFallback = (previous == null || !previous.siteSettings.getBoolean("siteKnown"))
+                        && intent.operation() != Operation.BUILD;
                     target = intent.operation() == Operation.DEMOLISH
                         ? previous == null ? beginFootprint(intent, main, facing) : null
-                        : beginTarget(intent, main, facing);
+                        : beginTarget(intent, main, facing, previous == null ? null : previous.siteSettings);
                     preparePhase++;
                 }
                 case 1 -> {
                     if (target != null && !target.advance(deadline)) return false;
                     if (target != null && !target.complete()) throw new IOException(target.failure());
+                    if (target != null && intent.operation() != Operation.DEMOLISH) {
+                        completedSettings = target.configuration();
+                        completedSettings.setInteger("main", main);
+                        var acceptedChannels = new NBTTagCompound();
+                        intent.channels()
+                            .forEach(acceptedChannels::setInteger);
+                        completedSettings.setTag("channels", acceptedChannels);
+                        completedSettings.setBoolean("siteKnown", true);
+                    }
                     if (intent.operation() != Operation.DEMOLISH && !target.targetDigest()
                         .equals(intent.nativeTargetDigest())) throw new IOException("客户端投影与服务器原生目标不同，请重新读取后确认。");
-                    baselineOffsets = previous == null ? targetOffsets : previous.offsets;
+                    baselineOffsets = previous == null || previous.offsets.isEmpty() ? targetOffsets : previous.offsets;
                     prepareCursor = 0;
                     preparePhase++;
                 }
@@ -155,6 +181,8 @@ final class HologramNativeProjectionJob implements HologramConstructionJobs.Sour
                         if (prepareCursor < cells.size()) return false;
                         target.close();
                         target = null;
+                        if (completedSettings != null)
+                            completedSettings.setInteger("siteFootprintCells", targetOffsets.size());
                     }
                     prepareCursor = 0;
                     preparePhase++;
@@ -162,7 +190,9 @@ final class HologramNativeProjectionJob implements HologramConstructionJobs.Sour
                 case 3 -> {
                     while (prepareCursor < baselineOffsets.size() && System.nanoTime() < deadline) {
                         var offset = baselineOffsets.get(prepareCursor++);
-                        union.computeIfAbsent(offset, HologramNativeProjectionJob::air);
+                        // A proved old scope participates in native target synchronization. Unknown repair
+                        // can only touch the explicitly confirmed new target, never infer removal authority.
+                        if (synchronizesHistory) union.computeIfAbsent(offset, HologramNativeProjectionJob::air);
                         if (offset.x() == 0 && offset.y() == 0 && offset.z() == 0) continue;
                         int x = controller.xCoord + offset.x(), y = controller.yCoord + offset.y(),
                             z = controller.zCoord + offset.z();
@@ -201,7 +231,11 @@ final class HologramNativeProjectionJob implements HologramConstructionJobs.Sour
                     // An interrupted replacement may have touched new-only positions. Keep their union until success.
                     synchronized (HologramNativeProjectionJob.class) {
                         BASELINES.remove(controller);
-                        baseline(controller, operationOffsets);
+                        java.util.Set<HologramNativeTargetPlan.Offset> restoration = new java.util.LinkedHashSet<>(
+                            operationOffsets);
+                        if (previous != null && !synchronizesHistory) restoration.addAll(previous.offsets);
+                        Baseline retained = baseline(controller, new ArrayList<>(restoration));
+                        if (previous != null) retained.siteSettings = (NBTTagCompound) previous.siteSettings.copy();
                     }
                     operationOffsets = null;
                     previous = null;
@@ -260,6 +294,9 @@ final class HologramNativeProjectionJob implements HologramConstructionJobs.Sour
         private final BaseMetaTileEntity controller;
         private final Baseline cached;
         private HologramNativeTargetPlan pending;
+        private HologramNativeSitePlan site;
+        private NBTTagCompound siteSettings = new NBTTagCompound();
+        private boolean siteRead;
         private final List<HologramNativeTargetPlan.Offset> offsets = new ArrayList<>();
         private int cursor;
         private boolean occupied, closed;
@@ -276,6 +313,20 @@ final class HologramNativeProjectionJob implements HologramConstructionJobs.Sour
                 intent.z(),
                 intent.facing());
             cached = cachedBaseline(controller);
+            siteRead = intent.projection()
+                .configuration()
+                .getBoolean("readSiteSettings");
+            if (siteRead) {
+                var requested = intent.projection()
+                    .configuration();
+                requested.setInteger("main", intent.main());
+                var channels = new NBTTagCompound();
+                intent.projection()
+                    .channels()
+                    .forEach(channels::setInteger);
+                requested.setTag("channels", channels);
+                site = HologramNativeSitePlan.begin(controller, requested);
+            }
         }
 
         boolean advance(long deadline) throws IOException {
@@ -284,7 +335,20 @@ final class HologramNativeProjectionJob implements HologramConstructionJobs.Sour
             if (result != null) return true;
             if (System.nanoTime() >= deadline) return false;
             var intent = submission.intent;
-            if (cached == null) {
+            if (site != null) {
+                if (!site.advance(deadline)) return false;
+                siteSettings = retainProvedSettings(controller, site.settings());
+                offsets.addAll(site.footprint());
+                if (siteSettings.getBoolean("siteDamaged") && cached != null) {
+                    // Damage does not erase a previously proved configuration or its restoration boundary.
+                    offsets.clear();
+                    offsets.addAll(cached.offsets);
+                }
+                site.close();
+                site = null;
+            }
+            boolean useCachedScope = cached != null && !cached.offsets.isEmpty();
+            if (!siteRead && !useCachedScope) {
                 if (pending == null) pending = beginFootprint(
                     intent.projection(),
                     intent.main(),
@@ -292,11 +356,12 @@ final class HologramNativeProjectionJob implements HologramConstructionJobs.Sour
                 if (!pending.advance(deadline)) return false;
                 if (!pending.complete()) throw new IOException(pending.failure());
             }
-            var cells = cached == null ? pending.cells() : null;
-            int size = cached == null ? cells.size() : cached.offsets.size();
+            var cells = !siteRead && !useCachedScope ? pending.cells() : null;
+            int size = siteRead ? offsets.size() : !useCachedScope ? cells.size() : cached.offsets.size();
             while (cursor < size && System.nanoTime() < deadline) {
-                var offset = cached == null ? offset(cells.get(cursor++)) : cached.offsets.get(cursor++);
-                if (cached == null) offsets.add(offset);
+                var offset = siteRead ? offsets.get(cursor++)
+                    : !useCachedScope ? offset(cells.get(cursor++)) : cached.offsets.get(cursor++);
+                if (!siteRead && !useCachedScope) offsets.add(offset);
                 if (offset.x() == 0 && offset.y() == 0 && offset.z() == 0) continue;
                 int x = controller.xCoord + offset.x(), y = controller.yCoord + offset.y(),
                     z = controller.zCoord + offset.z();
@@ -310,7 +375,8 @@ final class HologramNativeProjectionJob implements HologramConstructionJobs.Sour
             checkNativeStructure(machine, controller);
             requireCurrent();
             var stage = machine.mMachine ? Stage.FORMED : occupied ? Stage.UNFORMED : Stage.CONTROLLER_ONLY;
-            if (cached == null) baseline(controller, offsets);
+            if (siteRead) rememberSite(controller, offsets, siteSettings);
+            // A state-only observation may read a requested target, but cannot turn it into old removal scope.
             result = new ServerObservation(
                 intent.projection()
                     .controller(),
@@ -320,10 +386,15 @@ final class HologramNativeProjectionJob implements HologramConstructionJobs.Sour
                 stage,
                 intent.projection()
                     .targetRevision(),
-                "");
+                "",
+                siteSettings);
             if (pending != null) {
                 pending.close();
                 pending = null;
+            }
+            if (site != null) {
+                site.close();
+                site = null;
             }
             return true;
         }
@@ -351,6 +422,10 @@ final class HologramNativeProjectionJob implements HologramConstructionJobs.Sour
                 pending.close();
                 pending = null;
             }
+            if (site != null) {
+                site.close();
+                site = null;
+            }
             // Successful observation transfers this compact list to the baseline.
             if (result == null) offsets.clear();
         }
@@ -367,13 +442,15 @@ final class HologramNativeProjectionJob implements HologramConstructionJobs.Sour
             .begin(intent.controller(), facing, HologramNativeTargetPlan.canonicalTrigger(main, channels), config);
     }
 
-    private static HologramNativeTargetPlan beginTarget(Projection intent, int main, ExtendedFacing facing)
-        throws IOException {
+    private static HologramNativeTargetPlan beginTarget(Projection intent, int main, ExtendedFacing facing,
+        NBTTagCompound site) throws IOException {
         var channels = new NBTTagCompound();
         intent.channels()
             .forEach(channels::setInteger);
         var trigger = HologramNativeTargetPlan.canonicalTrigger(main, channels);
         var config = intent.configuration();
+        config.setInteger("main", main);
+        config.setTag("channels", channels.copy());
         var choices = new NBTTagList();
         for (var choice : intent.hatches()) {
             var row = new NBTTagCompound();
@@ -385,13 +462,13 @@ final class HologramNativeProjectionJob implements HologramConstructionJobs.Sour
             choices.appendTag(row);
         }
         config.setTag("nativeHatchChoices", choices);
-        return HologramNativeTargetPlan.begin(intent.controller(), facing, trigger, config);
+        return HologramNativeTargetPlan
+            .begin(intent.controller(), facing, trigger, HologramNativeTargetPlan.retainSiteChoices(config, site));
     }
 
     private static BaseMetaTileEntity controller(HologramWorkspace.ActionEndpoint endpoint, Projection intent, int x,
         int y, int z, int facing) throws IOException {
         if (!HologramWorkspace.currentActionEndpoint(endpoint) || !endpoint.world.blockExists(x, y, z)
-            || endpoint.player.getDistanceSq(x + .5, y + .5, z + .5) > 64
             || endpoint.world.getBlock(x, y, z) != GregTechAPI.sBlockMachines
             || !(endpoint.world.getTileEntity(x, y, z) instanceof BaseMetaTileEntity tile)
             || tile.isInvalid()
@@ -467,6 +544,75 @@ final class HologramNativeProjectionJob implements HologramConstructionJobs.Sour
         return saved;
     }
 
+    static synchronized void rememberSite(BaseMetaTileEntity controller, List<HologramNativeTargetPlan.Offset> offsets,
+        NBTTagCompound settings) {
+        Baseline old = cachedBaseline(controller);
+        java.util.Set<HologramNativeTargetPlan.Offset> history = new java.util.LinkedHashSet<>();
+        if (old != null) history.addAll(old.offsets);
+        if (settings.getBoolean("siteKnown")) history.addAll(offsets);
+        BASELINES.remove(controller);
+        Baseline saved = baseline(controller, new ArrayList<>(history));
+        saved.siteSettings = (NBTTagCompound) settings.copy();
+    }
+
+    static synchronized NBTTagCompound retainProvedSettings(BaseMetaTileEntity controller, NBTTagCompound observed)
+        throws IOException {
+        Baseline cached = cachedBaseline(controller);
+        if (observed.getBoolean("siteKnown") || cached == null || !cached.siteSettings.getBoolean("siteKnown"))
+            return observed;
+        if (!HologramNativeConfiguration
+            .matches(controller, null, cached.siteSettings.getCompoundTag("siteControllerConfiguration")))
+            return observed;
+        NBTTagCompound retained = (NBTTagCompound) cached.siteSettings.copy();
+        retained.setBoolean("siteDamaged", true);
+        retained.setInteger("siteUnknown", 0);
+        for (String key : new String[] {
+            "siteNativeCalls", "siteUniqueCells", "siteCellReads", "siteCandidateFailures" })
+            if (observed.hasKey(key)) retained.setTag(
+                key,
+                observed.getTag(key)
+                    .copy());
+        return retained;
+    }
+
+    static synchronized NBTTagCompound provedSettings(BaseMetaTileEntity controller) throws IOException {
+        Baseline cached = cachedBaseline(controller);
+        if (cached == null || !cached.siteSettings.getBoolean("siteKnown")) return null;
+        NBTTagCompound configuration = cached.siteSettings.getCompoundTag("siteControllerConfiguration");
+        if (!HologramNativeConfiguration.matches(controller, null, configuration)) return null;
+        return (NBTTagCompound) cached.siteSettings.copy();
+    }
+
+    static synchronized List<HologramNativeTargetPlan.Offset> provedHistory(BaseMetaTileEntity controller) {
+        Baseline cached = cachedBaseline(controller);
+        return cached == null ? java.util.Collections.emptyList() : cached.offsets;
+    }
+
+    static synchronized int provedTargetSize(BaseMetaTileEntity controller) {
+        Baseline cached = cachedBaseline(controller);
+        if (cached == null) return 0;
+        if (!cached.siteSettings.getBoolean("siteKnown")) return cached.offsets.size();
+        int cells = cached.siteSettings.getInteger("siteFootprintCells");
+        return cells > 0 ? cells : cached.offsets.size();
+    }
+
+    static synchronized boolean portableConfigurationChanged(BaseMetaTileEntity controller) throws IOException {
+        Baseline cached = cachedBaseline(controller);
+        return cached != null && cached.siteSettings.hasKey("siteControllerConfiguration", 10)
+            && !HologramNativeConfiguration
+                .matches(controller, null, cached.siteSettings.getCompoundTag("siteControllerConfiguration"));
+    }
+
+    static synchronized void rememberConstructedTarget(BaseMetaTileEntity controller,
+        List<HologramNativeTargetPlan.Offset> target, NBTTagCompound settings, boolean synchronizesHistory) {
+        Baseline history = cachedBaseline(controller);
+        java.util.Set<HologramNativeTargetPlan.Offset> restored = new java.util.LinkedHashSet<>(target);
+        if (history != null && !synchronizesHistory) restored.addAll(history.offsets);
+        BASELINES.remove(controller);
+        baseline(controller, new ArrayList<>(restored)).siteSettings = settings == null ? new NBTTagCompound()
+            : (NBTTagCompound) settings.copy();
+    }
+
     /** Only the native callback is timed; a slow third-party check cannot be preempted safely. */
     private static void checkNativeStructure(MTEEnhancedMultiBlockBase<?> machine, BaseMetaTileEntity controller) {
         long started = System.nanoTime();
@@ -495,9 +641,22 @@ final class HologramNativeProjectionJob implements HologramConstructionJobs.Sour
         return submission.current();
     }
 
+    private void requirePortableConfiguration() throws IOException {
+        if (portableConfigurationChanged(controller)) throw new IOException("现场控制器的原生便携配置已变化，请重新读取后确认。");
+    }
+
+    private boolean portableConfigurationCurrent() {
+        try {
+            return !portableConfigurationChanged(controller);
+        } catch (IOException invalid) {
+            return false;
+        }
+    }
+
     public boolean current() {
         if (anchorRemoved && intent.operation() == Operation.DEMOLISH) return executionCurrent();
         return executionCurrent() && !controller.isInvalid()
+            && portableConfigurationCurrent()
             && endpoint.world.getTileEntity(session.x, session.y, session.z) == controller
             && endpoint.world.getBlock(session.x, session.y, session.z) == GregTechAPI.sBlockMachines
             && controller.getMetaTileID() == intent.controller()
@@ -624,9 +783,9 @@ final class HologramNativeProjectionJob implements HologramConstructionJobs.Sour
             if (intent.operation() != Operation.DEMOLISH && !controller.isInvalid())
                 checkNativeStructure(machine, controller);
             synchronized (HologramNativeProjectionJob.class) {
-                BASELINES.remove(controller);
-                if (intent.operation() != Operation.DEMOLISH && !controller.isInvalid())
-                    baseline(controller, targetOffsets);
+                if (intent.operation() != Operation.DEMOLISH && !controller.isInvalid()) {
+                    rememberConstructedTarget(controller, targetOffsets, completedSettings, synchronizesHistory);
+                } else BASELINES.remove(controller);
             }
         } finally {
             if (target != null) {

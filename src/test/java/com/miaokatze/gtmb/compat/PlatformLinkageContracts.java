@@ -66,7 +66,8 @@ public final class PlatformLinkageContracts {
             }
         }
         if (!contract.failures.isEmpty()) throw new AssertionError(String.join("\n", contract.failures));
-        if (contract.references < 100 || contract.selectors < 11 || contract.mixins != 12 || contract.targets < 2)
+        // Includes the client-only native GT state notification hook.
+        if (contract.references < 100 || contract.selectors < 11 || contract.mixins != 13 || contract.targets < 2)
             throw new AssertionError("Incomplete platform coverage");
         System.out.println(
             "GTNH " + args[0]

@@ -282,7 +282,7 @@ final class HologramActionDispatcher {
             s.job = 4;
             HologramSession.cancelCaptureRetry(s);
             HologramSession.clearPending(s);
-            s.status = "目标、维度、距离或持有工具已变化";
+            s.status = "目标、世界、维度或持有工具已变化";
             HologramSnapshots.send(s);
             return;
         }

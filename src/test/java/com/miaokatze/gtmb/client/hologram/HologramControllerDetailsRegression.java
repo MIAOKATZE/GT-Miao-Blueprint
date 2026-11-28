@@ -27,6 +27,7 @@ public final class HologramControllerDetailsRegression {
     private HologramControllerDetailsRegression() {}
 
     public static void run() {
+        initialSiteConfiguration();
         NBTTagCompound target = new NBTTagCompound();
         target.setString("session", "controller");
         target.setString("generation", "read-1");
@@ -712,6 +713,83 @@ public final class HologramControllerDetailsRegression {
         state.setBoolean("projectionDataComplete", true);
         state.setTag("cells", list(new HologramState.Cell(geometry.cells.get(0), options).tag()));
         return new HologramState(state);
+    }
+
+    private static void initialSiteConfiguration() {
+        NBTTagCompound preferences = new NBTTagCompound();
+        preferences.setInteger("main", 1);
+        preferences.setBoolean("materialMe", true);
+        preferences.setInteger("scope", 2);
+        NBTTagCompound site = new NBTTagCompound();
+        site.setInteger("main", 4);
+        NBTTagCompound channels = new NBTTagCompound();
+        channels.setInteger("ore_center_sectors", 6);
+        site.setTag("channels", channels);
+        NBTTagCompound hatch = new NBTTagCompound();
+        hatch.setInteger("id", 42);
+        hatch.setInteger("facing", 3);
+        NBTTagCompound retainedItem = new NBTTagCompound();
+        retainedItem.setInteger("retained", 17);
+        hatch.setTag("item", retainedItem);
+        NBTTagCompound visual = new NBTTagCompound();
+        visual.setInteger("textureIndex", 7);
+        hatch.setTag("display", visual);
+        site.setTag("nativeHatchChoices", list(hatch));
+        site.setBoolean("siteKnown", true);
+        NBTTagCompound result = HologramScreen.initialSiteConfiguration(preferences, site);
+        SimpleAssert.eq(4, result.getInteger("main"), "the site initializes the main signal");
+        SimpleAssert.eq(
+            6,
+            result.getCompoundTag("channels")
+                .getInteger("ore_center_sectors"),
+            "the site initializes geometry channels rather than just a label");
+        SimpleAssert.eq(
+            3,
+            result.getTagList("nativeHatchChoices", 10)
+                .getCompoundTagAt(0)
+                .getInteger("facing"),
+            "the same initial configuration retains the installed hatch orientation");
+        SimpleAssert.that(result.getBoolean("materialMe"), "material preferences survive native site adoption");
+        SimpleAssert.eq(2, result.getInteger("scope"), "the site does not replace editing preferences");
+        result.getCompoundTag("channels")
+            .setInteger("ore_center_sectors", 2);
+        SimpleAssert
+            .eq(6, channels.getInteger("ore_center_sectors"), "later player edits do not mutate the site baseline");
+        SimpleAssert.eq(1, preferences.getInteger("main"), "adoption leaves the previous UI publication immutable");
+        NBTTagCompound request = (NBTTagCompound) site.copy();
+        NBTTagCompound edited = request.getTagList("nativeHatchChoices", 10)
+            .getCompoundTagAt(0);
+        edited.removeTag("item");
+        edited.removeTag("display");
+        edited.setInteger("facing", 4);
+        NBTTagCompound normalized = com.miaokatze.gtmb.hologram.HologramNativeTargetPlan
+            .retainSiteChoices(request, site);
+        NBTTagCompound row = normalized.getTagList("nativeHatchChoices", 10)
+            .getCompoundTagAt(0);
+        SimpleAssert.eq(
+            17,
+            row.getCompoundTag("item")
+                .getInteger("retained"),
+            "rotating an installed hatch retains the same native item configuration on both ends");
+        SimpleAssert.eq(4, row.getInteger("facing"), "native site adoption does not undo the requested rotation");
+        request.getCompoundTag("channels")
+            .setInteger("ore_center_sectors", 5);
+        normalized = com.miaokatze.gtmb.hologram.HologramNativeTargetPlan.retainSiteChoices(request, site);
+        row = normalized.getTagList("nativeHatchChoices", 10)
+            .getCompoundTagAt(0);
+        SimpleAssert.that(!row.hasKey("display"), "changed structure parameters regenerate casing appearance");
+        SimpleAssert.eq(
+            17,
+            row.getCompoundTag("item")
+                .getInteger("retained"),
+            "regenerating appearance does not discard retained native item data");
+        request.setTag("nativeHatchChoices", new NBTTagList());
+        SimpleAssert.eq(
+            0,
+            com.miaokatze.gtmb.hologram.HologramNativeTargetPlan.retainSiteChoices(request, site)
+                .getTagList("nativeHatchChoices", 10)
+                .tagCount(),
+            "restoring casing does not re-add the original hatch");
     }
 
     private static NBTTagList list(NBTTagCompound row) {

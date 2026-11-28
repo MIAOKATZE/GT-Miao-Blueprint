@@ -44,6 +44,8 @@ final class HologramProjectorProbe {
     private java.util.Iterator<HologramNativePreviewWorld.Placement> mandatoryCursor;
     private final Set<String> mandatory = new LinkedHashSet<>();
     private final Set<HologramProjectorSimulation.Position> pinnedPositions = new LinkedHashSet<>();
+    private final Set<HologramProjectorSimulation.Position> rawPinned = new LinkedHashSet<>();
+    private boolean siteOnlyRawPins;
     private HologramNativePreviewItems selectedSource;
     private java.util.Iterator<HologramProjectorSimulation.Position> requiredCursor;
     private boolean requiredFilled;
@@ -271,13 +273,29 @@ final class HologramProjectorProbe {
 
     @SuppressWarnings({ "rawtypes", "unchecked" })
     private boolean accepts(IStructureElement element, HologramProjectorSimulation.Position p, ItemStack stack) {
+        return accepts(element, p, stack, -1);
+    }
+
+    @SuppressWarnings({ "rawtypes", "unchecked" })
+    private boolean accepts(IStructureElement element, HologramProjectorSimulation.Position p, ItemStack stack,
+        int direction) {
         Block original = simulation.world.getBlock(p.x(), p.y(), p.z());
         int meta = simulation.world.getBlockMetadata(p.x(), p.y(), p.z());
         NBTTagCompound tile = savedTile(p);
         ItemStack paid = material(p);
         try {
             if (simulation.context instanceof MTEMultiBlockBase machine) machine.clearHatches();
-            return place(stack, p) && element.check(simulation.context, simulation.world, p.x(), p.y(), p.z());
+            if (!place(stack, p)) return false;
+            if (direction >= 0) {
+                if (!(simulation.world.getTileEntity(p.x(), p.y(), p.z()) instanceof IGregTechTileEntity gt)
+                    || direction > 5
+                    || gt.getMetaTileEntity() == null
+                    || !gt.getMetaTileEntity()
+                        .isFacingValid(ForgeDirection.getOrientation(direction)))
+                    return false;
+                gt.setFrontFacing(ForgeDirection.getOrientation(direction));
+            }
+            return element.check(simulation.context, simulation.world, p.x(), p.y(), p.z());
         } catch (RuntimeException | LinkageError unavailable) {
             return false;
         } finally {
@@ -430,16 +448,35 @@ final class HologramProjectorProbe {
                             gregtech.api.GregTechAPI.sBlockMachines,
                             1,
                             row.getInteger("id"));
+                        if (row.hasKey("item", 10)) {
+                            ItemStack saved = ItemStack.loadItemStackFromNBT(row.getCompoundTag("item"));
+                            if (saved == null || saved.getItem() != wanted.getItem()
+                                || saved.getItemDamage() != wanted.getItemDamage())
+                                throw new IOException("现场仓室物品身份无效。");
+                            wanted = saved;
+                            wanted.stackSize = 1;
+                        }
                         IStructureElement<?> element = simulation.elements.get(p);
                         boolean raw = element == null && material(p) != null;
-                        boolean valid = raw ? rawSeeds.containsKey(p) : element != null && accepts(element, p, wanted);
+                        // A raw custom constructor has no StructureLib element. Placement is only a proposal;
+                        // the native replay and exact-result validation below must retain it.
+                        boolean valid = raw
+                            ? hatch(wanted) && (rawSeeds.containsKey(p) || row.getBoolean("siteNativeAccepted"))
+                            : element != null
+                                && accepts(element, p, wanted, row.hasKey("facing", 3) ? row.getInteger("facing") : -1);
                         if (!valid) throw new IOException("所选仓室未被该位置的原生建造流程接受。");
                         pinnedPositions.add(p);
                         if (raw) {
+                            if (!rawSeeds.containsKey(p)) siteOnlyRawPins = true;
+                            rawPinned.add(p);
                             if (row.hasKey("facing", 3) && row.getInteger("facing") >= 0)
                                 rawFacings.put(p, ForgeDirection.getOrientation(row.getInteger("facing")));
                             if (!placeRaw(wanted, p)) throw new IOException("所选仓室未被该位置的原生建造流程接受。");
-                        } else simulation.world.setBlockToAir(p.x(), p.y(), p.z());
+                        } else {
+                            if (!place(wanted, p)) throw new IOException("现场仓室物品不能原生放置。");
+                            if (row.hasKey("facing", 3) && row.getInteger("facing") >= 0)
+                                orient(p, row.getInteger("facing"));
+                        }
                     } else applyStage++;
                 }
                 case 5 -> {
@@ -471,6 +508,8 @@ final class HologramProjectorProbe {
                     if (simulation.replayStep()) applyStage++;
                 }
                 case 7 -> {
+                    if (siteOnlyRawPins && simulation.replayNativeResult != -1)
+                        throw new IOException("现场仓室未被本次原生生存流程完整接受。");
                     if (pinCursor > 0) pinCursor = 0;
                     applyStage++;
                 }
@@ -513,14 +552,14 @@ final class HologramProjectorProbe {
             .isFacingValid(facing)) return false;
         gt.setFrontFacing(facing);
         IStructureElement element = simulation.elements.get(p);
-        if (element == null) return rawSeeds.containsKey(p);
+        if (element == null) return rawSeeds.containsKey(p) || rawPinned.contains(p);
         if (simulation.context instanceof MTEMultiBlockBase machine) machine.clearHatches();
         return element.check(simulation.context, simulation.world, p.x(), p.y(), p.z())
             && gt.getFrontFacing() == facing;
     }
 
     private void orient(HologramProjectorSimulation.Position p, int direction) throws IOException {
-        if (rawSeeds.containsKey(p)) {
+        if (rawSeeds.containsKey(p) || rawPinned.contains(p)) {
             if (!(simulation.world.getTileEntity(p.x(), p.y(), p.z()) instanceof IGregTechTileEntity gt)
                 || gt.getFrontFacing()
                     .ordinal() != direction

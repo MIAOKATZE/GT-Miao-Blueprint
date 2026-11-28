@@ -43,7 +43,12 @@ final class HologramNativePresetStockRegression {
         int writes = world.writes()
             .size();
         var previousSeat = HologramWorkspace.find(player.getUniqueID());
+        double originalX = player.posX;
         try {
+            player.posX = source.x + 160;
+            SimpleAssert.that(
+                !HologramSessionPolicy.previewReach(player, source.x, source.y, source.z),
+                "real quote starts outside both the old 8/64-block anchor gates");
             player.inventory.mainInventory[2] = stack;
             channel.set(null, wire);
             HologramNativePresetStock.setReceiver((reply, inbound) -> {
@@ -95,6 +100,7 @@ final class HologramNativePresetStockRegression {
                     && HologramWorkspace.find(player.getUniqueID()) == previousSeat,
                 "reads never debit, place, create a session or replace the current workspace");
         } finally {
+            player.posX = originalX;
             player.inventory.mainInventory[2] = previous;
             channel.set(null, before);
             receiver.set(null, beforeReceiver);

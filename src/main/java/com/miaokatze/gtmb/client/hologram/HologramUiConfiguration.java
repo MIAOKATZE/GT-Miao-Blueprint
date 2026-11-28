@@ -1460,8 +1460,12 @@ final class HologramUiConfiguration {
             n.setString("structureId", "");
             n.setBoolean("noHatches", false);
             n.setInteger("demolitionDestination", ui.review.nativeRecoveryDestination());
-            for (String key : new String[] { "nativeAction", "nativeTargetRevision", "presetActive", "hatchTier",
-                "hatchDowngrade", "hatchProfile", "nativeHatchChoices" })
+            NBTTagCompound target = HologramScreen.targetSettings(ui.session.state());
+            for (Object key : target.func_150296_c()) n.setTag(
+                (String) key,
+                target.getTag((String) key)
+                    .copy());
+            for (String key : new String[] { "nativeAction", "nativeTargetRevision" })
                 if (ui.session.state().data.hasKey(key)) n.setTag(
                     key,
                     ui.session.state().data.getTag(key)

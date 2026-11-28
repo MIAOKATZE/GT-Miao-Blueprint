@@ -121,7 +121,10 @@ final class HologramLocalControllerEdits {
     /** The existing native choice protocol owns both model and optional facing. */
     static NBTTagCompound nativeChoice(HologramState.Cell cell) throws IOException {
         ItemStack stack = cell.targetStack;
-        if (stack == null || !(stack.getItem() instanceof ItemMachines) || stack.hasTagCompound())
+        boolean installedState = stack != null && cell.actualStack != null
+            && stack.isItemEqual(cell.actualStack)
+            && ItemStack.areItemStackTagsEqual(stack, cell.actualStack);
+        if (stack == null || !(stack.getItem() instanceof ItemMachines) || stack.hasTagCompound() && !installedState)
             throw new IOException(
                 projectorOr("native.ui.choose_this_target_through_structure_channels_it", "此目标请通过结构信道选择，不能作为仓室型号提交。"));
         NBTTagCompound choice = new NBTTagCompound();

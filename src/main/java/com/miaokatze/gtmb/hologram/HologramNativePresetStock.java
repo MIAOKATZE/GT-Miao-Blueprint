@@ -143,9 +143,7 @@ public final class HologramNativePresetStock {
         }
         int x = tag.getInteger("x"), y = tag.getInteger("y"), z = tag.getInteger("z");
         int controller = tag.getInteger("controller");
-        if (!HologramWorldFlow.worldPosition(x, y, z, world.getHeight())
-            || player.getDistanceSq(x + .5, y + .5, z + .5) > 64
-            || !world.blockExists(x, y, z)
+        if (!HologramWorldFlow.worldPosition(x, y, z, world.getHeight()) || !world.blockExists(x, y, z)
             || world.getBlock(x, y, z) != GregTechAPI.sBlockMachines
             || !(world.getTileEntity(x, y, z) instanceof BaseMetaTileEntity tile)
             || tile.isInvalid()

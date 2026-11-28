@@ -249,6 +249,7 @@ public final class HologramClientSavedPlacementRegression {
                 HologramClientRemoteNativePlacement.install(bridge::send);
                 server.arm();
                 long totalSource = expected;
+                actor.posX = 160; // Remote BEGIN and continued world execution exceed positioning reach.
                 for (int round = 0; round < 7; round++) {
                     if (round == 2) {
                         var old = src;

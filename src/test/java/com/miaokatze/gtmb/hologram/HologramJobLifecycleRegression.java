@@ -68,7 +68,38 @@ public final class HologramJobLifecycleRegression {
             s.virtualPlacement = s.virtualLocked = true;
             s.materialSettings.containers = s.materialSettings.me = false;
             s.capture = new HologramCapture(null, player.getHeldItem());
+            player.posX = 160;
             player.posY = 64;
+            SimpleAssert.that(
+                !HologramSessionPolicy.previewReach(player, s.x, s.y, s.z) && HologramSessionPolicy.valid(s)
+                    && HologramSessionPolicy.saveValid(s),
+                "locked blueprint admits commands and reviewed saves beyond the old anchor radii");
+            world.unloaded = true;
+            SimpleAssert.that(
+                !HologramSessionPolicy.valid(s) && !HologramSessionPolicy.jobValid(s),
+                "unloaded locked anchors remain invalid at any distance");
+            world.unloaded = false;
+            player.dimension++;
+            SimpleAssert.that(
+                !HologramSessionPolicy.valid(s) && !HologramSessionPolicy.jobValid(s),
+                "cross-dimension commands and continuations remain invalid");
+            player.dimension--;
+            player.worldObj = HologramPlacementFixtureWorld.create(unsafe);
+            SimpleAssert.that(
+                !HologramSessionPolicy.valid(s) && !HologramSessionPolicy.jobValid(s),
+                "same-dimension replacement worlds do not inherit an admitted anchor");
+            player.worldObj = world;
+            var controller = new net.minecraft.tileentity.TileEntity();
+            world.occupant = controller;
+            s.virtual = false;
+            s.target = controller;
+            SimpleAssert.that(HologramSessionPolicy.valid(s), "a loaded identical controller opens beyond 64 blocks");
+            world.occupant = new net.minecraft.tileentity.TileEntity();
+            SimpleAssert
+                .that(!HologramSessionPolicy.valid(s), "controller replacement still invalidates remote commands");
+            world.occupant = null;
+            s.target = null;
+            s.virtual = true;
             player.capabilities.allowEdit = true;
             player.inventory.mainInventory[1] = new ItemStack(Blocks.stone, 8);
             for (int i = 0; i < 4; i++) {
@@ -111,7 +142,7 @@ public final class HologramJobLifecycleRegression {
                         && place.player == player) {
                         placements[0]++;
                         if (placements[0] == 2) {
-                            player.posX = 160;
+                            player.posX = 320;
                             SimpleAssert.that(
                                 !HologramSessionPolicy.previewReach(player, s.x, s.y, s.z)
                                     && HologramSessionPolicy.jobValid(s),

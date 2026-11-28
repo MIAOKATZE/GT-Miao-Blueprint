@@ -34,6 +34,7 @@ import org.lwjgl.opengl.GL14;
 
 import com.gtnewhorizon.gtnhlib.client.renderer.DirectTessellator;
 import com.miaokatze.gtmb.hologram.HologramPreviewPose;
+import com.miaokatze.gtmb.hologram.HologramProjectionIdentity;
 import com.miaokatze.gtmb.hologram.HologramRuntimeMetrics;
 import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteDisplayList;
 import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteMaterialBatch;
@@ -47,10 +48,9 @@ import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteTopology;
 import com.miaokatze.miaokatzecore.client.render.ScreenLineStream;
 
 import appeng.client.texture.FlippableIcon;
-import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
 import gregtech.common.blocks.ItemMachines;
 
-/** Cached static schematic geometry; rendering never ticks machines or reads live world cells. */
+/** Cached schematic geometry; live world identity is read only when its projection mask is invalidated. */
 final class MiaoVisonLiteRenderer implements AutoCloseable {
 
     private static final int VOXEL_COORDINATES = 8 * 3;
@@ -183,8 +183,11 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     private static final MiaoVisonLiteSession<Coordinate, WorldGroup> WORLD_SESSION = new MiaoVisonLiteSession<>();
     private static final Map<Coordinate, WorldGroup> worldGroups = WORLD_SESSION.regions();
     private static final MiaoVisonLiteSpatialIndex<WorldGroup> worldSpatialIndex = new MiaoVisonLiteSpatialIndex<>(16);
-    private static final Set<Coordinate> worldGhosts = new HashSet<>();
-    private static final Set<Coordinate> worldOccluders = new HashSet<>();
+    private static final Map<Coordinate, Integer> worldGhostCounts = new java.util.HashMap<>();
+    private static final Map<Coordinate, Integer> worldOccluderCounts = new java.util.HashMap<>();
+    private static final Set<Coordinate> worldGhosts = worldGhostCounts.keySet();
+    private static final Set<Coordinate> worldOccluders = worldOccluderCounts.keySet();
+    private static WorldTransform worldTransform;
     private static int worldIndex;
     private static boolean localWorldRegions;
     private static java.util.Iterator<Map.Entry<HologramRegionCache.Key, List<HologramState.Cell>>> pendingRegions;
@@ -319,6 +322,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     static void worldSnapshotChanged(HologramState previous, HologramState next, Set<HologramRegionCache.Key> dirty,
         HologramPreviewAssets assets) {
         if (worldState == previous) {
+            if (worldTransform != null) worldTransform.targets.clear();
             if (localWorldRegions) {
                 // A validated patch owns a new authoritative region directory; a mere status
                 // update usually shares the exact old one. Never restart an all-cell world index.
@@ -339,16 +343,16 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
                 }
                 for (HologramState.Cell old : next.changedPreviousCells) {
                     int index = old.index;
-                    Coordinate position = coordinate(old.x, old.y, old.z);
                     WorldGroup group = worldGroups.get(coordinate(old.x >> 4, old.y >> 4, old.z >> 4));
                     if (group != null) {
+                        removeWorldContribution(old, group);
                         group.cells.remove(old);
+                        group.cellMasks.remove(index);
+                        group.dirtyMatches.remove(index);
                         if (group.matchedIndices.remove(index)) {
                             lastWorldMatched--;
                         }
                     }
-                    worldGhosts.remove(position);
-                    worldOccluders.remove(position);
                 }
                 for (int index : next.changedIndices) indexWorldCell(next, next.cells.get(index));
                 worldIndex = next.cells.size();
@@ -999,7 +1003,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
                     Face face = cachedOutlines.get(at);
                     boolean chosen = face.cell.index == selected
                         || selection != null && selection.contains(face.cell.index);
-                    boolean problem = problemOutline(state, face.cell) || !face.empty && !face.fadeDefault;
+                    boolean problem = previewProblemOutline(state, face.cell, face.empty, face.fadeDefault);
                     if (previewOutlineVertices(chosen, problem) == 0) continue;
                     float alpha = previewOutlineAlpha(chosen, problem);
                     if (!outlineDrawn) {
@@ -1773,7 +1777,8 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         String role = roleLabel(c);
         if (c.missingBlock) role = "缺失方块";
         else if (c.sourceMissing && c.anchor) role = "来源结构缺失";
-        if (!nativeModel && !empty && role.isEmpty() && material.fallback) role = "材质缺失";
+        if (!nativeModel && !empty && role.isEmpty() && material.fallback && !completePreviewMaterial(material))
+            role = "材质缺失";
         if (!nativeModel && !empty && HologramNativeTiles.supported(c.block(current || c.anchor))) role = "模型缺失";
         if (!empty && role.isEmpty() && c.iconOnly) role = "占位";
         if (!c.prompt.isEmpty()) role = role.isEmpty() ? "提示" : role + " · 提示";
@@ -2683,18 +2688,17 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     }
 
     static boolean worldMatched(HologramState.Cell cell) {
-        net.minecraft.world.World world = Minecraft.getMinecraft().theWorld;
-        Block block = cell.block(false);
-        if (world == null || !world.blockExists(cell.x, cell.y, cell.z)
-            || block == null
-            || world.getBlock(cell.x, cell.y, cell.z) != block) return false;
-        ItemStack target = cell.targetStack;
-        if (target != null && target.getItem() instanceof ItemMachines) {
-            net.minecraft.tileentity.TileEntity tile = world.getTileEntity(cell.x, cell.y, cell.z);
-            return tile instanceof IGregTechTileEntity
-                && ((IGregTechTileEntity) tile).getMetaTileID() == target.getItemDamage();
-        }
-        return world.getBlockMetadata(cell.x, cell.y, cell.z) == cell.wantMeta;
+        return worldMatched(
+            cell,
+            worldTransform == null ? new WorldTransform(0, 0, 0, null, new int[3]) : worldTransform);
+    }
+
+    private static boolean worldMatched(HologramState.Cell cell, WorldTransform transform) {
+        Minecraft client = Minecraft.getMinecraft();
+        if (client == null || client.theWorld == null) return false;
+        int[] at = transform.apply(cell.x, cell.y, cell.z);
+        HologramProjectionIdentity.Target target = transform.target(cell);
+        return target != null && target.matches(client.theWorld, at[0], at[1], at[2]);
     }
 
     static ItemStack renderStack(HologramState.Cell cell, boolean current) {
@@ -2738,9 +2742,6 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
             lastWorldGeometry = lastWorldGTGeometry = lastWorldFallback = lastWorldMatched = lastWorldGhosts = 0;
         }
         HologramBlockRender.beginViewport(state);
-        // Indexing and list compilation share the original per-frame budget.
-        long deadline = System.nanoTime() + WORLD_BUILD_NANOS;
-        if (!localWorldRegions) indexWorld(state, deadline);
         int[] anchor = state.data.getBoolean("virtual") && state.data.getBoolean("moving")
             ? HologramClient.movingAnchor(state)
             : null;
@@ -2753,6 +2754,16 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         double range = Math.max(16, mc.gameSettings.renderDistanceChunks * 16);
         HologramLocalPlacement local = state.data.getBoolean("localPreview") ? HologramLocalPlacement.INSTANCE : null;
         HologramPreviewPose pose = local == null ? null : local.previewPose();
+        updateWorldTransform(
+            new WorldTransform(
+                (int) offsetX,
+                (int) offsetY,
+                (int) offsetZ,
+                pose,
+                local == null ? new int[3] : local.pivot()));
+        // Indexing, changed-cell matching and list compilation share the original per-frame budget.
+        long deadline = System.nanoTime() + WORLD_BUILD_NANOS;
+        if (!localWorldRegions) indexWorld(state, deadline);
         double sx = px - offsetX, sy = py - offsetY, sz = pz - offsetZ;
         if (pose != null) {
             double[] unrotated = pose.inverse(sx - .5, sy - .5, sz - .5);
@@ -2873,9 +2884,162 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         worldSpatialIndex.clear();
         worldGhosts.clear();
         worldOccluders.clear();
+        worldTransform = null;
         worldIndex = 0;
         localWorldRegions = false;
         pendingRegions = null;
+    }
+
+    /** The GL transform and the matching coordinates share this exact integer pose and pivot. */
+    static final class WorldTransform {
+
+        final int x, y, z;
+        final HologramPreviewPose pose;
+        final int[] pivot;
+        final Map<Object, HologramProjectionIdentity.Target> targets = new IdentityHashMap<>();
+
+        WorldTransform(int x, int y, int z, HologramPreviewPose pose, int[] pivot) {
+            this.x = x;
+            this.y = y;
+            this.z = z;
+            this.pose = pose;
+            this.pivot = pivot.clone();
+        }
+
+        int[] apply(int sx, int sy, int sz) {
+            int[] at = pose == null ? new int[] { sx, sy, sz }
+                : pose.apply(sx - pivot[0], sy - pivot[1], sz - pivot[2]);
+            at[0] += x;
+            at[1] += y;
+            at[2] += z;
+            return at;
+        }
+
+        int[] inverse(int wx, int wy, int wz) {
+            if (pose == null) return new int[] { wx - x, wy - y, wz - z };
+            double[] at = pose.inverse(wx - x, wy - y, wz - z);
+            return new int[] { (int) Math.round(at[0]) + pivot[0], (int) Math.round(at[1]) + pivot[1],
+                (int) Math.round(at[2]) + pivot[2] };
+        }
+
+        boolean same(WorldTransform other) {
+            return other != null && x == other.x
+                && y == other.y
+                && z == other.z
+                && pose == other.pose
+                && java.util.Arrays.equals(pivot, other.pivot);
+        }
+
+        HologramProjectionIdentity.Target target(HologramState.Cell cell) {
+            boolean shared = worldState != null && worldState.nativeViewport != null;
+            Object key = cell.descriptorIdentity();
+            if (shared && targets.containsKey(key)) return targets.get(key);
+            net.minecraft.nbt.NBTTagCompound payload = cell.hasDisplayTag(false, "nativeTile", 10) ? cell.display(false)
+                .getCompoundTag("nativeTile") : null;
+            boolean gt = cell.targetStack != null && cell.targetStack.getItem() instanceof ItemMachines;
+            HologramProjectionIdentity.Target target = HologramProjectionIdentity.target(
+                cell.block(false),
+                cell.wantMeta,
+                cell.targetFacing,
+                cell.targetStack,
+                cell.sourceClass,
+                payload,
+                pose,
+                gt ? cell.display(false) : null);
+            if (shared) targets.put(key, target);
+            return target;
+        }
+    }
+
+    private static void updateWorldTransform(WorldTransform next) {
+        if (next.same(worldTransform)) return;
+        worldTransform = next;
+        // Only the already materialized groups own masks/lists. Unseen regions resolve directly in the new pose.
+        for (WorldGroup group : worldGroups.values()) {
+            group.allMatchesDirty = !group.cells.isEmpty();
+            group.matchCursor = 0;
+            group.dirtyMatches.clear();
+            invalidateWorldGroup(group);
+        }
+    }
+
+    /** Native block/TE events enqueue a single indexed coordinate, even while the editor is closed. */
+    static void worldBlockChanged(int x, int y, int z) {
+        if (worldState == null || worldTransform == null) return;
+        int[] at = worldTransform.inverse(x, y, z);
+        HologramState.Cell cell = worldState.regions.at(at[0], at[1], at[2]);
+        if (cell == null) return;
+        WorldGroup group = worldGroups.get(coordinate(at[0] >> 4, at[1] >> 4, at[2] >> 4));
+        if (group == null) return;
+        // Imported rows can share a position. The existing region contains at most 4096 coordinates;
+        // invalidate every row at this coordinate without scanning other projection regions.
+        boolean indexed = false;
+        for (HologramState.Cell row : group.cells) if (row.x == at[0] && row.y == at[1] && row.z == at[2]) {
+            group.dirtyMatches.add(row.index);
+            indexed = true;
+        }
+        if (!indexed) return;
+        invalidateWorldBoundary(at[0], at[1], at[2]);
+    }
+
+    /** Received S21/S26 sections merge into region dirty flags; no full structure/preview is regenerated. */
+    static void worldChunkChanged(int x, int z, int sectionMask) {
+        if (worldState == null || worldTransform == null) return;
+        for (int section = 0; section < 16; section++) {
+            if ((sectionMask & 1 << section) == 0) continue;
+            int[] min = { Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE };
+            int[] max = { Integer.MIN_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE };
+            for (int dx = 0; dx <= 15; dx += 15)
+                for (int dy = 0; dy <= 15; dy += 15) for (int dz = 0; dz <= 15; dz += 15) {
+                    int[] at = worldTransform.inverse((x << 4) + dx, (section << 4) + dy, (z << 4) + dz);
+                    for (int axis = 0; axis < 3; axis++) {
+                        min[axis] = Math.min(min[axis], at[axis]);
+                        max[axis] = Math.max(max[axis], at[axis]);
+                    }
+                }
+            for (int gx = min[0] >> 4; gx <= max[0] >> 4; gx++) for (int gy = min[1] >> 4; gy <= max[1] >> 4; gy++)
+                for (int gz = min[2] >> 4; gz <= max[2] >> 4; gz++) {
+                    WorldGroup group = worldGroups.get(coordinate(gx, gy, gz));
+                    if (group == null) continue;
+                    group.allMatchesDirty = !group.cells.isEmpty();
+                    group.matchCursor = 0;
+                    group.dirtyMatches.clear();
+                    invalidateWorldGroup(group);
+                    for (int[] normal : NORMALS) invalidateWorldRegion(gx + normal[0], gy + normal[1], gz + normal[2]);
+                }
+        }
+    }
+
+    private static void invalidateWorldRegion(int x, int y, int z) {
+        WorldGroup group = worldGroups.get(coordinate(x, y, z));
+        if (group != null) invalidateWorldGroup(group);
+    }
+
+    private static void invalidateWorldBoundary(int x, int y, int z) {
+        invalidateWorldRegion(x >> 4, y >> 4, z >> 4);
+        for (int[] normal : NORMALS) {
+            if ((x >> 4) == (x + normal[0] >> 4) && (y >> 4) == (y + normal[1] >> 4)
+                && (z >> 4) == (z + normal[2] >> 4)) continue;
+            invalidateWorldRegion(x + normal[0] >> 4, y + normal[1] >> 4, z + normal[2] >> 4);
+        }
+    }
+
+    private static boolean refreshWorldMatches(HologramState state, WorldGroup group, long deadline) {
+        if (group.allMatchesDirty) {
+            while (group.matchCursor < group.cells.size()) {
+                if (System.nanoTime() >= deadline) return false;
+                updateWorldCell(state, group.cells.get(group.matchCursor++), group);
+            }
+            group.allMatchesDirty = false;
+            group.matchCursor = 0;
+        }
+        java.util.Iterator<Integer> dirty = group.dirtyMatches.iterator();
+        while (dirty.hasNext()) {
+            if (System.nanoTime() >= deadline) return false;
+            updateWorldCell(state, state.cells.get(dirty.next()), group);
+            dirty.remove();
+        }
+        return true;
     }
 
     static int placementOutlineColor(HologramState state) {
@@ -2899,9 +3063,8 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
             if ((cell.z & 15) == 0) touched.add(coordinate(gx, gy, gz - 1));
             if ((cell.z & 15) == 15) touched.add(coordinate(gx, gy, gz + 1));
             if (HologramJobVisuals.completed(state, cell)) {
-                Coordinate position = coordinate(cell.x, cell.y, cell.z);
-                worldGhosts.remove(position);
-                worldOccluders.remove(position);
+                WorldGroup group = worldGroups.get(coordinate(gx, gy, gz));
+                if (group != null) removeWorldContribution(cell, group);
             }
         }
         for (Coordinate key : touched) {
@@ -2932,8 +3095,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     }
 
     private static boolean includedWorldCell(HologramState state, HologramState.Cell cell, int layer) {
-        return !HologramJobVisuals.completed(state, cell)
-            && (cell.anchor || layer == Integer.MAX_VALUE || cell.dy == layer)
+        return (cell.anchor || layer == Integer.MAX_VALUE || cell.dy == layer)
             && (cell.anchor || !cell.id.equals("minecraft:air")
                 || !cell.wantId.equals("minecraft:air")
                 || cell.role.contains("interface"));
@@ -2999,8 +3161,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     }
 
     private static boolean readyForWorldGeometry(HologramState state, WorldGroup visible, long deadline) {
-        if (!localWorldRegions) return worldIndex == state.cells.size();
-        if (visible.localHaloReady) return true;
+        if (!localWorldRegions && worldIndex != state.cells.size()) return false;
         // Material faces read only the six adjacent regions. Problem boxes use their own twelve edges;
         // retained native geometry still has the full authoritative snapshot through HologramBlockRender.
         int gx = visible.x >> 4, gy = visible.y >> 4, gz = visible.z >> 4;
@@ -3012,11 +3173,12 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
                 region = materializeRegion(k, state.regions.regions.get(k));
             }
             if (region == null) continue; // Absent in the authoritative directory, not merely unindexed.
-            while (region.localCursor < region.localSource.size()) {
+            while (region.localSource != null && region.localCursor < region.localSource.size()) {
                 if (System.nanoTime() >= deadline) return false;
                 HologramState.Cell cell = region.localSource.get(region.localCursor++);
                 if (includedWorldCell(state, cell, worldLayer)) indexWorldCell(state, cell, region);
             }
+            if (!refreshWorldMatches(state, region, deadline)) return false;
         }
         visible.localHaloReady = true;
         return true;
@@ -3035,15 +3197,45 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     }
 
     private static void indexWorldCell(HologramState state, HologramState.Cell c, WorldGroup group) {
+        if (group.cellMasks.putIfAbsent(c.index, (byte) 0) != null) return;
+        group.cells.add(c);
+        updateWorldCell(state, c, group);
+    }
+
+    private static void removeWorldContribution(HologramState.Cell cell, WorldGroup group) {
+        byte mask = group.cellMasks.getOrDefault(cell.index, (byte) 0);
+        if (mask == 0) return;
+        Coordinate position = coordinate(cell.x, cell.y, cell.z);
+        if ((mask & 1) != 0) releaseWorldPosition(worldGhostCounts, position);
+        if ((mask & 2) != 0) releaseWorldPosition(worldOccluderCounts, position);
+        group.cellMasks.put(cell.index, (byte) 0);
+    }
+
+    private static void releaseWorldPosition(Map<Coordinate, Integer> counts, Coordinate position) {
+        Integer count = counts.get(position);
+        if (count == null || count <= 1) counts.remove(position);
+        else counts.put(position, count - 1);
+    }
+
+    private static boolean worldGhostCell(HologramState.Cell cell) {
+        WorldGroup group = worldGroups.get(coordinate(cell.x >> 4, cell.y >> 4, cell.z >> 4));
+        return group != null && (group.cellMasks.getOrDefault(cell.index, (byte) 0) & 1) != 0;
+    }
+
+    private static void updateWorldCell(HologramState state, HologramState.Cell c, WorldGroup group) {
         boolean removal = state.data.getInteger("mode") == 2;
         boolean virtual = state.data.getBoolean("virtual");
-        group.cells.add(c);
-        if ((!c.anchor || virtual) && !removal
-            && (virtual || !c.status.equals("satisfied") && !worldMatched(c))
-            && !c.wantId.equals("minecraft:air")) {
-            Coordinate position = coordinate(c.x, c.y, c.z);
-            worldGhosts.add(position);
-            if (occludes(c, false)) worldOccluders.add(position);
+        Coordinate position = coordinate(c.x, c.y, c.z);
+        removeWorldContribution(c, group);
+        if (group.matchedIndices.remove(c.index)) lastWorldMatched--;
+        if ((!c.anchor || virtual) && !removal && !worldMatched(c) && !c.wantId.equals("minecraft:air")) {
+            worldGhostCounts.merge(position, 1, Integer::sum);
+            byte mask = 1;
+            if (occludes(c, false)) {
+                worldOccluderCounts.merge(position, 1, Integer::sum);
+                mask |= 2;
+            }
+            group.cellMasks.put(c.index, mask);
         } else if (!c.anchor && !removal) {
             lastWorldMatched++;
             group.matchedIndices.add(c.index);
@@ -3056,10 +3248,9 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
             beforeGhosts = lastWorldGhosts;
         int end = Math.min(group.built + WORLD_MESH_BATCH, group.cells.size());
         List<HologramState.Cell> cells = new ArrayList<>();
-        for (HologramState.Cell cell : group.cells.subList(group.built, end))
-            if (!HologramJobVisuals.completed(worldState, cell)) cells.add(cell);
+        cells.addAll(group.cells.subList(group.built, end));
         // Native lists must be built before opening the group's list and its tessellator.
-        for (HologramState.Cell c : cells) if (worldGhosts.contains(coordinate(c.x, c.y, c.z))) {
+        for (HologramState.Cell c : cells) if (worldGhostCell(c)) {
             HologramBlockRender.ready(c, false);
             HologramLinkNodePreview.prepare(c, false);
         }
@@ -3104,8 +3295,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     private static int worldMaterialVertices(List<HologramState.Cell> cells) {
         int vertices = 0;
         for (HologramState.Cell cell : cells) {
-            if (!worldGhosts.contains(coordinate(cell.x, cell.y, cell.z)) || HologramBlockRender.ready(cell, false))
-                continue;
+            if (!worldGhostCell(cell) || HologramBlockRender.ready(cell, false)) continue;
             HologramTextures.Material material = HologramTextures.material(cell, false);
             for (HologramGeometry.Surface surface : material.geometry) {
                 if (!worldFaceVisible(cell, material, NORMALS[surface.side])) continue;
@@ -3127,7 +3317,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     private static void emitWorldMaterials(List<HologramState.Cell> cells, Tessellator t,
         MiaoVisonLiteMesh.Builder mesh) {
         for (HologramState.Cell c : cells) {
-            if (!worldGhosts.contains(coordinate(c.x, c.y, c.z))) continue;
+            if (!worldGhostCell(c)) continue;
             if (HologramBlockRender.ready(c, false)) {
                 lastWorldGhosts++;
                 continue;
@@ -3175,15 +3365,14 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         GL14.glBlendColor(1, 1, 1, .38f);
         GL11.glBlendFunc(0x8003, 0x8004); // GL_CONSTANT_ALPHA / GL_ONE_MINUS_CONSTANT_ALPHA
         GL11.glEnable(GL11.GL_BLEND);
-        for (HologramState.Cell c : cells)
-            if (worldGhosts.contains(coordinate(c.x, c.y, c.z)) && HologramBlockRender.ready(c, false)) {
-                GL11.glPushMatrix();
-                GL11.glTranslated(c.x, c.y, c.z);
-                HologramBlockRender.draw(c, false);
-                GL11.glPopMatrix();
-            }
+        for (HologramState.Cell c : cells) if (worldGhostCell(c) && HologramBlockRender.ready(c, false)) {
+            GL11.glPushMatrix();
+            GL11.glTranslated(c.x, c.y, c.z);
+            HologramBlockRender.draw(c, false);
+            GL11.glPopMatrix();
+        }
         GL11.glPopAttrib();
-        for (HologramState.Cell c : cells) if (worldGhosts.contains(coordinate(c.x, c.y, c.z))) {
+        for (HologramState.Cell c : cells) if (worldGhostCell(c)) {
             // Do not record an empty transform in the display list for ghosts without link nodes.
             List<HologramLinkNodePreview.Node> nodes = HologramLinkNodePreview.prepare(c, false);
             if (nodes.isEmpty()) continue;
@@ -3195,6 +3384,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         GL11.glDisable(GL11.GL_TEXTURE_2D);
         boolean lines = false;
         for (HologramState.Cell c : cells) {
+            if (!removal && !worldGhostCell(c)) continue;
             if (!worldProblemOutline(worldState, c, removal)) continue;
             if (!lines) {
                 t.startDrawing(GL11.GL_LINES);
@@ -3220,6 +3410,10 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         int built;
         int geometry, gt, fallback, ghosts;
         final Set<Integer> matchedIndices = new HashSet<>();
+        final Map<Integer, Byte> cellMasks = new java.util.HashMap<>();
+        final Set<Integer> dirtyMatches = new HashSet<>();
+        boolean allMatchesDirty;
+        int matchCursor;
         private HologramPreviewPose boundsPose;
         private double[] rotatedBounds;
 
@@ -3363,11 +3557,36 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     }
 
     private static boolean worldProblemOutline(HologramState state, HologramState.Cell cell, boolean current) {
-        if (problemOutline(state, cell)) return true;
+        Minecraft client = Minecraft.getMinecraft();
+        net.minecraft.world.World world = client == null ? null : client.theWorld;
+        if (!current && worldTransform != null) {
+            int[] at = worldTransform.apply(cell.x, cell.y, cell.z);
+            HologramProjectionIdentity.Target target = worldTransform.target(cell);
+            if (target != null && target.conflicts(world, at[0], at[1], at[2])) return true;
+        }
+        if (problemOutline(state, cell)) {
+            // A later block event can outlive the captured "occupied" status. An emptied position is
+            // once again an ordinary unbuilt target; source/resource failures still remain problems.
+            boolean siteConflict = !current && !cell.sourceMissing
+                && !cell.missingBlock
+                && ("occupied".equals(cell.status) || "blocked".equals(cell.status) || "conflict".equals(cell.status))
+                && cell.status.equals(HologramJobVisuals.status(state, cell));
+            int[] at = worldTransform == null ? new int[] { cell.x, cell.y, cell.z }
+                : worldTransform.apply(cell.x, cell.y, cell.z);
+            if (!siteConflict || world == null
+                || !world.blockExists(at[0], at[1], at[2])
+                || !world.isAirBlock(at[0], at[1], at[2])) return true;
+        }
         if ((current ? cell.id : cell.wantId).equals("minecraft:air")) return false;
         boolean renderedCurrent = current || cell.anchor || cell.status.equals("protected") && cell.actualStack != null;
         return HologramBlockRender.ready(cell, current) ? HologramBlockRender.missingTexture(cell, renderedCurrent)
             : !completePreviewMaterial(HologramTextures.material(cell, current));
+    }
+
+    /** Material fallback is not evidence of failure when its actual submitted icon samples are valid. */
+    static boolean previewProblemOutline(HologramState state, HologramState.Cell cell, boolean empty,
+        boolean completeMaterial) {
+        return problemOutline(state, cell) || !empty && !completeMaterial;
     }
 
     static int emitWorldOutline(Tessellator tess, HologramState.Cell cell) {
@@ -3380,7 +3599,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
 
     /** Already-resolved material evidence distinguishes unavailable models from ordinary targets. */
     static boolean completePreviewMaterial(HologramTextures.Material material) {
-        if (material == null || material.fallback || material.geometry.isEmpty()) return false;
+        if (material == null || material.geometry.isEmpty()) return false;
         for (HologramGeometry.Surface surface : material.geometry) {
             List<HologramTextures.Sample> samples = material.samples(surface);
             if (samples.isEmpty()) return false;

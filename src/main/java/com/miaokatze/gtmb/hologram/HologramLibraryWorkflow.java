@@ -146,7 +146,6 @@ final class HologramLibraryWorkflow {
             || side < 0
             || side > 5
             || !HologramWorldFlow.worldPosition(x, y, z, player.worldObj.getHeight())
-            || !HologramSessionPolicy.previewReach(player, x, y, z)
             || !player.worldObj.blockExists(x, y, z)) throw new java.io.IOException("快捷放置位置未加载或超出范围");
         boolean projectionSource = previous != null && HologramEditorWorkspaceRegistry.physicalProjection(previous);
         HologramSession session = projectionSource ? previous : HologramWorkspace.create(player, x, y, z, false, side);

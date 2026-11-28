@@ -39,6 +39,11 @@ public final class HologramRenderingRegression {
         previewOutlineDensity();
         problemOutlines();
         completePreviewMaterial();
+        try {
+            HologramWorldProjectionMatchRegression.run();
+        } catch (Exception failure) {
+            throw new AssertionError("native world projection matching", failure);
+        }
         occupancyBoundary();
         detachedTopologyRuns();
         editorDescriptorOwnership();
@@ -1925,14 +1930,48 @@ public final class HologramRenderingRegression {
         SimpleAssert
             .that(!MiaoVisonLiteRenderer.completePreviewMaterial(null), "absent material keeps diagnostic lines");
         SimpleAssert.that(
-            !MiaoVisonLiteRenderer.completePreviewMaterial(
+            MiaoVisonLiteRenderer.completePreviewMaterial(
                 new HologramTextures.Material(sides, sides, HologramGeometry.cube(), false, true, false, false)),
-            "declared texture fallback keeps diagnostic lines");
+            "a successful block-icon fallback is ordinary material, not a rendering failure");
+        NBTTagCompound ordinary = new NBTTagCompound();
+        ordinary.setString("wantId", "minecraft:stone");
+        ordinary.setString("status", "missing");
+        HologramState.Cell cell = new HologramState.Cell(0, ordinary);
+        HologramTextures.Material fallback = new HologramTextures.Material(
+            sides,
+            sides,
+            HologramGeometry.cube(),
+            false,
+            true,
+            false,
+            false);
+        boolean problem = MiaoVisonLiteRenderer
+            .previewProblemOutline(null, cell, false, MiaoVisonLiteRenderer.completePreviewMaterial(fallback));
+        SimpleAssert.eq(
+            0,
+            MiaoVisonLiteRenderer.previewOutlineVertices(false, problem),
+            "the actual preview draw decision emits no ordinary fallback grid");
+        SimpleAssert.eq(
+            24,
+            MiaoVisonLiteRenderer.previewOutlineVertices(true, problem),
+            "the same actual draw decision preserves a selected cell's twelve edges");
+        ordinary.setString("status", "occupied");
+        SimpleAssert.that(
+            MiaoVisonLiteRenderer.previewProblemOutline(
+                null,
+                new HologramState.Cell(0, ordinary),
+                false,
+                MiaoVisonLiteRenderer.completePreviewMaterial(fallback)),
+            "a real conflict still reaches the preview line emitter");
         sides[0] = Collections
             .singletonList(new HologramTextures.Sample(new TextureAtlasSprite("minecraft:missingno") {}, 0xffffff));
         SimpleAssert.that(
             !MiaoVisonLiteRenderer.completePreviewMaterial(material),
             "an actual missing atlas icon is not proof of a normal material");
+        SimpleAssert.that(
+            MiaoVisonLiteRenderer
+                .previewProblemOutline(null, cell, false, MiaoVisonLiteRenderer.completePreviewMaterial(material)),
+            "missing atlas samples still reach the actual preview line decision");
         sides[0] = Collections.emptyList();
         SimpleAssert.that(
             !MiaoVisonLiteRenderer.completePreviewMaterial(material),

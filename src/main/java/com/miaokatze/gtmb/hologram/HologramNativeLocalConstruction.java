@@ -304,8 +304,6 @@ public final class HologramNativeLocalConstruction {
         if (!HologramWorldFlow.worldPosition(anchor[0], anchor[1], anchor[2], world.getHeight()))
             throw new IOException("施工锚点超出世界边界");
         if (!world.blockExists(anchor[0], anchor[1], anchor[2])) throw new IOException("施工锚点所在区块未加载");
-        if (!HologramSessionPolicy.previewReach(player, anchor[0], anchor[1], anchor[2]))
-            throw new IOException("离施工锚点太远");
         HologramPreviewPose pose = new HologramPreviewPose();
         for (int axis : recipe) {
             if (axis != 0 && axis != 1) throw new IOException("无效施工方向");

@@ -91,7 +91,8 @@ public final class HologramNativeSavedWorldRegression {
         isolated(unsafe -> {
             for (String mode : new String[] { "complete", "permission", "cancel", "changed", "changedBeforeAdmission",
                 "changedWhilePreparing", "changedAfterAdmission", "cancelPreparing", "sourceChanged", "creative",
-                "creativeRevoked", "creativeWithoutEdit" }) {
+                "creativeRevoked", "creativeWithoutEdit", "distant", "distantCancel", "unloaded",
+                "dimensionChanged" }) {
                 Path root = Files.createTempDirectory("gtmb-native-local-placement-");
                 String logical = "local_12345678-1234-1234-1234-123456789012";
                 try (Fixture f = new Fixture(unsafe, 5)) {
@@ -286,6 +287,12 @@ public final class HologramNativeSavedWorldRegression {
             noSources.main = noSources.containers = noSources.me = false;
             HologramMaterials.write(f.player.getHeldItem(), noSources);
         }
+        if (mode.startsWith("distant")) {
+            f.player.posX = 160;
+            require(
+                !HologramSessionPolicy.previewReach(f.player, 8, 64, 8),
+                "distant admission exceeds preview input reach");
+        }
         var ready = HologramNativeLocalConstruction.prepare(draft, original, () -> true);
         var attempt = new HologramNativeLocalConstruction.Attempt(1);
         HologramNativeLocalConstruction.submit(
@@ -298,6 +305,8 @@ public final class HologramNativeSavedWorldRegression {
             new int[] { 0 },
             HologramProjectedMainPolicy.savedPlacementKey(HologramMaterials.read(f.player.getHeldItem()), creative),
             creative);
+        if ("unloaded".equals(mode)) f.world.unloaded = true;
+        if ("dimensionChanged".equals(mode)) f.player.dimension++;
         if ("changedBeforeAdmission".equals(mode)) nativeLocalSource(root, logical, 4, original);
         if ("sourceChanged".equals(mode)) {
             var settings = HologramMaterials.read(f.player.getHeldItem());
@@ -313,7 +322,9 @@ public final class HologramNativeSavedWorldRegression {
                 cpw.mods.fml.common.gameevent.TickEvent.Phase.END));
         if ("permission".equals(mode) || "creativeWithoutEdit".equals(mode)
             || "changedBeforeAdmission".equals(mode)
-            || "sourceChanged".equals(mode)) {
+            || "sourceChanged".equals(mode)
+            || "unloaded".equals(mode)
+            || "dimensionChanged".equals(mode)) {
             require(
                 attempt.result().phase == HologramNativeLocalConstruction.Phase.FAILED && f.stock() == 5
                     && f.world.writes()
@@ -377,18 +388,20 @@ public final class HologramNativeSavedWorldRegression {
                 "a server-side mode change invalidates the free construction lease");
             return;
         }
-        boolean stopWrite = "cancel".equals(mode);
+        boolean stopWrite = "cancel".equals(mode) || "distantCancel".equals(mode);
         boolean changePinnedSource = "changedAfterAdmission".equals(mode);
         var republished = new java.util.concurrent.atomic.AtomicBoolean();
         Field bus = MinecraftForge.class.getDeclaredField("EVENT_BUS");
         Object base = unsafe.staticFieldBase(bus);
         long offset = unsafe.staticFieldOffset(bus);
         EventBus prior = MinecraftForge.EVENT_BUS;
-        if (stopWrite || changePinnedSource) unsafe.putObjectVolatile(base, offset, new EventBus() {
+        boolean moveDistant = mode.startsWith("distant");
+        if (stopWrite || changePinnedSource || moveDistant) unsafe.putObjectVolatile(base, offset, new EventBus() {
 
             @Override
             public boolean post(Event event) {
                 if (event instanceof BlockEvent.PlaceEvent place && place.player == f.player) {
+                    if (moveDistant) f.player.posX = 320;
                     if (stopWrite && place.y == 65) attempt.stop();
                     if (changePinnedSource && republished.compareAndSet(false, true)) {
                         require(
@@ -409,7 +422,7 @@ public final class HologramNativeSavedWorldRegression {
             HologramNativeLocalConstruction.tick(Long.MAX_VALUE); // Exact same service called from the normal world
                                                                   // tick.
         } finally {
-            if (stopWrite || changePinnedSource) unsafe.putObjectVolatile(base, offset, prior);
+            if (stopWrite || changePinnedSource || moveDistant) unsafe.putObjectVolatile(base, offset, prior);
         }
         var done = attempt.result();
         boolean aborted = stopWrite;

@@ -149,6 +149,7 @@ public final class HologramNudgeServiceRegression {
                 capture = get(session, "capture");
                 HologramService.nudgeWorldPosition(player, request(session, 1, 0, 0));
                 SimpleAssert.that(get(session, "capture") == capture, "unloaded destination retains the exact capture");
+                SimpleAssert.eq(1, get(session, "x"), "an unloaded destination cannot move the locked anchor");
                 world.rejectX = Integer.MIN_VALUE;
                 world.tick = 12;
                 HologramCapture cells = (HologramCapture) get(session, "capture");
@@ -158,16 +159,29 @@ public final class HologramNudgeServiceRegression {
                 SimpleAssert.eq(65, get(session, "y"), "whole blueprint height is checked beyond its anchor");
                 set(cells.cells.get(0), "y", oldY);
                 world.tick = 16;
-                set(session, "x", 64);
+                SimpleAssert.that(
+                    HologramWorldPlacementWorkflow.moveVirtual((HologramSession) session, 64, 65, 0, 1),
+                    "the fixture rebases the full locked blueprint to a loaded distant anchor");
+                SimpleAssert.that(
+                    !HologramSessionPolicy.previewReach(player, 65, 65, 0),
+                    "the next valid nudge exceeds the previous positioning reach");
                 HologramService.nudgeWorldPosition(player, request(session, 1, 0, 0));
-                SimpleAssert.eq(64, get(session, "x"), "a one-voxel step still obeys server preview reach");
+                SimpleAssert.eq(65, get(session, "x"), "a loaded one-voxel nudge is accepted beyond positioning reach");
+                SimpleAssert.eq(
+                    65,
+                    ((HologramCapture) get(session, "capture")).cells.get(0).x,
+                    "the distant nudge moves the actual blueprint cell with its anchor");
                 world.tick = 20;
                 player.posX = 29999999;
-                set(session, "x", 29999999);
+                SimpleAssert.that(
+                    HologramWorldPlacementWorkflow.moveVirtual((HologramSession) session, 29999999, 65, 0, 1),
+                    "the full blueprint may occupy the final legal world voxel");
                 HologramService.nudgeWorldPosition(player, request(session, 1, 0, 0));
                 SimpleAssert.eq(29999999, get(session, "x"), "horizontal world boundary rejects the entire step");
                 player.posX = 0;
-                set(session, "x", 1);
+                SimpleAssert.that(
+                    HologramWorldPlacementWorkflow.moveVirtual((HologramSession) session, 1, 65, 0, 1),
+                    "remaining material checks restore both the anchor and capture together");
                 java.lang.reflect.Method blueprintAction = HologramAuthoringWorkflow.class
                     .getDeclaredMethod("blueprintAction", type, NBTTagCompound.class, String.class);
                 blueprintAction.setAccessible(true);

@@ -125,7 +125,27 @@ final class HologramNativeProjectionWireRegression {
                 HologramStockNativeWire.readRequest(missing) == null,
                 "missing projection identity never falls back to a per-machine implementation");
             for (Stage stage : Stage.values()) {
-                var observation = new ServerObservation(1000, 10, 80, -20, stage, 27, "");
+                var site = new NBTTagCompound();
+                site.setInteger("main", 4);
+                var siteChannels = new NBTTagCompound();
+                siteChannels.setInteger("ore_center_sectors", 6);
+                site.setTag("channels", siteChannels);
+                var observation = new ServerObservation(1000, 10, 80, -20, stage, 27, "", site);
+                site.setInteger("main", 1);
+                SimpleAssert.eq(
+                    4,
+                    observation.siteSettings()
+                        .getInteger("main"),
+                    "the published native site owns its configuration");
+                var detached = observation.siteSettings();
+                detached.getCompoundTag("channels")
+                    .setInteger("ore_center_sectors", 1);
+                SimpleAssert.eq(
+                    6,
+                    observation.siteSettings()
+                        .getCompoundTag("channels")
+                        .getInteger("ore_center_sectors"),
+                    "consumer edits cannot mutate a server site result");
                 var reply = new Reply(warm.key(), Phase.CAPABLE, 0, "", observation);
                 SimpleAssert.eq(
                     reply,

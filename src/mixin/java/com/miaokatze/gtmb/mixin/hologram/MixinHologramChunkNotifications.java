@@ -6,6 +6,7 @@ import net.minecraft.client.multiplayer.WorldClient;
 import net.minecraft.client.network.NetHandlerPlayClient;
 import net.minecraft.network.play.server.S21PacketChunkData;
 import net.minecraft.network.play.server.S26PacketMapChunkBulk;
+import net.minecraft.network.play.server.S35PacketUpdateTileEntity;
 
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -36,5 +37,17 @@ public abstract class MixinHologramChunkNotifications {
         require = 1)
     private void gtmb$chunksReceived(S26PacketMapChunkBulk packet, CallbackInfo callback) {
         HologramClient.nativeChunksReceived((NetHandlerPlayClient) (Object) this, clientWorldController, packet);
+    }
+
+    @Inject(
+        method = "handleUpdateTileEntity(Lnet/minecraft/network/play/server/S35PacketUpdateTileEntity;)V",
+        at = @At("RETURN"),
+        require = 1)
+    private void gtmb$tileReceived(S35PacketUpdateTileEntity packet, CallbackInfo callback) {
+        HologramClient.nativeTileChanged(
+            clientWorldController,
+            packet.func_148856_c(),
+            packet.func_148855_d(),
+            packet.func_148854_e());
     }
 }
